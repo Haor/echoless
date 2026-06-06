@@ -28,6 +28,7 @@ use cpal::{
 use hound::{WavSpec, WavWriter};
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::HeapRb;
+use serde_json::{json, Value};
 
 use echoless_core::{
     apply_reference_channels_to_chain, DiagnosticsConfig, PipelineConfig, ReferenceChannels,
@@ -67,6 +68,8 @@ impl InputChannelMode {
 pub struct RuntimeOptions {
     /// None = quiet;Some(ms) = 每隔 ms 打印一行滚动状态。
     pub stats_interval_ms: Option<u64>,
+    /// true = stdout 只输出 JSONL status;人类提示改走 stderr。
+    pub status_json: bool,
 }
 
 struct SelectedDevice {
@@ -92,10 +95,16 @@ impl RealtimeCounters {
 }
 
 struct ProcessRuntime {
+    sample_rate: u32,
+    frame_ms: u32,
     frame_size: usize,
     reference_channels: usize,
+    backend: String,
+    algorithmic_latency_ms: f32,
     counters: RealtimeCounters,
     stats_interval: Option<Duration>,
+    status_json: bool,
+    diagnostics_session_dir: Option<String>,
     diagnostic: Option<DiagnosticRecorder>,
 }
 
@@ -152,41 +161,65 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
         bail!("reference_channels=stereo 需要参考设备至少 2ch");
     }
 
-    println!(
-        "Mic:    {} ({})",
-        selected_device_label(&mic_device),
-        config_summary(&mic_config)
+    print_human(
+        options.status_json,
+        format!(
+            "Mic:    {} ({})",
+            selected_device_label(&mic_device),
+            config_summary(&mic_config)
+        ),
     );
     match (&render_device, &render_config) {
-        (Some((d, k)), Some(c)) => {
-            println!(
+        (Some((d, k)), Some(c)) => print_human(
+            options.status_json,
+            format!(
                 "Ref:    {} {} ({})",
                 k.label(),
                 selected_device_label(d),
                 config_summary(c)
-            )
-        }
-        _ => println!("Ref:    无 —— AEC 缺少参考,仅 NS 等单端处理有效"),
+            ),
+        ),
+        _ => print_human(
+            options.status_json,
+            "Ref:    无 —— AEC 缺少参考,仅 NS 等单端处理有效",
+        ),
     }
-    println!(
-        "Output: {} ({})",
-        selected_device_label(&output_device),
-        config_summary(&output_config)
+    print_human(
+        options.status_json,
+        format!(
+            "Output: {} ({})",
+            selected_device_label(&output_device),
+            config_summary(&output_config)
+        ),
     );
 
-    let chain_desc = if cfg.chain.is_empty() {
+    let mut chain_cfg = cfg.chain.clone();
+    apply_reference_channels_to_chain(&mut chain_cfg, cfg.reference_channels);
+    let backend = if chain_cfg.is_empty() {
+        "passthrough".to_string()
+    } else {
+        chain_cfg
+            .iter()
+            .map(|n| n.kind.clone())
+            .collect::<Vec<_>>()
+            .join("+")
+    };
+    let chain_desc = if chain_cfg.is_empty() {
         "直通".to_string()
     } else {
-        cfg.chain
+        chain_cfg
             .iter()
             .map(|n| n.kind.clone())
             .collect::<Vec<_>>()
             .join(" → ")
     };
-    println!(
-        "采样率 {sample_rate} Hz · 帧 {} ms / {frame_size} 样本 · reference={} · 链: {chain_desc}",
-        cfg.frame_ms,
-        cfg.reference_channels.as_str()
+    print_human(
+        options.status_json,
+        format!(
+            "采样率 {sample_rate} Hz · 帧 {} ms / {frame_size} 样本 · reference={} · 链: {chain_desc}",
+            cfg.frame_ms,
+            cfg.reference_channels.as_str()
+        ),
     );
 
     let running = Arc::new(AtomicBool::new(true));
@@ -234,9 +267,8 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
 
     // 处理线程:只碰 ring(Send),cpal Stream 留在本线程(!Send)。
     let proc_running = running.clone();
-    let mut chain_cfg = cfg.chain.clone();
-    apply_reference_channels_to_chain(&mut chain_cfg, cfg.reference_channels);
     let chain = chain_from_nodes(&chain_cfg, sample_rate, reference_channels as u16)?;
+    let algorithmic_latency_ms = chain.total_latency_ms();
     let initial_node_stats = chain.stats();
     let stats_interval = options.stats_interval_ms.map(Duration::from_millis);
     let diagnostic = DiagnosticRecorder::new(
@@ -245,12 +277,22 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
         reference_channels as u16,
         cfg.frame_ms,
         &initial_node_stats,
+        options.status_json,
     )?;
+    let diagnostics_session_dir = diagnostic
+        .as_ref()
+        .map(|recorder| recorder.dir.display().to_string());
     let runtime = ProcessRuntime {
+        sample_rate,
+        frame_ms: cfg.frame_ms,
         frame_size,
         reference_channels,
+        backend,
+        algorithmic_latency_ms,
         counters,
         stats_interval,
+        status_json: options.status_json,
+        diagnostics_session_dir,
         diagnostic,
     };
     let proc = thread::spawn(move || {
@@ -270,7 +312,10 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
     }
     output_stream.play()?;
 
-    println!("运行中。macOS 首次需授予麦克风权限。Ctrl+C 停止。");
+    print_human(
+        options.status_json,
+        "运行中。macOS 首次需授予麦克风权限。Ctrl+C 停止。",
+    );
     while running.load(Ordering::SeqCst) {
         thread::sleep(Duration::from_millis(100));
     }
@@ -279,8 +324,16 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
     drop(render_stream);
     drop(output_stream);
     proc.join().ok();
-    println!("已停止。");
+    print_human(options.status_json, "已停止。");
     Ok(())
+}
+
+fn print_human(status_json: bool, message: impl AsRef<str>) {
+    if status_json {
+        eprintln!("{}", message.as_ref());
+    } else {
+        println!("{}", message.as_ref());
+    }
 }
 
 fn process_loop<M, R, O>(
@@ -300,7 +353,17 @@ fn process_loop<M, R, O>(
     let mut near = vec![0.0f32; frame_size];
     let mut far = vec![0.0f32; far_samples_per_frame];
     let mut out = vec![0.0f32; frame_size];
-    let mut stats = runtime.stats_interval.map(RealtimeStats::new);
+    let mut stats = runtime.stats_interval.map(|interval| {
+        RealtimeStats::new(
+            interval,
+            runtime.sample_rate,
+            runtime.frame_ms,
+            runtime.backend.clone(),
+            runtime.algorithmic_latency_ms,
+            runtime.status_json,
+            runtime.diagnostics_session_dir.clone(),
+        )
+    });
     let mut diagnostic = runtime.diagnostic;
 
     while running.load(Ordering::SeqCst) {
@@ -334,6 +397,9 @@ fn process_loop<M, R, O>(
             .map(|rc| rc.occupied_len())
             .unwrap_or(0);
         let sample = StatsSample {
+            sample_rate: runtime.sample_rate,
+            frame_ms: runtime.frame_ms,
+            algorithmic_latency_ms: runtime.algorithmic_latency_ms,
             frame_size,
             near: &near,
             far: &far,
@@ -378,6 +444,9 @@ fn skip_stale<C: Consumer<Item = f32>>(consumer: &mut C, frame_size: usize) -> u
 }
 
 struct StatsSample<'a> {
+    sample_rate: u32,
+    frame_ms: u32,
+    algorithmic_latency_ms: f32,
     frame_size: usize,
     near: &'a [f32],
     far: &'a [f32],
@@ -403,6 +472,7 @@ struct DiagnosticRecorder {
     max_frames: Option<u64>,
     written_frames: u64,
     frame_index: u64,
+    human_to_stderr: bool,
 }
 
 impl DiagnosticRecorder {
@@ -412,6 +482,7 @@ impl DiagnosticRecorder {
         reference_channels: u16,
         frame_ms: u32,
         node_stats: &[ProcessorStats],
+        human_to_stderr: bool,
     ) -> Result<Option<Self>> {
         let Some(record_dir) = cfg
             .record_dir
@@ -453,10 +524,10 @@ impl DiagnosticRecorder {
         );
         writeln!(
             stats,
-            "frame_index,frames,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,mic_input_drops,ref_input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
+            "frame_index,frames,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,output_queue_latency_ms,estimated_user_latency_ms,aec_estimated_delay_ms,mic_input_drops,ref_input_drops,input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
         )?;
 
-        println!("诊断录制目录: {}", dir.display());
+        print_human(human_to_stderr, format!("诊断录制目录: {}", dir.display()));
         Ok(Some(Self {
             mic: Some(WavWriter::create(dir.join("mic.wav"), spec)?),
             reference: Some(WavWriter::create(dir.join("ref.wav"), ref_spec)?),
@@ -466,6 +537,7 @@ impl DiagnosticRecorder {
             max_frames,
             written_frames: 0,
             frame_index: 0,
+            human_to_stderr,
         }))
     }
 
@@ -496,7 +568,7 @@ impl DiagnosticRecorder {
 
         writeln!(
             self.stats,
-            "{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
+            "{},{},{:.2},{:.2},{:.2},{},{},{},{:.2},{:.2},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
             self.frame_index,
             sample.frame_size,
             rms_dbfs(sum_squares(sample.near), sample.near.len() as u64),
@@ -505,8 +577,17 @@ impl DiagnosticRecorder {
             sample.mic_q,
             sample.ref_q,
             sample.out_q,
+            output_queue_latency_ms(sample.out_q, sample.sample_rate),
+            estimate_user_latency_ms(
+                sample.frame_ms,
+                sample.algorithmic_latency_ms,
+                sample.out_q,
+                sample.sample_rate
+            ),
+            aggregate_estimated_delay_ms(sample.node_stats),
             sample.mic_input_drops,
             sample.ref_input_drops,
+            sample.mic_input_drops + sample.ref_input_drops,
             sample.stale_drops,
             sample.ref_underruns,
             sample.output_overruns,
@@ -523,7 +604,10 @@ impl DiagnosticRecorder {
             .max_frames
             .is_some_and(|max_frames| self.written_frames >= max_frames)
         {
-            println!("诊断录制达到上限,已关闭: {}", self.dir.display());
+            print_human(
+                self.human_to_stderr,
+                format!("诊断录制达到上限,已关闭: {}", self.dir.display()),
+            );
             self.finish();
             return Ok(false);
         }
@@ -630,6 +714,14 @@ fn aggregate_runtime_errors(stats: &[ProcessorStats]) -> u64 {
     stats.iter().map(|stat| stat.runtime_error_count).sum()
 }
 
+fn aggregate_estimated_delay_ms(stats: &[ProcessorStats]) -> i32 {
+    stats
+        .iter()
+        .map(|stat| stat.estimated_delay_ms)
+        .max()
+        .unwrap_or(0)
+}
+
 fn aggregate_diverged(stats: &[ProcessorStats]) -> bool {
     stats.iter().any(|stat| stat.diverged)
 }
@@ -649,10 +741,34 @@ fn csv_escape(value: &str) -> String {
     }
 }
 
+fn output_queue_latency_ms(out_q_samples: usize, sample_rate: u32) -> f64 {
+    if sample_rate == 0 {
+        return 0.0;
+    }
+    out_q_samples as f64 / sample_rate as f64 * 1000.0
+}
+
+fn estimate_user_latency_ms(
+    frame_ms: u32,
+    algorithmic_latency_ms: f32,
+    out_q_samples: usize,
+    sample_rate: u32,
+) -> f64 {
+    frame_ms as f64 / 2.0
+        + algorithmic_latency_ms as f64
+        + output_queue_latency_ms(out_q_samples, sample_rate)
+}
+
 struct RealtimeStats {
     interval: Duration,
     started: Instant,
     last_print: Instant,
+    sample_rate: u32,
+    frame_ms: u32,
+    backend: String,
+    algorithmic_latency_ms: f32,
+    status_json: bool,
+    diagnostics_session_dir: Option<String>,
     total_frames: u64,
     near_samples: u64,
     far_samples: u64,
@@ -671,16 +787,32 @@ struct RealtimeStats {
     output_underruns: u64,
     node_process_time_ms: f32,
     node_runtime_errors: u64,
+    aec_estimated_delay_ms: i32,
     node_diverged: bool,
+    node_last_error: Option<String>,
 }
 
 impl RealtimeStats {
-    fn new(interval: Duration) -> Self {
+    fn new(
+        interval: Duration,
+        sample_rate: u32,
+        frame_ms: u32,
+        backend: String,
+        algorithmic_latency_ms: f32,
+        status_json: bool,
+        diagnostics_session_dir: Option<String>,
+    ) -> Self {
         let now = Instant::now();
         Self {
             interval,
             started: now,
             last_print: now,
+            sample_rate,
+            frame_ms,
+            backend,
+            algorithmic_latency_ms,
+            status_json,
+            diagnostics_session_dir,
             total_frames: 0,
             near_samples: 0,
             far_samples: 0,
@@ -699,7 +831,9 @@ impl RealtimeStats {
             output_underruns: 0,
             node_process_time_ms: 0.0,
             node_runtime_errors: 0,
+            aec_estimated_delay_ms: 0,
             node_diverged: false,
+            node_last_error: None,
         }
     }
 
@@ -724,7 +858,9 @@ impl RealtimeStats {
             .node_process_time_ms
             .max(aggregate_process_time_ms(sample.node_stats));
         self.node_runtime_errors = aggregate_runtime_errors(sample.node_stats);
+        self.aec_estimated_delay_ms = aggregate_estimated_delay_ms(sample.node_stats);
         self.node_diverged = aggregate_diverged(sample.node_stats);
+        self.node_last_error = aggregate_last_error(sample.node_stats);
         self.maybe_print();
     }
 
@@ -733,26 +869,11 @@ impl RealtimeStats {
         if now.duration_since(self.last_print) < self.interval {
             return;
         }
-        let elapsed = now.duration_since(self.started).as_secs();
-        println!(
-            "t={}s frames={} mic={:.1}dB ref={:.1}dB out={:.1}dB mic_q={} ref_q={} out_q={} ref_underrun={} out_underrun={} out_overrun={} input_drop={} stale_drop={} node_ms={:.2} runtime_errors={} diverged={}",
-            elapsed,
-            self.total_frames,
-            rms_dbfs(self.near_sq, self.near_samples),
-            rms_dbfs(self.far_sq, self.far_samples),
-            rms_dbfs(self.out_sq, self.out_samples),
-            self.mic_q,
-            self.ref_q,
-            self.out_q,
-            self.ref_underruns,
-            self.output_underruns,
-            self.output_overruns,
-            self.mic_input_drops + self.ref_input_drops,
-            self.stale_drops,
-            self.node_process_time_ms,
-            self.node_runtime_errors,
-            self.node_diverged,
-        );
+        if self.status_json {
+            println!("{}", self.status_json_line(now));
+        } else {
+            self.print_text(now);
+        }
         self.last_print = now;
         self.near_samples = 0;
         self.far_samples = 0;
@@ -768,6 +889,83 @@ impl RealtimeStats {
         self.output_underruns = 0;
         self.node_process_time_ms = 0.0;
         self.node_diverged = false;
+        self.node_last_error = None;
+    }
+
+    fn print_text(&self, now: Instant) {
+        println!(
+            "t={:.1}s frames={} mic={:.1}dB ref={:.1}dB out={:.1}dB mic_q={} ref_q={} out_q={} out_q_ms={:.1} est_user_ms={:.1} aec_delay_ms={} ref_underrun={} out_underrun={} out_overrun={} input_drop={} stale_drop={} node_ms={:.2} runtime_errors={} diverged={}",
+            now.duration_since(self.started).as_secs_f64(),
+            self.total_frames,
+            rms_dbfs(self.near_sq, self.near_samples),
+            rms_dbfs(self.far_sq, self.far_samples),
+            rms_dbfs(self.out_sq, self.out_samples),
+            self.mic_q,
+            self.ref_q,
+            self.out_q,
+            output_queue_latency_ms(self.out_q, self.sample_rate),
+            estimate_user_latency_ms(
+                self.frame_ms,
+                self.algorithmic_latency_ms,
+                self.out_q,
+                self.sample_rate
+            ),
+            self.aec_estimated_delay_ms,
+            self.ref_underruns,
+            self.output_underruns,
+            self.output_overruns,
+            self.mic_input_drops + self.ref_input_drops,
+            self.stale_drops,
+            self.node_process_time_ms,
+            self.node_runtime_errors,
+            self.node_diverged,
+        );
+    }
+
+    fn status_json_line(&self, now: Instant) -> String {
+        serde_json::to_string(&self.status_value(now)).unwrap_or_else(|err| {
+            json!({ "type": "error", "message": err.to_string() }).to_string()
+        })
+    }
+
+    fn status_value(&self, now: Instant) -> Value {
+        let output_queue_latency_ms = output_queue_latency_ms(self.out_q, self.sample_rate);
+        let estimated_user_latency_ms = estimate_user_latency_ms(
+            self.frame_ms,
+            self.algorithmic_latency_ms,
+            self.out_q,
+            self.sample_rate,
+        );
+        json!({
+            "type": "status",
+            "elapsed_s": now.duration_since(self.started).as_secs_f64(),
+            "frames": self.total_frames,
+            "sample_rate": self.sample_rate,
+            "frame_ms": self.frame_ms,
+            "backend": self.backend.as_str(),
+            "mic_dbfs": rms_dbfs(self.near_sq, self.near_samples),
+            "ref_dbfs": rms_dbfs(self.far_sq, self.far_samples),
+            "out_dbfs": rms_dbfs(self.out_sq, self.out_samples),
+            "mic_q_samples": self.mic_q,
+            "ref_q_samples": self.ref_q,
+            "out_q_samples": self.out_q,
+            "output_queue_latency_ms": output_queue_latency_ms,
+            "algorithmic_latency_ms": self.algorithmic_latency_ms,
+            "estimated_user_latency_ms": estimated_user_latency_ms,
+            "aec_estimated_delay_ms": self.aec_estimated_delay_ms,
+            "mic_input_drops": self.mic_input_drops,
+            "ref_input_drops": self.ref_input_drops,
+            "input_drops": self.mic_input_drops + self.ref_input_drops,
+            "stale_drops": self.stale_drops,
+            "ref_underruns": self.ref_underruns,
+            "output_underruns": self.output_underruns,
+            "output_overruns": self.output_overruns,
+            "node_process_time_ms": self.node_process_time_ms,
+            "runtime_errors": self.node_runtime_errors,
+            "diverged": self.node_diverged,
+            "last_backend_error": self.node_last_error.as_deref(),
+            "diagnostics_session_dir": self.diagnostics_session_dir.as_deref(),
+        })
     }
 }
 
@@ -1069,6 +1267,96 @@ pub fn print_devices() -> Result<()> {
     Ok(())
 }
 
+pub fn devices_json() -> Result<Value> {
+    let host = cpal::default_host();
+    let input_devices = devices_for(&host, DeviceKind::Input)?;
+    let output_devices = devices_for(&host, DeviceKind::Output)?;
+    let default_input_index = host
+        .default_input_device()
+        .as_ref()
+        .and_then(|device| find_device_index(&input_devices, device));
+    let default_output_index = host
+        .default_output_device()
+        .as_ref()
+        .and_then(|device| find_device_index(&output_devices, device));
+
+    let inputs = input_devices
+        .iter()
+        .enumerate()
+        .map(|(index, device)| {
+            device_json_entry(device, DeviceKind::Input, index, default_input_index)
+        })
+        .collect::<Vec<_>>();
+    let outputs = output_devices
+        .iter()
+        .enumerate()
+        .map(|(index, device)| {
+            device_json_entry(device, DeviceKind::Output, index, default_output_index)
+        })
+        .collect::<Vec<_>>();
+
+    let mut reference_sources = vec![
+        json!({ "id": "system", "label": "System audio", "kind": "system" }),
+        json!({ "id": "none", "label": "No reference", "kind": "none" }),
+    ];
+    reference_sources.extend(input_devices.iter().enumerate().map(|(index, device)| {
+        json!({
+            "id": format!("input:{index}"),
+            "label": device_label(device),
+            "kind": "input",
+            "device_index": index,
+        })
+    }));
+    reference_sources.extend(output_devices.iter().enumerate().map(|(index, device)| {
+        json!({
+            "id": format!("output:{index}"),
+            "label": device_label(device),
+            "kind": "output",
+            "device_index": index,
+        })
+    }));
+
+    Ok(json!({
+        "ok": true,
+        "inputs": inputs,
+        "outputs": outputs,
+        "reference_sources": reference_sources,
+    }))
+}
+
+fn device_json_entry(
+    device: &Device,
+    kind: DeviceKind,
+    index: usize,
+    default_index: Option<usize>,
+) -> Value {
+    let cfg = match kind {
+        DeviceKind::Input => device.default_input_config(),
+        DeviceKind::Output => device.default_output_config(),
+    };
+    let (default_sample_rate, channels, sample_format, config_error) = match cfg {
+        Ok(cfg) => (
+            Some(cfg.sample_rate()),
+            Some(cfg.channels()),
+            Some(cfg.sample_format().to_string()),
+            None,
+        ),
+        Err(err) => (None, None, None, Some(err.to_string())),
+    };
+    json!({
+        "id": index.to_string(),
+        "index": index,
+        "name": device_label(device),
+        "kind": kind.label(),
+        "is_default": default_index == Some(index),
+        "selector": index.to_string(),
+        "default_sample_rate": default_sample_rate,
+        "channels": channels,
+        "sample_format": sample_format,
+        "config_error": config_error,
+    })
+}
+
 fn config_summary(c: &SupportedStreamConfig) -> String {
     format!(
         "{} Hz, {} ch, {}",
@@ -1219,12 +1507,16 @@ mod tests {
             max_seconds: Some(1),
         };
         let node_stats = [ProcessorStats::empty("test")];
-        let mut recorder = DiagnosticRecorder::new(&cfg, 48_000, 2, 10, &node_stats)?.unwrap();
+        let mut recorder =
+            DiagnosticRecorder::new(&cfg, 48_000, 2, 10, &node_stats, false)?.unwrap();
         let dir = recorder.dir.clone();
         let near = [0.25f32, -0.25];
         let far = [0.1f32, -0.1, 0.2, -0.2];
         let out = [0.0f32, 0.1];
         let sample = StatsSample {
+            sample_rate: 48_000,
+            frame_ms: 10,
+            algorithmic_latency_ms: 16.0,
             frame_size: near.len(),
             near: &near,
             far: &far,
@@ -1252,10 +1544,52 @@ mod tests {
         let stats = std::fs::read_to_string(dir.join("stats.csv"))?;
         assert_eq!(stats.lines().count(), 2);
         assert!(stats.contains("node_process_time_ms"));
+        assert!(stats.contains("estimated_user_latency_ms"));
         assert!(dir.join("out.wav").exists());
         assert!(dir.join("metadata.txt").exists());
 
         let _ = std::fs::remove_dir_all(base);
         Ok(())
+    }
+
+    #[test]
+    fn user_latency_estimate_includes_half_frame_algorithm_and_output_queue() {
+        let latency = estimate_user_latency_ms(10, 16.0, 2400, 48_000);
+
+        assert_eq!(latency, 71.0);
+    }
+
+    #[test]
+    fn runtime_status_json_exposes_frontend_latency_fields() {
+        let mut stats = RealtimeStats::new(
+            Duration::from_millis(1000),
+            48_000,
+            10,
+            "localvqe".into(),
+            16.0,
+            true,
+            Some("diagnostics/session-1".into()),
+        );
+        stats.total_frames = 480;
+        stats.near_samples = 480;
+        stats.far_samples = 480;
+        stats.out_samples = 480;
+        stats.near_sq = 120.0;
+        stats.far_sq = 30.0;
+        stats.out_sq = 100.0;
+        stats.out_q = 2400;
+        stats.mic_input_drops = 1;
+        stats.ref_input_drops = 2;
+        stats.aec_estimated_delay_ms = 48;
+
+        let value = stats.status_value(stats.started + Duration::from_secs(1));
+
+        assert_eq!(value["type"], "status");
+        assert_eq!(value["backend"], "localvqe");
+        assert_eq!(value["input_drops"], 3);
+        assert_eq!(value["output_queue_latency_ms"], 50.0);
+        assert_eq!(value["estimated_user_latency_ms"], 71.0);
+        assert_eq!(value["aec_estimated_delay_ms"], 48);
+        assert_eq!(value["diagnostics_session_dir"], "diagnostics/session-1");
     }
 }

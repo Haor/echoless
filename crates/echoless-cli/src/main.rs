@@ -37,13 +37,51 @@ enum Cmd {
     /// 离线:mic.wav + ref.wav 经处理链 → out.wav
     Offline(OfflineArgs),
     /// 列出可用处理器种类
-    Processors,
+    Processors(ProcessorsArgs),
     /// 列出音频设备
-    Devices,
+    Devices(DevicesArgs),
+    /// 配置文件工具
+    Config(ConfigArgs),
     /// 实时运行
     Run(RunArgs),
     /// NVIDIA AFX / RTX AEC runtime 工具
     Nvafx(NvafxArgs),
+}
+
+#[derive(Args)]
+struct ProcessorsArgs {
+    /// 输出 JSON manifest,供 GUI 消费
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct DevicesArgs {
+    /// 输出 JSON,供 GUI 消费
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    cmd: ConfigCmd,
+}
+
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// 校验管线 TOML 配置
+    Validate(ConfigValidateArgs),
+}
+
+#[derive(Args)]
+struct ConfigValidateArgs {
+    /// 管线 TOML 配置
+    #[arg(long)]
+    config: String,
+    /// 输出结构化 JSON 结果
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -113,6 +151,9 @@ struct RunArgs {
     /// 自定义滚动统计间隔(ms);隐含 --verbose
     #[arg(long)]
     stats_interval_ms: Option<u64>,
+    /// 输出 JSONL runtime status,供 GUI/sidecar 消费
+    #[arg(long)]
+    status_json: bool,
     /// 保存实时诊断录音的目录;会在其下创建 timestamp session
     #[arg(long)]
     diagnostic_dir: Option<String>,
@@ -192,8 +233,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Offline(a) => cmd_offline(a),
-        Cmd::Processors => cmd_processors(),
-        Cmd::Devices => cmd_devices(),
+        Cmd::Processors(a) => cmd_processors(a),
+        Cmd::Devices(a) => cmd_devices(a),
+        Cmd::Config(a) => cmd_config(a),
         Cmd::Run(a) => cmd_run(a),
         Cmd::Nvafx(a) => cmd_nvafx(a),
     }
@@ -280,13 +322,566 @@ fn cmd_offline(a: OfflineArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_processors() -> Result<()> {
+fn cmd_processors(args: ProcessorsArgs) -> Result<()> {
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&processor_manifest())?);
+        return Ok(());
+    }
     println!("可用处理器种类:");
     for k in registry::kinds() {
         println!("  - {k}");
     }
     println!("(在 --chain 或 config 的 [[chain]] 里按 kind 引用;默认建议单开 sonora_aec3,串联仅用于实验)");
     Ok(())
+}
+
+fn processor_manifest() -> serde_json::Value {
+    json!({
+        "processors": [
+            {
+                "kind": "passthrough",
+                "label": "Passthrough",
+                "platforms": ["windows", "macos", "linux"],
+                "default": false,
+                "experimental": false,
+                "diagnostic": true,
+                "params": {}
+            },
+            {
+                "kind": "sonora_aec3",
+                "label": "AEC3",
+                "platforms": ["windows", "macos", "linux"],
+                "default": true,
+                "experimental": false,
+                "constraints": {
+                    "preferred_sample_rate": 48000,
+                    "preferred_frame_ms": 10
+                },
+                "params": {
+                    "reference_channels": {
+                        "type": "select",
+                        "values": ["mono", "stereo"],
+                        "default": "mono",
+                        "ui": "segmented"
+                    },
+                    "ns": {
+                        "type": "bool",
+                        "default": false,
+                        "ui": "toggle"
+                    },
+                    "ns_level": {
+                        "type": "select",
+                        "values": ["low", "moderate", "high", "veryhigh"],
+                        "default": "low",
+                        "requires": { "ns": true }
+                    },
+                    "agc": {
+                        "type": "bool",
+                        "default": false,
+                        "advanced": true,
+                        "ui": "toggle"
+                    },
+                    "tail_ms": {
+                        "type": "number",
+                        "default": null,
+                        "min": 4,
+                        "advanced": true
+                    },
+                    "delay_num_filters": {
+                        "type": "number",
+                        "default": null,
+                        "min": 1,
+                        "advanced": true
+                    },
+                    "linear_stable_echo_path": {
+                        "type": "bool",
+                        "default": false,
+                        "advanced": true
+                    }
+                }
+            },
+            {
+                "kind": "localvqe",
+                "label": "LocalVQE",
+                "platforms": ["windows", "macos", "linux"],
+                "default": false,
+                "experimental": true,
+                "constraints": {
+                    "native_sample_rate": 16000,
+                    "native_channels": "mono",
+                    "algorithmic_latency_ms": 16.0
+                },
+                "params": {
+                    "model": { "type": "path", "required": true },
+                    "library": { "type": "path", "required": false },
+                    "backend": { "type": "string", "required": false, "advanced": true },
+                    "device": { "type": "number", "required": false, "advanced": true },
+                    "threads": { "type": "number", "min": 1, "required": false },
+                    "noise_gate": { "type": "bool", "default": false },
+                    "noise_gate_threshold_dbfs": {
+                        "type": "number",
+                        "default": -45.0,
+                        "advanced": true
+                    }
+                }
+            },
+            {
+                "kind": "nvidia_afx_aec",
+                "label": "RTX AEC",
+                "platforms": ["windows"],
+                "default": false,
+                "experimental": true,
+                "requires_doctor_ok": true,
+                "constraints": {
+                    "sample_rate": 48000,
+                    "frame_ms": 10,
+                    "reference_channels": "mono"
+                },
+                "params": {
+                    "runtime_dir": { "type": "path", "required": false },
+                    "model_path": { "type": "path", "required": false },
+                    "intensity_ratio": { "type": "number", "default": 1.0, "min": 0.0 },
+                    "use_default_gpu": { "type": "bool", "default": true, "advanced": true },
+                    "disable_cuda_graph": { "type": "bool", "default": false, "advanced": true },
+                    "on_runtime_error": {
+                        "type": "select",
+                        "values": ["silence", "bypass"],
+                        "default": "silence",
+                        "advanced": true
+                    }
+                }
+            }
+        ]
+    })
+}
+
+fn cmd_config(args: ConfigArgs) -> Result<()> {
+    match args.cmd {
+        ConfigCmd::Validate(a) => cmd_config_validate(a),
+    }
+}
+
+fn cmd_config_validate(args: ConfigValidateArgs) -> Result<()> {
+    let report = validate_config_file(&args.config);
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report.to_json())?);
+    } else if report.ok {
+        println!("配置校验通过: {}", args.config);
+    } else {
+        for error in &report.errors {
+            eprintln!("{}: {}", error.path, error.message);
+        }
+    }
+
+    if report.ok {
+        Ok(())
+    } else {
+        bail!("配置校验失败: {} 个问题", report.errors.len())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ConfigValidationReport {
+    ok: bool,
+    errors: Vec<ConfigValidationError>,
+}
+
+impl ConfigValidationReport {
+    fn new(errors: Vec<ConfigValidationError>) -> Self {
+        Self {
+            ok: errors.is_empty(),
+            errors,
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "ok": self.ok,
+            "errors": self.errors.iter().map(ConfigValidationError::to_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ConfigValidationError {
+    path: String,
+    message: String,
+}
+
+impl ConfigValidationError {
+    fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "path": self.path,
+            "message": self.message,
+        })
+    }
+}
+
+fn validate_config_file(path: &str) -> ConfigValidationReport {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(err) => {
+            return ConfigValidationReport::new(vec![ConfigValidationError::new(
+                "config",
+                format!("读取配置失败: {err}"),
+            )])
+        }
+    };
+    let cfg: PipelineConfig = match toml::from_str(&contents) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return ConfigValidationReport::new(vec![ConfigValidationError::new(
+                "config",
+                format!("解析 TOML 失败: {err}"),
+            )])
+        }
+    };
+    ConfigValidationReport::new(validate_pipeline_config(&cfg))
+}
+
+fn validate_pipeline_config(cfg: &PipelineConfig) -> Vec<ConfigValidationError> {
+    let mut errors = Vec::new();
+    if cfg.sample_rate == 0 {
+        errors.push(ConfigValidationError::new(
+            "sample_rate",
+            "sample_rate must be greater than 0",
+        ));
+    }
+    if cfg.frame_ms == 0 {
+        errors.push(ConfigValidationError::new(
+            "frame_ms",
+            "frame_ms must be greater than 0",
+        ));
+    } else if cfg.sample_rate > 0
+        && !(u64::from(cfg.sample_rate) * u64::from(cfg.frame_ms)).is_multiple_of(1000)
+    {
+        errors.push(ConfigValidationError::new(
+            "frame_ms",
+            "sample_rate * frame_ms must produce an integer sample count",
+        ));
+    }
+    if cfg
+        .diagnostics
+        .record_dir
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ConfigValidationError::new(
+            "diagnostics.record_dir",
+            "record_dir must not be empty",
+        ));
+    }
+    if matches!(cfg.diagnostics.max_seconds, Some(0)) {
+        errors.push(ConfigValidationError::new(
+            "diagnostics.max_seconds",
+            "max_seconds must be greater than 0",
+        ));
+    }
+
+    for (index, node) in cfg.chain.iter().enumerate() {
+        validate_chain_node(cfg, index, node, &mut errors);
+    }
+    errors
+}
+
+fn validate_chain_node(
+    cfg: &PipelineConfig,
+    index: usize,
+    node: &NodeConfig,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    let base = format!("chain[{index}]");
+    if !registry::kinds().contains(&node.kind.as_str()) {
+        errors.push(ConfigValidationError::new(
+            format!("{base}.kind"),
+            format!(
+                "unknown processor kind {}; available: {}",
+                node.kind,
+                registry::kinds().join(", ")
+            ),
+        ));
+        return;
+    }
+
+    match node.kind.as_str() {
+        "sonora_aec3" => validate_sonora_node(&base, &node.params, errors),
+        "localvqe" => validate_localvqe_node(&base, &node.params, errors),
+        "nvidia_afx_aec" => validate_nvafx_node(cfg, &base, &node.params, errors),
+        "passthrough" => {}
+        _ => {}
+    }
+}
+
+fn validate_sonora_node(base: &str, params: &toml::Table, errors: &mut Vec<ConfigValidationError>) {
+    expect_bool(params, base, "ns", errors);
+    expect_bool(params, base, "agc", errors);
+    expect_bool(params, base, "linear_stable_echo_path", errors);
+    expect_i64(params, base, "initial_delay_ms", errors);
+    expect_i64_min(params, base, "tail_ms", 4, errors);
+    expect_i64_min(params, base, "delay_num_filters", 1, errors);
+    expect_string_one_of(
+        params,
+        base,
+        "ns_level",
+        &[
+            "low",
+            "moderate",
+            "high",
+            "veryhigh",
+            "very_high",
+            "very-high",
+        ],
+        errors,
+    );
+    if let Some(value) = params.get("reference_channels") {
+        let ok = value.as_integer().is_some_and(|v| matches!(v, 1 | 2))
+            || value
+                .as_str()
+                .map(|s| {
+                    matches!(
+                        s.to_ascii_lowercase().as_str(),
+                        "mono" | "1" | "1ch" | "stereo" | "2" | "2ch"
+                    )
+                })
+                .unwrap_or(false);
+        if !ok {
+            errors.push(ConfigValidationError::new(
+                format!("{base}.reference_channels"),
+                "reference_channels must be mono, stereo, 1, or 2",
+            ));
+        }
+    }
+}
+
+fn validate_localvqe_node(
+    base: &str,
+    params: &toml::Table,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    expect_required_nonempty_string(params, base, "model", errors);
+    expect_optional_nonempty_string(params, base, "library", errors);
+    expect_optional_nonempty_string(params, base, "backend", errors);
+    expect_i64(params, base, "device", errors);
+    expect_i64_min(params, base, "threads", 1, errors);
+    expect_bool(params, base, "noise_gate", errors);
+    expect_finite_number(params, base, "noise_gate_threshold_dbfs", errors);
+}
+
+fn validate_nvafx_node(
+    cfg: &PipelineConfig,
+    base: &str,
+    params: &toml::Table,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    if cfg.sample_rate != echoless_processors::nvafx::NVAFX_SAMPLE_RATE {
+        errors.push(ConfigValidationError::new(
+            "sample_rate",
+            format!(
+                "nvidia_afx_aec requires {} Hz",
+                echoless_processors::nvafx::NVAFX_SAMPLE_RATE
+            ),
+        ));
+    }
+    if cfg.frame_ms != 10 {
+        errors.push(ConfigValidationError::new(
+            "frame_ms",
+            "nvidia_afx_aec requires 10ms frame",
+        ));
+    }
+    if cfg.reference_channels != ReferenceChannels::Mono {
+        errors.push(ConfigValidationError::new(
+            "reference_channels",
+            "nvidia_afx_aec requires mono reference",
+        ));
+    }
+    expect_optional_nonempty_string(params, base, "runtime_dir", errors);
+    expect_optional_nonempty_string(params, base, "model_path", errors);
+    expect_finite_number_min(params, base, "intensity_ratio", 0.0, errors);
+    expect_bool(params, base, "use_default_gpu", errors);
+    expect_bool(params, base, "disable_cuda_graph", errors);
+    expect_string_one_of(
+        params,
+        base,
+        "on_runtime_error",
+        &["silence", "bypass"],
+        errors,
+    );
+}
+
+fn expect_bool(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    if params
+        .get(key)
+        .is_some_and(|value| value.as_bool().is_none())
+    {
+        errors.push(ConfigValidationError::new(
+            format!("{base}.{key}"),
+            format!("{key} must be a boolean"),
+        ));
+    }
+}
+
+fn expect_i64(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    if params
+        .get(key)
+        .is_some_and(|value| value.as_integer().is_none())
+    {
+        errors.push(ConfigValidationError::new(
+            format!("{base}.{key}"),
+            format!("{key} must be an integer"),
+        ));
+    }
+}
+
+fn expect_i64_min(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    min: i64,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    if let Some(value) = params.get(key) {
+        match value.as_integer() {
+            Some(v) if v >= min => {}
+            Some(_) => errors.push(ConfigValidationError::new(
+                format!("{base}.{key}"),
+                format!("{key} must be >= {min}"),
+            )),
+            None => errors.push(ConfigValidationError::new(
+                format!("{base}.{key}"),
+                format!("{key} must be an integer"),
+            )),
+        }
+    }
+}
+
+fn expect_required_nonempty_string(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    match params.get(key).and_then(toml::Value::as_str) {
+        Some(value) if !value.trim().is_empty() => {}
+        Some(_) => errors.push(ConfigValidationError::new(
+            format!("{base}.{key}"),
+            format!("{key} must not be empty"),
+        )),
+        None => errors.push(ConfigValidationError::new(
+            format!("{base}.{key}"),
+            format!("{key} is required"),
+        )),
+    }
+}
+
+fn expect_optional_nonempty_string(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    if let Some(value) = params.get(key) {
+        match value.as_str() {
+            Some(s) if !s.trim().is_empty() => {}
+            Some(_) => errors.push(ConfigValidationError::new(
+                format!("{base}.{key}"),
+                format!("{key} must not be empty"),
+            )),
+            None => errors.push(ConfigValidationError::new(
+                format!("{base}.{key}"),
+                format!("{key} must be a string"),
+            )),
+        }
+    }
+}
+
+fn expect_string_one_of(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    allowed: &[&str],
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    let Some(value) = params.get(key) else {
+        return;
+    };
+    let Some(value) = value.as_str() else {
+        errors.push(ConfigValidationError::new(
+            format!("{base}.{key}"),
+            format!("{key} must be a string"),
+        ));
+        return;
+    };
+    if !allowed
+        .iter()
+        .any(|allowed| value.eq_ignore_ascii_case(allowed))
+    {
+        errors.push(ConfigValidationError::new(
+            format!("{base}.{key}"),
+            format!("{key} must be one of: {}", allowed.join(", ")),
+        ));
+    }
+}
+
+fn expect_finite_number(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    if let Some(value) = params.get(key) {
+        if toml_number_as_f64(value).is_none() {
+            errors.push(ConfigValidationError::new(
+                format!("{base}.{key}"),
+                format!("{key} must be a finite number"),
+            ));
+        }
+    }
+}
+
+fn expect_finite_number_min(
+    params: &toml::Table,
+    base: &str,
+    key: &str,
+    min: f64,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    if let Some(value) = params.get(key) {
+        match toml_number_as_f64(value) {
+            Some(v) if v >= min => {}
+            Some(_) => errors.push(ConfigValidationError::new(
+                format!("{base}.{key}"),
+                format!("{key} must be >= {min}"),
+            )),
+            None => errors.push(ConfigValidationError::new(
+                format!("{base}.{key}"),
+                format!("{key} must be a finite number"),
+            )),
+        }
+    }
+}
+
+fn toml_number_as_f64(value: &toml::Value) -> Option<f64> {
+    value
+        .as_float()
+        .or_else(|| value.as_integer().map(|value| value as f64))
+        .filter(|value| value.is_finite())
 }
 
 fn cmd_nvafx(args: NvafxArgs) -> Result<()> {
@@ -641,12 +1236,35 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
 }
 
 #[cfg(feature = "realtime")]
-fn cmd_devices() -> Result<()> {
+fn cmd_devices(args: DevicesArgs) -> Result<()> {
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&realtime::devices_json()?)?
+        );
+        return Ok(());
+    }
     realtime::print_devices()
 }
 
 #[cfg(not(feature = "realtime"))]
-fn cmd_devices() -> Result<()> {
+fn cmd_devices(args: DevicesArgs) -> Result<()> {
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ok": false,
+                "error": "设备枚举需 realtime 特性(cpal);当前构建未启用。",
+                "inputs": [],
+                "outputs": [],
+                "reference_sources": [
+                    { "id": "system", "label": "System audio", "kind": "system" },
+                    { "id": "none", "label": "No reference", "kind": "none" }
+                ]
+            }))?
+        );
+        return Ok(());
+    }
     println!("设备枚举需 realtime 特性(cpal);当前构建未启用。");
     let _ = backends::make_mic("default");
     Ok(())
@@ -657,10 +1275,15 @@ fn cmd_run(a: RunArgs) -> Result<()> {
     let cfg = load_run_config(&a)?;
     validate_nvafx_constraints(&cfg)?;
     let opts = runtime_options_from_args(&a)?;
-    println!(
+    let run_config = format!(
         "实时运行配置: mic={} ref={} out={}",
         cfg.mic, cfg.reference, cfg.output
     );
+    if opts.status_json {
+        eprintln!("{run_config}");
+    } else {
+        println!("{run_config}");
+    }
     realtime::run_with_options(&cfg, opts)
 }
 
@@ -796,7 +1419,10 @@ fn runtime_options_from_args(a: &RunArgs) -> Result<realtime::RuntimeOptions> {
         bail!("--stats-interval-ms 必须大于 0");
     }
     Ok(realtime::RuntimeOptions {
-        stats_interval_ms: a.stats_interval_ms.or_else(|| a.verbose.then_some(1000)),
+        stats_interval_ms: a
+            .stats_interval_ms
+            .or_else(|| (a.verbose || a.status_json).then_some(1000)),
+        status_json: a.status_json,
     })
 }
 
@@ -820,6 +1446,7 @@ mod tests {
             tail_ms: None,
             verbose: false,
             stats_interval_ms: None,
+            status_json: false,
             diagnostic_dir: None,
             diagnostic_seconds: None,
         }
@@ -901,6 +1528,19 @@ mod tests {
         let opts = runtime_options_from_args(&args).unwrap();
 
         assert_eq!(opts.stats_interval_ms, Some(1000));
+        assert!(!opts.status_json);
+    }
+
+    #[test]
+    #[cfg(feature = "realtime")]
+    fn runtime_options_use_status_json_default_interval() {
+        let mut args = run_args();
+        args.status_json = true;
+
+        let opts = runtime_options_from_args(&args).unwrap();
+
+        assert_eq!(opts.stats_interval_ms, Some(1000));
+        assert!(opts.status_json);
     }
 
     #[test]
@@ -912,5 +1552,76 @@ mod tests {
         let err = runtime_options_from_args(&args).unwrap_err();
 
         assert!(err.to_string().contains("大于 0"));
+    }
+
+    #[test]
+    fn processor_manifest_exposes_frontend_contract() {
+        let manifest = processor_manifest();
+        let processors = manifest["processors"].as_array().unwrap();
+
+        let aec3 = processors
+            .iter()
+            .find(|processor| processor["kind"] == "sonora_aec3")
+            .unwrap();
+
+        assert_eq!(aec3["default"], true);
+        assert_eq!(aec3["params"]["ns"]["default"], false);
+        assert_eq!(
+            aec3["params"]["reference_channels"]["values"],
+            json!(["mono", "stereo"])
+        );
+    }
+
+    #[test]
+    fn config_validation_accepts_default_aec3_baseline() {
+        let cfg = PipelineConfig {
+            chain: vec![NodeConfig {
+                kind: "sonora_aec3".into(),
+                params: toml::Table::new(),
+            }],
+            ..PipelineConfig::default()
+        };
+
+        let errors = validate_pipeline_config(&cfg);
+
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn config_validation_reports_frontend_safe_errors() {
+        let mut bad_params = toml::Table::new();
+        bad_params.insert("tail_ms".into(), toml::Value::Integer(1));
+        bad_params.insert("ns".into(), toml::Value::String("yes".into()));
+        let cfg = PipelineConfig {
+            sample_rate: 44_100,
+            reference_channels: ReferenceChannels::Stereo,
+            chain: vec![
+                NodeConfig {
+                    kind: "sonora_aec3".into(),
+                    params: bad_params,
+                },
+                NodeConfig {
+                    kind: "nvidia_afx_aec".into(),
+                    params: toml::Table::new(),
+                },
+                NodeConfig {
+                    kind: "missing".into(),
+                    params: toml::Table::new(),
+                },
+            ],
+            ..PipelineConfig::default()
+        };
+
+        let errors = validate_pipeline_config(&cfg);
+        let paths = errors
+            .iter()
+            .map(|error| error.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"chain[0].tail_ms"));
+        assert!(paths.contains(&"chain[0].ns"));
+        assert!(paths.contains(&"chain[2].kind"));
+        assert!(paths.contains(&"sample_rate"));
+        assert!(paths.contains(&"reference_channels"));
     }
 }

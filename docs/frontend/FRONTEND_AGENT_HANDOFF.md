@@ -203,9 +203,10 @@ export interface ChainNode {
 export interface RuntimeStatus {
   type: "status";
   elapsed_s: number;
+  frames: number;
   sample_rate: number;
   frame_ms: number;
-  backend: ProcessorKind;
+  backend: string;
   mic_dbfs: number;
   ref_dbfs: number;
   out_dbfs: number;
@@ -213,17 +214,21 @@ export interface RuntimeStatus {
   ref_q_samples: number;
   out_q_samples: number;
   output_queue_latency_ms: number;
+  algorithmic_latency_ms: number;
   estimated_user_latency_ms: number;
   aec_estimated_delay_ms: number;
+  mic_input_drops: number;
+  ref_input_drops: number;
+  input_drops: number;
   ref_underruns: number;
   output_underruns: number;
   output_overruns: number;
-  input_drops: number;
   stale_drops: number;
   node_process_time_ms: number;
   runtime_errors: number;
   diverged: boolean;
   last_backend_error?: string | null;
+  diagnostics_session_dir?: string | null;
 }
 ```
 
@@ -265,7 +270,7 @@ echoless nvafx doctor
 echoless nvafx doctor --json
 ```
 
-这些 JSON 命令是前端适配目标,可能需要后端 agent 先实现:
+这些 JSON 命令当前已经可直接用于前端 sidecar adapter:
 
 ```bash
 echoless devices --json
@@ -274,7 +279,13 @@ echoless run --config config.toml --status-json
 echoless config validate --config config.toml --json
 ```
 
-前端首版可以先用 mock adapter 对齐这些 contract。不要把现有中文 stdout 文本当作稳定 API。
+集成规则:
+
+- `run --status-json` 的 stdout 是 JSONL status event;启动提示、设备摘要、诊断路径等人类文本走 stderr。
+- `run --status-json` 默认 1000ms 一条 status;可以用 `--stats-interval-ms` 调整。
+- `config validate --json` 即使配置无效也会先在 stdout 输出 `{ ok, errors }`,然后用非 0 exit code 表达失败。
+- `devices --json` 在某些 macOS 会话可能返回空设备数组,前端要显示空态和刷新按钮。
+- 不要把现有中文 stdout 文本当作稳定 API。
 
 ## Backend Visibility Rules
 
@@ -404,4 +415,3 @@ export type RuntimeState =
 - `reference_channels` 值: `mono` / `stereo`。
 - `nvidia_afx_aec` 约束: Windows + 48k + 10ms + mono reference。
 - CLI 命令名和现有 flags。
-

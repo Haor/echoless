@@ -137,29 +137,33 @@ Tauri frontend
 - Windows/macOS artifact 打包更直接。
 - 前端可以先基于稳定 JSON contract 开发。
 
-## 必须补的后端接口
+## 后端接口 contract
 
 ### 1. 设备列表 JSON
 
-新增:
+已实现:
 
 ```bash
 echoless devices --json
 ```
 
-目标输出:
+输出结构:
 
 ```json
 {
+  "ok": true,
   "inputs": [
     {
       "id": "1",
       "index": 1,
       "name": "MacBook Pro麦克风",
       "kind": "input",
+      "is_default": true,
+      "selector": "1",
       "default_sample_rate": 48000,
       "channels": 1,
-      "sample_format": "f32"
+      "sample_format": "f32",
+      "config_error": null
     }
   ],
   "outputs": [
@@ -168,27 +172,34 @@ echoless devices --json
       "index": 0,
       "name": "MacBook Pro扬声器",
       "kind": "output",
+      "is_default": true,
+      "selector": "0",
       "default_sample_rate": 48000,
       "channels": 2,
-      "sample_format": "f32"
+      "sample_format": "f32",
+      "config_error": null
     }
   ],
   "reference_sources": [
     { "id": "system", "label": "System audio", "kind": "system" },
-    { "id": "none", "label": "No reference", "kind": "none" }
+    { "id": "none", "label": "No reference", "kind": "none" },
+    { "id": "input:1", "label": "MacBook Pro麦克风", "kind": "input", "device_index": 1 },
+    { "id": "output:0", "label": "MacBook Pro扬声器", "kind": "output", "device_index": 0 }
   ]
 }
 ```
 
+说明:当前设备 selector 使用设备索引,与 CLI 既有选择规则一致。某些 macOS 会话可能返回空 `inputs` / `outputs`;前端应按空状态处理并提供刷新。
+
 ### 2. Processor manifest JSON
 
-新增:
+已实现:
 
 ```bash
 echoless processors --json
 ```
 
-目标输出:
+输出结构包含 `passthrough`、`sonora_aec3`、`localvqe`、`nvidia_afx_aec` 四类 backend。AEC3 manifest 的核心字段:
 
 ```json
 {
@@ -218,18 +229,19 @@ echoless processors --json
 
 ### 3. Runtime status JSONL
 
-新增一种机器可读运行模式:
+已实现一种机器可读运行模式:
 
 ```bash
 echoless run --config config.toml --status-json
 ```
 
-或者由 daemon/sidecar 统一输出 JSONL events:
+此模式下 stdout 只输出 JSONL status events,人类提示走 stderr。默认每 1000ms 输出一次,可用 `--stats-interval-ms` 覆盖。事件结构:
 
 ```json
 {
   "type": "status",
   "elapsed_s": 12,
+  "frames": 576000,
   "sample_rate": 48000,
   "frame_ms": 10,
   "backend": "sonora_aec3",
@@ -240,17 +252,21 @@ echoless run --config config.toml --status-json
   "ref_q_samples": 640,
   "out_q_samples": 3000,
   "output_queue_latency_ms": 62.5,
+  "algorithmic_latency_ms": 0.0,
   "estimated_user_latency_ms": 67.5,
   "aec_estimated_delay_ms": 48,
+  "mic_input_drops": 0,
+  "ref_input_drops": 0,
+  "input_drops": 0,
+  "stale_drops": 0,
   "ref_underruns": 0,
   "output_underruns": 0,
   "output_overruns": 0,
-  "input_drops": 0,
-  "stale_drops": 0,
   "node_process_time_ms": 0.1,
   "runtime_errors": 0,
   "diverged": false,
-  "last_backend_error": null
+  "last_backend_error": null,
+  "diagnostics_session_dir": "diagnostics/session-1765000000"
 }
 ```
 
@@ -270,13 +286,13 @@ estimated_user_latency_ms =
 
 ### 4. 配置校验
 
-新增:
+已实现:
 
 ```bash
 echoless config validate --config config.toml --json
 ```
 
-首版也可以先在 `run` 前做同等校验。GUI 需要拿到结构化错误:
+无论配置是否有效,`--json` 都会先在 stdout 输出结构化结果;无效时进程非 0 退出。错误结构:
 
 ```json
 {
@@ -477,4 +493,3 @@ RTX AEC 只在 Windows + RTX + doctor 通过时显示。
 6. 接 diagnostics 录制。
 7. 接 backend 调参页。
 8. 再抽 `RealtimeRuntime` / `ControlApi` 实现,减少 CLI 和 GUI runtime 重复。
-

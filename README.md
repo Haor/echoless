@@ -61,6 +61,9 @@ cargo run -- nvafx doctor
 
 # JSON 输出供 GUI/installer 消费
 cargo run -- nvafx doctor --json
+cargo run -- devices --json
+cargo run -- processors --json
+cargo run -- config validate --config configs/example.toml --json
 
 # 从本地 zip 安装 RTX AEC runtime 与当前 GPU 架构模型
 cargo run -- nvafx install \
@@ -72,6 +75,9 @@ cargo run -- devices
 
 # 实时运行
 cargo run --release -- run --config configs/example.toml
+
+# 实时运行并输出前端可消费的 JSONL status(stdout 纯 JSONL,人类提示走 stderr)
+cargo run --release -- run --config configs/example.toml --status-json
 
 # 离线跑链
 cargo run -p echoless-cli --bin echoless -- offline \
