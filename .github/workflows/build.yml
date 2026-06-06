@@ -99,19 +99,74 @@ jobs:
             -R "^regression_" \
             --output-on-failure
 
+      - name: LocalVQE Echoless FFI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          shared_build="${RUNNER_TEMP}/localvqe-shared-build"
+          regression_build="${RUNNER_TEMP}/localvqe-regression-build"
+          model="${regression_build}/bench_assets/localvqe-v1.2-1.3M-f32.gguf"
+          if [[ ! -f "${model}" ]]; then
+            model="$(find "${regression_build}" -name 'localvqe-v1.2-1.3M-f32.gguf' -print -quit)"
+          fi
+          if [[ -z "${model}" || ! -f "${model}" ]]; then
+            echo "LocalVQE smoke model not found under ${regression_build}" >&2
+            exit 1
+          fi
+
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            shared_dir="${shared_build}/bin/Release"
+            lib="${shared_dir}/localvqe.dll"
+            if [[ ! -f "${lib}" ]]; then
+              echo "LocalVQE DLL not found at ${lib}" >&2
+              exit 1
+            fi
+            export PATH="${shared_dir}:${PATH}"
+            lib="$(cygpath -w "${lib}")"
+            model="$(cygpath -w "${model}")"
+          else
+            shared_dir="${shared_build}/bin"
+            lib="$(find "${shared_build}" -name 'liblocalvqe*.dylib' -print -quit)"
+            if [[ -z "${lib}" || ! -f "${lib}" ]]; then
+              echo "LocalVQE dylib not found under ${shared_build}" >&2
+              exit 1
+            fi
+            export DYLD_LIBRARY_PATH="${shared_dir}:${DYLD_LIBRARY_PATH:-}"
+            export DYLD_FALLBACK_LIBRARY_PATH="${shared_dir}:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+          fi
+
+          ECHOLESS_LOCALVQE_LIBRARY="${lib}" \
+          ECHOLESS_LOCALVQE_MODEL="${model}" \
+            cargo test -p echoless-processors localvqe_ffi_smoke -- --ignored --nocapture
+
       - name: Package
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
+          shared_build="${RUNNER_TEMP}/localvqe-shared-build"
+          regression_build="${RUNNER_TEMP}/localvqe-regression-build"
+          model="${regression_build}/bench_assets/localvqe-v1.2-1.3M-f32.gguf"
+          if [[ ! -f "${model}" ]]; then
+            model="$(find "${regression_build}" -name 'localvqe-v1.2-1.3M-f32.gguf' -print -quit)"
+          fi
+          if [[ -z "${model}" || ! -f "${model}" ]]; then
+            echo "LocalVQE model not found under ${regression_build}" >&2
+            exit 1
+          fi
+
+          mkdir -p dist/models
+          cp "${model}" dist/models/
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            shared_dir="${shared_build}/bin/Release"
             cp target/release/echoless.exe dist/
             cp configs/example.toml dist/
+            cp "${shared_dir}"/*.dll dist/
             powershell -NoLogo -NoProfile -Command \
               "Compress-Archive -Path dist/* -DestinationPath echoless-${{ matrix.package }}-${{ runner.arch }}.zip -Force"
           else
             cp target/release/echoless dist/
             cp configs/example.toml dist/
+            find "${shared_build}" -name '*.dylib' -exec cp -P {} dist/ \;
             tar -czf "echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz" -C dist .
           fi
 

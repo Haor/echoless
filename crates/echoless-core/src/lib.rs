@@ -1,7 +1,7 @@
 //! echoless-core — 管线编排 + 配置 + 控制面。**不依赖任何平台 crate**(蓝本 §1)。
 //!
-//! 前端(CLI 现在、Electron 后期)只透过 `ControlApi` 访问;配置类型 serde 可序列化,
-//! CLI 用 TOML、Electron 用 JSON,映射到同一套(蓝本 §14)。
+//! 前端(CLI 现在、Tauri/GUI 后期)只透过 `ControlApi` 访问;配置类型 serde 可序列化,
+//! CLI 用 TOML、GUI 用 JSON,映射到同一套(蓝本 §14)。
 
 use std::time::Duration;
 
@@ -97,7 +97,7 @@ pub struct RunReport {
     pub node_stats: Vec<ProcessorStats>,
 }
 
-/// 控制面:CLI 现在直接内嵌调用;Electron 后期经 echoless-daemon 映射成 JSON-RPC(蓝本 §14)。
+/// 控制面:CLI 现在直接内嵌调用;Tauri/GUI 后期经 echoless-daemon 映射成 JSON-RPC(蓝本 §14)。
 pub trait ControlApi: Send + Sync {
     fn list_devices(&self) -> Vec<DeviceInfo>;
     fn start(&self, cfg: &PipelineConfig) -> anyhow::Result<()>;

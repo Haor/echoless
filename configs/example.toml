@@ -1,4 +1,4 @@
-# 管线配置示例(CLI 用 TOML;后期 Electron 用等价 JSON,映射到同一 PipelineConfig)
+# 管线配置示例(CLI 用 TOML;后期 Tauri/GUI 用等价 JSON,映射到同一 PipelineConfig)
 #
 # 实时跑:echoless run --config configs/example.toml
 # 先看设备:echoless devices
@@ -24,7 +24,12 @@ ns = true                    # 顺带降噪(与 AEC3 同属一个 sonora APM;贴
 ns_level = "moderate"        # low / moderate / high / veryhigh
 # agc = false                # AGC2 自动增益
 
-# 后续可串 LocalVQE(需 rubato 边界重采样 + GGML 模型,尚未落地):
+# 可串 LocalVQE:CI artifact 会把 Windows 所需 DLL 与小模型一起放入包内。
+# 注意:当前链路边界 SRC 仍是占位线性重采样,LocalVQE 可测真实推理,但不是最终音质版 SRC。
 # [[chain]]
 # kind = "localvqe"
-# model = "models/localvqe-v1.3.gguf"
+# model = "models/localvqe-v1.2-1.3M-f32.gguf"
+# library = "localvqe.dll"       # Windows artifact 根目录;macOS 用 "liblocalvqe.dylib"
+# threads = 2                    # CPU 线程数;0/不填 = 上游 auto
+# noise_gate = true
+# noise_gate_threshold_dbfs = -45.0

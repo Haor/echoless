@@ -1,21 +1,177 @@
-//! LocalVQE 节点(GGML,端到端 AEC+NS+dereverb)。骨架阶段为 stub:io_spec 真实(16k/mono),process 暂直通。
+//! LocalVQE node(GGML, end-to-end AEC + NS + dereverb).
 //!
-//! 实现阶段:经 FFI 调 liblocalvqe(`localvqe_process_frame_f32`,16k mono mic + 16k mono ref)。
-//! 可单开(链长 1)或串联(链中,near=上一级输出,far=真实 ref)。详见蓝本 §7、主文档 §3.3。
-//! 注意:16ms 算法延迟;GGML/TFLite 实测须单线程(探索报告 §4.3 #20)。
+//! Runs through the upstream flat C ABI in `localvqe_api.h`. The node domain is
+//! fixed at 16 kHz mono mic + 16 kHz mono reference; `ProcessorChain` performs
+//! the boundary adaptation from the runtime sample rate.
+
+use anyhow::{bail, Context, Result};
+use libloading::Library;
+use std::collections::VecDeque;
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_float, c_int};
+use std::path::{Path, PathBuf};
 
 use crate::{EchoProcessor, IoSpec, ProcessorStats};
 
+const LOCALVQE_SAMPLE_RATE: u32 = 16_000;
+const DEFAULT_NOISE_GATE_THRESHOLD_DBFS: f32 = -45.0;
+
+#[cfg(target_os = "windows")]
+const DEFAULT_LIBRARY_NAMES: &[&str] = &["localvqe.dll"];
+#[cfg(target_os = "macos")]
+const DEFAULT_LIBRARY_NAMES: &[&str] = &["liblocalvqe.dylib", "localvqe.dylib"];
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+const DEFAULT_LIBRARY_NAMES: &[&str] = &["liblocalvqe.so", "localvqe.so"];
+
+type LocalVqeCtx = usize;
+type LocalVqeOptions = usize;
+type OptionsNewFn = unsafe extern "C" fn() -> LocalVqeOptions;
+type OptionsFreeFn = unsafe extern "C" fn(LocalVqeOptions);
+type OptionsSetStringFn = unsafe extern "C" fn(LocalVqeOptions, *const c_char) -> c_int;
+type OptionsSetIntFn = unsafe extern "C" fn(LocalVqeOptions, c_int) -> c_int;
+type NewWithOptionsFn = unsafe extern "C" fn(LocalVqeOptions) -> LocalVqeCtx;
+type FreeFn = unsafe extern "C" fn(LocalVqeCtx);
+type ProcessFrameF32Fn =
+    unsafe extern "C" fn(LocalVqeCtx, *const f32, *const f32, c_int, *mut f32) -> c_int;
+type LastErrorFn = unsafe extern "C" fn(LocalVqeCtx) -> *const c_char;
+type IntGetterFn = unsafe extern "C" fn(LocalVqeCtx) -> c_int;
+type ResetFn = unsafe extern "C" fn(LocalVqeCtx);
+type SetNoiseGateFn = unsafe extern "C" fn(LocalVqeCtx, c_int, c_float) -> c_int;
+
 pub struct LocalVqe {
-    model_path: Option<String>,
-    // TODO(impl): liblocalvqe handle (FFI)
+    model_path: Option<PathBuf>,
+    library_path: Option<PathBuf>,
+    backend: Option<String>,
+    device: Option<i32>,
+    threads: Option<i32>,
+    noise_gate: bool,
+    noise_gate_threshold_dbfs: f32,
+    runtime: Option<LocalVqeRuntime>,
+    near_buffer: Vec<f32>,
+    far_buffer: Vec<f32>,
+    out_queue: VecDeque<f32>,
+    started: bool,
+    last_error: Option<String>,
 }
 
 impl LocalVqe {
     pub fn new() -> Self {
-        Self { model_path: None }
+        Self {
+            model_path: None,
+            library_path: None,
+            backend: None,
+            device: None,
+            threads: None,
+            noise_gate: false,
+            noise_gate_threshold_dbfs: DEFAULT_NOISE_GATE_THRESHOLD_DBFS,
+            runtime: None,
+            near_buffer: Vec::new(),
+            far_buffer: Vec::new(),
+            out_queue: VecDeque::new(),
+            started: false,
+            last_error: None,
+        }
+    }
+
+    fn load_runtime(&self) -> Result<LocalVqeRuntime> {
+        let model_path = self
+            .model_path
+            .as_ref()
+            .context("localvqe model path is required; set `model = \"models/....gguf\"`")?;
+        if !model_path.exists() {
+            bail!("localvqe model not found: {}", model_path.display());
+        }
+
+        let candidates = library_candidates(self.library_path.as_deref());
+        let mut errors = Vec::new();
+        for candidate in &candidates {
+            match LocalVqeApi::load(candidate) {
+                Ok(api) => {
+                    let config = LocalVqeRuntimeConfig {
+                        model_path,
+                        backend: self.backend.as_deref(),
+                        device: self.device,
+                        threads: self.threads,
+                        noise_gate: self.noise_gate,
+                        noise_gate_threshold_dbfs: self.noise_gate_threshold_dbfs,
+                    };
+                    return LocalVqeRuntime::new(api, candidate.clone(), config);
+                }
+                Err(err) => errors.push(format!("{}: {err}", candidate.display())),
+            }
+        }
+
+        if candidates.is_empty() {
+            bail!(
+                "localvqe library not found; set `library = \"localvqe.dll\"` or ECHOLESS_LOCALVQE_LIBRARY"
+            );
+        }
+
+        bail!(
+            "localvqe library could not be loaded; tried: {}",
+            errors.join(" | ")
+        );
+    }
+
+    fn reset_stream_state(&mut self) {
+        self.near_buffer.clear();
+        self.far_buffer.clear();
+        self.out_queue.clear();
+        self.started = false;
+        self.last_error = None;
+    }
+
+    fn process_loaded(
+        &mut self,
+        near: &[f32],
+        far: &[f32],
+        out: &mut [f32],
+        frames: usize,
+    ) -> Result<()> {
+        let samples = out.len().min(frames);
+        if samples == 0 {
+            return Ok(());
+        }
+
+        for i in 0..samples {
+            self.near_buffer.push(near.get(i).copied().unwrap_or(0.0));
+            self.far_buffer.push(far.get(i).copied().unwrap_or(0.0));
+        }
+
+        let runtime = self
+            .runtime
+            .as_mut()
+            .context("localvqe runtime is not configured")?;
+        let hop = runtime.hop;
+        let mut frame_out = vec![0.0; hop];
+        while self.near_buffer.len() >= hop && self.far_buffer.len() >= hop {
+            runtime.process_frame(
+                &self.near_buffer[..hop],
+                &self.far_buffer[..hop],
+                &mut frame_out,
+            )?;
+            self.near_buffer.drain(..hop);
+            self.far_buffer.drain(..hop);
+            self.out_queue.extend(frame_out.iter().copied());
+        }
+
+        let start_threshold = samples.saturating_add(hop);
+        if !self.started && self.out_queue.len() >= start_threshold {
+            self.started = true;
+        }
+
+        if self.started {
+            for sample in out.iter_mut().take(samples) {
+                *sample = self.out_queue.pop_front().unwrap_or(0.0);
+            }
+        } else {
+            out[..samples].fill(0.0);
+        }
+        out[samples..].fill(0.0);
+        Ok(())
     }
 }
+
 impl Default for LocalVqe {
     fn default() -> Self {
         Self::new()
@@ -26,24 +182,456 @@ impl EchoProcessor for LocalVqe {
     fn name(&self) -> &'static str {
         "localvqe"
     }
+
     fn io_spec(&self) -> IoSpec {
-        IoSpec { sample_rate: 16000, near_channels: 1, far_channels: 1, algorithmic_latency_ms: 16.0 }
-    }
-    fn configure(&mut self, params: &toml::Table) -> anyhow::Result<()> {
-        self.model_path = params.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
-        // TODO(impl): 加载 GGUF 权重;无 model 时报错或回退
-        Ok(())
-    }
-    fn process(&mut self, near: &[f32], _far: &[f32], out: &mut [f32], _frames: u32) {
-        // TODO(impl): localvqe_process_frame_f32(near 16k mono, far 16k mono) → out
-        let n = out.len().min(near.len());
-        out[..n].copy_from_slice(&near[..n]);
-        for v in out[n..].iter_mut() {
-            *v = 0.0;
+        IoSpec {
+            sample_rate: LOCALVQE_SAMPLE_RATE,
+            near_channels: 1,
+            far_channels: 1,
+            algorithmic_latency_ms: 16.0,
         }
     }
+
+    fn configure(&mut self, params: &toml::Table) -> Result<()> {
+        self.model_path = required_path(params, "model")?;
+        self.library_path = optional_path(params, "library")
+            .or_else(|| std::env::var_os("ECHOLESS_LOCALVQE_LIBRARY").map(PathBuf::from));
+        self.backend = optional_string(params, "backend");
+        self.device = optional_i32(params, "device")?;
+        self.threads = optional_i32(params, "threads")?;
+        self.noise_gate = optional_bool(params, "noise_gate").unwrap_or(false);
+        self.noise_gate_threshold_dbfs = optional_f32(params, "noise_gate_threshold_dbfs")?
+            .unwrap_or(DEFAULT_NOISE_GATE_THRESHOLD_DBFS);
+
+        let runtime = self.load_runtime()?;
+        self.runtime = Some(runtime);
+        self.reset_stream_state();
+        Ok(())
+    }
+
+    fn process(&mut self, near: &[f32], far: &[f32], out: &mut [f32], frames: u32) {
+        if self.runtime.is_none() {
+            copy_into(near, out);
+            return;
+        }
+
+        if let Err(err) = self.process_loaded(near, far, out, frames as usize) {
+            self.last_error = Some(err.to_string());
+            copy_into(near, out);
+        }
+    }
+
     fn stats(&self) -> ProcessorStats {
         ProcessorStats::empty("localvqe")
     }
-    fn reset(&mut self) {}
+
+    fn reset(&mut self) {
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.reset();
+        }
+        self.reset_stream_state();
+    }
+}
+
+struct LocalVqeRuntime {
+    api: LocalVqeApi,
+    ctx: LocalVqeCtx,
+    _library_path: PathBuf,
+    hop: usize,
+    _fft_size: usize,
+}
+
+struct LocalVqeRuntimeConfig<'a> {
+    model_path: &'a Path,
+    backend: Option<&'a str>,
+    device: Option<i32>,
+    threads: Option<i32>,
+    noise_gate: bool,
+    noise_gate_threshold_dbfs: f32,
+}
+
+impl LocalVqeRuntime {
+    fn new(
+        api: LocalVqeApi,
+        library_path: PathBuf,
+        config: LocalVqeRuntimeConfig<'_>,
+    ) -> Result<Self> {
+        let model = cstring_path(config.model_path)?;
+        let backend = config.backend.map(cstring).transpose()?;
+
+        let options = unsafe { (api.options_new)() };
+        if options == 0 {
+            bail!("localvqe_options_new returned null");
+        }
+        let guard = LocalVqeOptionsGuard { api: &api, options };
+
+        check_setter(
+            unsafe { (api.options_set_model_path)(options, model.as_ptr()) },
+            "model_path",
+        )?;
+        if let Some(backend) = &backend {
+            check_setter(
+                unsafe { (api.options_set_backend)(options, backend.as_ptr()) },
+                "backend",
+            )?;
+        }
+        if let Some(device) = config.device {
+            check_setter(
+                unsafe { (api.options_set_device)(options, device) },
+                "device",
+            )?;
+        }
+        if let Some(threads) = config.threads {
+            check_setter(
+                unsafe { (api.options_set_threads)(options, threads) },
+                "threads",
+            )?;
+        }
+
+        let ctx = unsafe { (api.new_with_options)(options) };
+        drop(guard);
+        if ctx == 0 {
+            bail!(
+                "localvqe_new_with_options returned null for model {}",
+                config.model_path.display()
+            );
+        }
+
+        let sample_rate = unsafe { (api.sample_rate)(ctx) };
+        if sample_rate != LOCALVQE_SAMPLE_RATE as c_int {
+            unsafe { (api.free)(ctx) };
+            bail!("localvqe sample rate {sample_rate} is unsupported; expected {LOCALVQE_SAMPLE_RATE}");
+        }
+        let hop = unsafe { (api.hop_length)(ctx) };
+        let fft_size = unsafe { (api.fft_size)(ctx) };
+        if hop <= 0 || fft_size <= 0 {
+            let msg = api.last_error(ctx);
+            unsafe { (api.free)(ctx) };
+            bail!("localvqe returned invalid shape hop={hop}, fft={fft_size}: {msg}");
+        }
+
+        check_runtime(
+            &api,
+            ctx,
+            unsafe {
+                (api.set_noise_gate)(
+                    ctx,
+                    if config.noise_gate { 1 } else { 0 },
+                    config.noise_gate_threshold_dbfs,
+                )
+            },
+            "set_noise_gate",
+        )?;
+
+        Ok(Self {
+            api,
+            ctx,
+            _library_path: library_path,
+            hop: hop as usize,
+            _fft_size: fft_size as usize,
+        })
+    }
+
+    fn process_frame(&mut self, near: &[f32], far: &[f32], out: &mut [f32]) -> Result<()> {
+        let ret = unsafe {
+            (self.api.process_frame_f32)(
+                self.ctx,
+                near.as_ptr(),
+                far.as_ptr(),
+                self.hop as c_int,
+                out.as_mut_ptr(),
+            )
+        };
+        check_runtime(&self.api, self.ctx, ret, "process_frame_f32")
+    }
+
+    fn reset(&mut self) {
+        unsafe { (self.api.reset)(self.ctx) };
+    }
+}
+
+impl Drop for LocalVqeRuntime {
+    fn drop(&mut self) {
+        unsafe { (self.api.free)(self.ctx) };
+    }
+}
+
+struct LocalVqeOptionsGuard<'a> {
+    api: &'a LocalVqeApi,
+    options: LocalVqeOptions,
+}
+
+impl Drop for LocalVqeOptionsGuard<'_> {
+    fn drop(&mut self) {
+        unsafe { (self.api.options_free)(self.options) };
+    }
+}
+
+struct LocalVqeApi {
+    _lib: Library,
+    options_new: OptionsNewFn,
+    options_free: OptionsFreeFn,
+    options_set_model_path: OptionsSetStringFn,
+    options_set_backend: OptionsSetStringFn,
+    options_set_device: OptionsSetIntFn,
+    options_set_threads: OptionsSetIntFn,
+    new_with_options: NewWithOptionsFn,
+    free: FreeFn,
+    process_frame_f32: ProcessFrameF32Fn,
+    last_error: LastErrorFn,
+    sample_rate: IntGetterFn,
+    hop_length: IntGetterFn,
+    fft_size: IntGetterFn,
+    reset: ResetFn,
+    set_noise_gate: SetNoiseGateFn,
+}
+
+impl LocalVqeApi {
+    fn load(path: &Path) -> Result<Self> {
+        let lib = unsafe { Library::new(path) }
+            .with_context(|| format!("failed to open localvqe library {}", path.display()))?;
+        unsafe {
+            Ok(Self {
+                options_new: symbol(&lib, b"localvqe_options_new\0")?,
+                options_free: symbol(&lib, b"localvqe_options_free\0")?,
+                options_set_model_path: symbol(&lib, b"localvqe_options_set_model_path\0")?,
+                options_set_backend: symbol(&lib, b"localvqe_options_set_backend\0")?,
+                options_set_device: symbol(&lib, b"localvqe_options_set_device\0")?,
+                options_set_threads: symbol(&lib, b"localvqe_options_set_threads\0")?,
+                new_with_options: symbol(&lib, b"localvqe_new_with_options\0")?,
+                free: symbol(&lib, b"localvqe_free\0")?,
+                process_frame_f32: symbol(&lib, b"localvqe_process_frame_f32\0")?,
+                last_error: symbol(&lib, b"localvqe_last_error\0")?,
+                sample_rate: symbol(&lib, b"localvqe_sample_rate\0")?,
+                hop_length: symbol(&lib, b"localvqe_hop_length\0")?,
+                fft_size: symbol(&lib, b"localvqe_fft_size\0")?,
+                reset: symbol(&lib, b"localvqe_reset\0")?,
+                set_noise_gate: symbol(&lib, b"localvqe_set_noise_gate\0")?,
+                _lib: lib,
+            })
+        }
+    }
+
+    fn last_error(&self, ctx: LocalVqeCtx) -> String {
+        let ptr = unsafe { (self.last_error)(ctx) };
+        if ptr.is_null() {
+            return String::new();
+        }
+        unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+unsafe fn symbol<T: Copy>(lib: &Library, name: &[u8]) -> Result<T> {
+    Ok(*lib.get::<T>(name).with_context(|| {
+        format!(
+            "missing symbol {}",
+            String::from_utf8_lossy(name).trim_end_matches('\0')
+        )
+    })?)
+}
+
+fn required_path(params: &toml::Table, key: &str) -> Result<Option<PathBuf>> {
+    match params.get(key).and_then(|v| v.as_str()) {
+        Some(value) if !value.trim().is_empty() => Ok(Some(PathBuf::from(value))),
+        _ => bail!("localvqe {key} path is required"),
+    }
+}
+
+fn optional_path(params: &toml::Table, key: &str) -> Option<PathBuf> {
+    params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+fn optional_string(params: &toml::Table, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn optional_bool(params: &toml::Table, key: &str) -> Option<bool> {
+    params.get(key).and_then(|v| v.as_bool())
+}
+
+fn optional_i32(params: &toml::Table, key: &str) -> Result<Option<i32>> {
+    match params.get(key) {
+        Some(toml::Value::Integer(v)) => {
+            let v = i32::try_from(*v)
+                .with_context(|| format!("localvqe {key} is outside i32 range"))?;
+            Ok(Some(v))
+        }
+        Some(_) => bail!("localvqe {key} must be an integer"),
+        None => Ok(None),
+    }
+}
+
+fn optional_f32(params: &toml::Table, key: &str) -> Result<Option<f32>> {
+    match params.get(key) {
+        Some(toml::Value::Float(v)) => Ok(Some(*v as f32)),
+        Some(toml::Value::Integer(v)) => Ok(Some(*v as f32)),
+        Some(_) => bail!("localvqe {key} must be a number"),
+        None => Ok(None),
+    }
+}
+
+fn library_candidates(configured: Option<&Path>) -> Vec<PathBuf> {
+    if let Some(path) = configured {
+        if path.is_absolute() {
+            return vec![path.to_path_buf()];
+        }
+        let mut candidates = vec![path.to_path_buf()];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                push_unique_path(&mut candidates, dir.join(path));
+            }
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            push_unique_path(&mut candidates, cwd.join(path));
+        }
+        return candidates;
+    }
+
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            push_default_library_candidates(&mut candidates, dir);
+            push_default_library_candidates(&mut candidates, &dir.join("localvqe"));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        push_default_library_candidates(&mut candidates, &cwd);
+        push_default_library_candidates(&mut candidates, &cwd.join("localvqe"));
+    }
+    candidates
+}
+
+fn push_default_library_candidates(candidates: &mut Vec<PathBuf>, dir: &Path) {
+    for name in DEFAULT_LIBRARY_NAMES {
+        push_unique_path(candidates, dir.join(name));
+    }
+}
+
+fn push_unique_path(candidates: &mut Vec<PathBuf>, path: PathBuf) {
+    if !candidates.iter().any(|existing| existing == &path) {
+        candidates.push(path);
+    }
+}
+
+fn cstring_path(path: &Path) -> Result<CString> {
+    cstring(path.to_string_lossy())
+}
+
+fn cstring<S: AsRef<str>>(value: S) -> Result<CString> {
+    CString::new(value.as_ref()).context("localvqe string contains an interior NUL byte")
+}
+
+fn check_setter(ret: c_int, field: &str) -> Result<()> {
+    if ret == 0 {
+        Ok(())
+    } else {
+        bail!("localvqe option setter {field} failed with code {ret}");
+    }
+}
+
+fn check_runtime(api: &LocalVqeApi, ctx: LocalVqeCtx, ret: c_int, call: &str) -> Result<()> {
+    if ret == 0 {
+        Ok(())
+    } else {
+        let error = api.last_error(ctx);
+        bail!("localvqe {call} failed with code {ret}: {error}");
+    }
+}
+
+fn copy_into(src: &[f32], dst: &mut [f32]) {
+    let n = dst.len().min(src.len());
+    dst[..n].copy_from_slice(&src[..n]);
+    dst[n..].fill(0.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn configure_requires_model_path() {
+        let mut processor = LocalVqe::new();
+        let err = processor.configure(&toml::Table::new()).unwrap_err();
+        assert!(err.to_string().contains("model"));
+    }
+
+    #[test]
+    fn configure_reports_missing_library_path() {
+        let model = unique_temp_model_path();
+        std::fs::write(&model, []).unwrap();
+
+        let mut params = toml::Table::new();
+        params.insert(
+            "model".into(),
+            toml::Value::String(model.to_string_lossy().into_owned()),
+        );
+        params.insert(
+            "library".into(),
+            toml::Value::String("/definitely/missing/localvqe.dll".into()),
+        );
+
+        let mut processor = LocalVqe::new();
+        let err = processor.configure(&params).unwrap_err();
+        let _ = std::fs::remove_file(&model);
+        assert!(err.to_string().contains("localvqe"));
+        assert!(err.to_string().contains("library"));
+    }
+
+    #[test]
+    #[ignore = "requires ECHOLESS_LOCALVQE_LIBRARY and ECHOLESS_LOCALVQE_MODEL"]
+    fn localvqe_ffi_smoke() {
+        let library = std::env::var("ECHOLESS_LOCALVQE_LIBRARY").unwrap();
+        let model = std::env::var("ECHOLESS_LOCALVQE_MODEL").unwrap();
+
+        let mut params = toml::Table::new();
+        params.insert("model".into(), toml::Value::String(model));
+        params.insert("library".into(), toml::Value::String(library));
+        params.insert("threads".into(), toml::Value::Integer(1));
+        params.insert("noise_gate".into(), toml::Value::Boolean(true));
+
+        let mut processor = LocalVqe::new();
+        processor.configure(&params).unwrap();
+
+        let frames = 160usize;
+        let mut saw_finite_output = false;
+        for block in 0..8 {
+            let near = synthetic_sine(frames, block);
+            let far = vec![0.0; frames];
+            let mut out = vec![0.0; frames];
+            processor.process(&near, &far, &mut out, frames as u32);
+            assert!(out.iter().all(|v| v.is_finite()));
+            saw_finite_output |= out.iter().any(|v| v.abs() > 0.0);
+        }
+        assert!(saw_finite_output);
+    }
+
+    fn synthetic_sine(frames: usize, block: usize) -> Vec<f32> {
+        let offset = block * frames;
+        (0..frames)
+            .map(|i| {
+                let phase = ((offset + i) as f32 * 440.0 * std::f32::consts::TAU)
+                    / LOCALVQE_SAMPLE_RATE as f32;
+                0.05 * phase.sin()
+            })
+            .collect()
+    }
+
+    fn unique_temp_model_path() -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("echoless-localvqe-test-{nanos}.gguf"))
+    }
 }
