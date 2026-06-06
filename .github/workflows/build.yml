@@ -51,16 +51,56 @@ jobs:
         run: |
           set -euo pipefail
           cmake --version
-          git clone --depth 1 --recursive https://github.com/localai-org/LocalVQE.git "${RUNNER_TEMP}/LocalVQE"
-          cmake -S "${RUNNER_TEMP}/LocalVQE/ggml" \
-            -B "${RUNNER_TEMP}/localvqe-build" \
+          localvqe_src="${RUNNER_TEMP}/LocalVQE"
+          shared_build="${RUNNER_TEMP}/localvqe-shared-build"
+          regression_build="${RUNNER_TEMP}/localvqe-regression-build"
+          git clone --depth 1 --recursive https://github.com/localai-org/LocalVQE.git "${localvqe_src}"
+
+          # Upstream test helpers currently miss the Windows S_ISREG aliases.
+          # Keep this as a CI-local compatibility shim until upstream fixes it.
+          helper="${localvqe_src}/ggml/tests/test_helpers.h"
+          helper_tmp="${RUNNER_TEMP}/test_helpers.h"
+          awk '
+            {
+              print
+              if ($0 == "#include <sys/stat.h>") {
+                print ""
+                print "#ifndef S_IFMT"
+                print "#define S_IFMT _S_IFMT"
+                print "#endif"
+                print "#ifndef S_IFREG"
+                print "#define S_IFREG _S_IFREG"
+                print "#endif"
+                print "#ifndef S_ISREG"
+                print "#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)"
+                print "#endif"
+              }
+            }
+          ' "${helper}" > "${helper_tmp}"
+          mv "${helper_tmp}" "${helper}"
+
+          cmake -S "${localvqe_src}/ggml" \
+            -B "${shared_build}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DLOCALVQE_BUILD_SHARED=ON
-          cmake --build "${RUNNER_TEMP}/localvqe-build" \
+          cmake --build "${shared_build}" \
             --config Release \
-            --target localvqe_shared test_regression regression-assets
-          ctest --test-dir "${RUNNER_TEMP}/localvqe-build" \
+            --target localvqe_shared
+
+          regression_cxx_flags="-DLOCALVQE_BUILD"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            regression_cxx_flags="/DLOCALVQE_BUILD"
+          fi
+          cmake -S "${localvqe_src}/ggml" \
+            -B "${regression_build}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS="${regression_cxx_flags}"
+          cmake --build "${regression_build}" \
+            --config Release \
+            --target test_regression regression-assets
+          ctest --test-dir "${regression_build}" \
             -C Release \
+            -R "^regression_" \
             --output-on-failure
 
       - name: Package

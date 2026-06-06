@@ -20,14 +20,21 @@ The lowest-risk first test is to build LocalVQE as its own C API library:
 
 ```bash
 git clone --recursive https://github.com/localai-org/LocalVQE.git
-cmake -S LocalVQE/ggml -B localvqe-build -DCMAKE_BUILD_TYPE=Release -DLOCALVQE_BUILD_SHARED=ON
-cmake --build localvqe-build --config Release --target localvqe_shared test_regression regression-assets
-ctest --test-dir localvqe-build -C Release --output-on-failure
+cmake -S LocalVQE/ggml -B localvqe-shared-build -DCMAKE_BUILD_TYPE=Release -DLOCALVQE_BUILD_SHARED=ON
+cmake --build localvqe-shared-build --config Release --target localvqe_shared
+
+cmake -S LocalVQE/ggml -B localvqe-regression-build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DLOCALVQE_BUILD"
+cmake --build localvqe-regression-build --config Release --target test_regression regression-assets
+ctest --test-dir localvqe-regression-build -C Release -R "^regression_" --output-on-failure
 ```
 
 On Windows this produces `localvqe.dll`; on macOS this produces `liblocalvqe.dylib`.
 Keep the GGML backend libraries next to the binary/library when packaging or
 manual testing.
+
+The Windows upstream regression target may need a temporary compatibility shim
+for `S_ISREG` in `ggml/tests/test_helpers.h`; the Echoless GitHub workflow
+applies this only to its throwaway LocalVQE clone.
 
 ## Echoless Integration Shape
 
