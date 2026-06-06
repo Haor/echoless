@@ -291,6 +291,8 @@ noise_gate = false
 $env:ECHOLESS_NVAFX_RUNTIME_DIR='C:\Users\haor2\workspace\aec\runtime-packages\echoless-rtx-aec-runtime-win64-blackwell-2.1.0-aec48'; .\target\release\echoless.exe run --config .\configs\example.toml --mic 3 --reference system --output "CABLE Input" --processor nvidia_afx_aec --reference-channels mono --diagnostic-dir .\diagnostics\rtx-aec-realtime --diagnostic-seconds 45 --verbose
 ```
 
+`--diagnostic-seconds 45` 只会让诊断录制在 45 秒后 finalize；实时程序会继续运行，看到录制文件写完后按 Ctrl+C 停止。
+
 如果从 GitHub artifact 解压目录运行，把 `.\target\release\echoless.exe` 改成 `.\echoless.exe`，并把 `--config .\configs\example.toml` 改成 `--config .\example.toml`。
 
 ```powershell

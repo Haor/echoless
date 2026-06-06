@@ -88,6 +88,8 @@ cargo run -p echoless-cli --bin echoless -- nvafx offline --mic m.wav --referenc
 cargo run -p echoless-cli --bin echoless --release -- run --config configs/example.toml --processor nvidia_afx_aec --reference-channels mono --diagnostic-dir diagnostics/rtx-aec-realtime --diagnostic-seconds 45 --verbose
 ```
 
+注意：`--diagnostic-seconds` 只限制诊断录音时长，不会自动停止实时进程；录完后按 Ctrl+C 停止。
+
 ## GitHub Actions 构建
 
 推送到 `main` 后,`.github/workflows/build.yml` 会在 GitHub-hosted Windows/macOS runner 上:
