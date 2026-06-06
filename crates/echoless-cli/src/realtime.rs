@@ -32,7 +32,7 @@ use ringbuf::HeapRb;
 use echoless_core::{
     apply_reference_channels_to_chain, DiagnosticsConfig, PipelineConfig, ReferenceChannels,
 };
-use echoless_processors::{chain_from_nodes, ProcessorChain};
+use echoless_processors::{chain_from_nodes, ProcessorChain, ProcessorStats};
 
 #[derive(Clone, Copy)]
 enum DeviceKind {
@@ -237,12 +237,14 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
     let mut chain_cfg = cfg.chain.clone();
     apply_reference_channels_to_chain(&mut chain_cfg, cfg.reference_channels);
     let chain = chain_from_nodes(&chain_cfg, sample_rate, reference_channels as u16)?;
+    let initial_node_stats = chain.stats();
     let stats_interval = options.stats_interval_ms.map(Duration::from_millis);
     let diagnostic = DiagnosticRecorder::new(
         &cfg.diagnostics,
         sample_rate,
         reference_channels as u16,
         cfg.frame_ms,
+        &initial_node_stats,
     )?;
     let runtime = ProcessRuntime {
         frame_size,
@@ -324,6 +326,7 @@ fn process_loop<M, R, O>(
         }
 
         chain.process(&near, &far, &mut out, frame_size as u32);
+        let node_stats = chain.stats();
         let pushed = out_prod.push_slice(&out);
         let output_overruns = out.len().saturating_sub(pushed) as u64;
         let ref_q = render_cons
@@ -344,6 +347,7 @@ fn process_loop<M, R, O>(
             ref_underruns: ref_underrun,
             output_overruns,
             output_underruns: runtime.counters.output_underruns.swap(0, Ordering::Relaxed),
+            node_stats: &node_stats,
         };
         if let Some(recorder) = diagnostic.as_mut() {
             match recorder.write_frame(&sample) {
@@ -387,6 +391,7 @@ struct StatsSample<'a> {
     ref_underruns: u64,
     output_overruns: u64,
     output_underruns: u64,
+    node_stats: &'a [ProcessorStats],
 }
 
 struct DiagnosticRecorder {
@@ -406,6 +411,7 @@ impl DiagnosticRecorder {
         sample_rate: u32,
         reference_channels: u16,
         frame_ms: u32,
+        node_stats: &[ProcessorStats],
     ) -> Result<Option<Self>> {
         let Some(record_dir) = cfg
             .record_dir
@@ -433,14 +439,21 @@ impl DiagnosticRecorder {
             .max_seconds
             .map(|seconds| u64::from(seconds) * u64::from(sample_rate));
 
-        write_diagnostic_metadata(&dir, sample_rate, frame_ms, reference_channels, max_frames)?;
+        write_diagnostic_metadata(
+            &dir,
+            sample_rate,
+            frame_ms,
+            reference_channels,
+            max_frames,
+            node_stats,
+        )?;
         let mut stats = BufWriter::new(
             File::create(dir.join("stats.csv"))
                 .with_context(|| format!("创建诊断 stats.csv 失败: {}", dir.display()))?,
         );
         writeln!(
             stats,
-            "frame_index,frames,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,mic_input_drops,ref_input_drops,stale_drops,ref_underruns,output_overruns,output_underruns"
+            "frame_index,frames,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,mic_input_drops,ref_input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
         )?;
 
         println!("诊断录制目录: {}", dir.display());
@@ -483,7 +496,7 @@ impl DiagnosticRecorder {
 
         writeln!(
             self.stats,
-            "{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{}",
+            "{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
             self.frame_index,
             sample.frame_size,
             rms_dbfs(sum_squares(sample.near), sample.near.len() as u64),
@@ -498,6 +511,10 @@ impl DiagnosticRecorder {
             sample.ref_underruns,
             sample.output_overruns,
             sample.output_underruns,
+            aggregate_process_time_ms(sample.node_stats),
+            aggregate_runtime_errors(sample.node_stats),
+            aggregate_diverged(sample.node_stats),
+            csv_escape(&aggregate_last_error(sample.node_stats).unwrap_or_default()),
         )?;
         self.frame_index += 1;
         self.written_frames += sample.frame_size as u64;
@@ -571,6 +588,7 @@ fn write_diagnostic_metadata(
     frame_ms: u32,
     reference_channels: u16,
     max_frames: Option<u64>,
+    node_stats: &[ProcessorStats],
 ) -> Result<()> {
     let mut file = BufWriter::new(
         File::create(dir.join("metadata.txt"))
@@ -585,8 +603,50 @@ fn write_diagnostic_metadata(
     } else {
         writeln!(file, "max_frames=unbounded")?;
     }
+    for (index, node) in node_stats.iter().enumerate() {
+        writeln!(file, "node.{index}.name={}", node.name)?;
+        if let Some(arch) = &node.selected_gpu_arch {
+            writeln!(file, "node.{index}.selected_gpu_arch={arch}")?;
+        }
+        if let Some(model) = &node.selected_model {
+            writeln!(file, "node.{index}.selected_model={model}")?;
+        }
+        if let Some(err) = &node.last_backend_error {
+            writeln!(file, "node.{index}.last_backend_error={err}")?;
+        }
+    }
     file.flush()?;
     Ok(())
+}
+
+fn aggregate_process_time_ms(stats: &[ProcessorStats]) -> f32 {
+    stats
+        .iter()
+        .map(|stat| stat.process_time_ms)
+        .fold(0.0, f32::max)
+}
+
+fn aggregate_runtime_errors(stats: &[ProcessorStats]) -> u64 {
+    stats.iter().map(|stat| stat.runtime_error_count).sum()
+}
+
+fn aggregate_diverged(stats: &[ProcessorStats]) -> bool {
+    stats.iter().any(|stat| stat.diverged)
+}
+
+fn aggregate_last_error(stats: &[ProcessorStats]) -> Option<String> {
+    stats
+        .iter()
+        .find_map(|stat| stat.last_backend_error.as_ref())
+        .cloned()
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }
 
 struct RealtimeStats {
@@ -609,6 +669,9 @@ struct RealtimeStats {
     ref_underruns: u64,
     output_overruns: u64,
     output_underruns: u64,
+    node_process_time_ms: f32,
+    node_runtime_errors: u64,
+    node_diverged: bool,
 }
 
 impl RealtimeStats {
@@ -634,6 +697,9 @@ impl RealtimeStats {
             ref_underruns: 0,
             output_overruns: 0,
             output_underruns: 0,
+            node_process_time_ms: 0.0,
+            node_runtime_errors: 0,
+            node_diverged: false,
         }
     }
 
@@ -654,6 +720,11 @@ impl RealtimeStats {
         self.ref_underruns += sample.ref_underruns;
         self.output_overruns += sample.output_overruns;
         self.output_underruns += sample.output_underruns;
+        self.node_process_time_ms = self
+            .node_process_time_ms
+            .max(aggregate_process_time_ms(sample.node_stats));
+        self.node_runtime_errors = aggregate_runtime_errors(sample.node_stats);
+        self.node_diverged = aggregate_diverged(sample.node_stats);
         self.maybe_print();
     }
 
@@ -664,7 +735,7 @@ impl RealtimeStats {
         }
         let elapsed = now.duration_since(self.started).as_secs();
         println!(
-            "t={}s frames={} mic={:.1}dB ref={:.1}dB out={:.1}dB mic_q={} ref_q={} out_q={} ref_underrun={} out_underrun={} out_overrun={} input_drop={} stale_drop={}",
+            "t={}s frames={} mic={:.1}dB ref={:.1}dB out={:.1}dB mic_q={} ref_q={} out_q={} ref_underrun={} out_underrun={} out_overrun={} input_drop={} stale_drop={} node_ms={:.2} runtime_errors={} diverged={}",
             elapsed,
             self.total_frames,
             rms_dbfs(self.near_sq, self.near_samples),
@@ -678,6 +749,9 @@ impl RealtimeStats {
             self.output_overruns,
             self.mic_input_drops + self.ref_input_drops,
             self.stale_drops,
+            self.node_process_time_ms,
+            self.node_runtime_errors,
+            self.node_diverged,
         );
         self.last_print = now;
         self.near_samples = 0;
@@ -692,6 +766,8 @@ impl RealtimeStats {
         self.ref_underruns = 0;
         self.output_overruns = 0;
         self.output_underruns = 0;
+        self.node_process_time_ms = 0.0;
+        self.node_diverged = false;
     }
 }
 
@@ -1142,7 +1218,8 @@ mod tests {
             record_dir: Some(base.to_string_lossy().to_string()),
             max_seconds: Some(1),
         };
-        let mut recorder = DiagnosticRecorder::new(&cfg, 48_000, 2, 10)?.unwrap();
+        let node_stats = [ProcessorStats::empty("test")];
+        let mut recorder = DiagnosticRecorder::new(&cfg, 48_000, 2, 10, &node_stats)?.unwrap();
         let dir = recorder.dir.clone();
         let near = [0.25f32, -0.25];
         let far = [0.1f32, -0.1, 0.2, -0.2];
@@ -1161,6 +1238,7 @@ mod tests {
             ref_underruns: 0,
             output_overruns: 0,
             output_underruns: 0,
+            node_stats: &node_stats,
         };
 
         assert!(recorder.write_frame(&sample)?);
@@ -1173,6 +1251,7 @@ mod tests {
         assert_eq!(ref_reader.spec().channels, 2);
         let stats = std::fs::read_to_string(dir.join("stats.csv"))?;
         assert_eq!(stats.lines().count(), 2);
+        assert!(stats.contains("node_process_time_ms"));
         assert!(dir.join("out.wav").exists());
         assert!(dir.join("metadata.txt").exists());
 

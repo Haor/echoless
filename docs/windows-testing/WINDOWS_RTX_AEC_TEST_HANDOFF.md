@@ -66,8 +66,8 @@ Processing time: about 1.2-1.3s for 44.9985s audio
 当前结论：
 
 - RTX AEC SDK 离线链路已跑通，可进入主观 AB。
-- 仍不能把它列为默认方案；还缺实时 Echoless processor、delay/drift 对齐、GPU 满载稳定性、分发许可确认。
-- 下一步建议先写离线 `nvafx-offline` harness，再进入实时 `nvidia_afx_aec` processor。
+- 仍不能把它列为默认方案；还缺长时间实时稳定性、delay/drift 对齐、GPU 满载稳定性、分发许可确认。
+- Echoless 已接入 `nvidia_afx_aec` 可选 backend；下一步直接测 Echoless 自己的离线/实时 RTX 路径。
 
 ## 2026-06-06 Runtime 分发准备
 
@@ -104,6 +104,12 @@ features/nvafxaec/models/<arch>/aec_48k.trtpkg
 
 ## 当前代码状态
 
+- NVIDIA AFX / RTX AEC 已作为 Windows-only 可选 backend 接入：
+  - CLI: `echoless nvafx doctor [--runtime-dir <DIR>] [--json]`
+  - CLI: `echoless nvafx install --common-zip <ZIP> --model-zip <ZIP>`
+  - CLI: `echoless nvafx offline --mic <mic.wav> --reference <ref.wav> --out <out.wav>`
+  - 实时: `echoless run --processor nvidia_afx_aec --reference-channels mono`
+  - v1 约束: 48 kHz / 10 ms / mono mic / mono reference / mono output
 - Echoless 实时链路新增诊断录制：
   - CLI: `--diagnostic-dir <DIR>`
   - CLI: `--diagnostic-seconds <SECONDS>`
@@ -112,8 +118,8 @@ features/nvafxaec/models/<arch>/aec_48k.trtpkg
   - `mic.wav`: 原始麦克风 mono float WAV
   - `ref.wav`: far reference float WAV；mono/stereo 取决于 `reference_channels`
   - `out.wav`: Echoless 处理后 mono float WAV
-  - `stats.csv`: 每帧 dBFS、queue、drop、underrun、overrun
-  - `metadata.txt`: sample rate、frame、reference channel 等
+  - `stats.csv`: 每帧 dBFS、queue、drop、underrun、overrun、node process time、runtime error
+  - `metadata.txt`: sample rate、frame、reference channel、RTX 选中的 GPU 架构与模型等
 - LocalVQE 打包/示例已切到当前上游默认模型：
   - `models/localvqe-v1.3-4.8M-f32.gguf`
   - v1.2 仍只作为低 CPU 或 v1.3 过激时的 fallback。
@@ -159,7 +165,7 @@ features/nvafxaec/models/<arch>/aec_48k.trtpkg
 - AEC 支持 16 kHz 或 48 kHz、32-bit float 音频。
 - AEC 是 reference-based：输入需要 near-end mic 信号和 far-end reference 信号。
 
-注意：这里的 “RTX AEC” 指 NVIDIA Audio Effects / Maxine AFX SDK 的 AEC effect。如果测试 NVIDIA Broadcast 图形软件的 Echo Removal，也请单独记录为 closed-box downstream 测试，不要和 SDK AEC 混写。
+注意：这里的 “RTX AEC” 指 NVIDIA Audio Effects / Maxine AFX SDK 的 AEC effect，本轮测试不纳入其他闭源 GUI 后处理链。
 
 ## 测试顺序
 
@@ -249,35 +255,59 @@ noise_gate = false
 
 ### 5. NVIDIA RTX / AFX AEC 验证
 
-目标分两层：
+目标分三层：
 
-1. SDK 可用性验证：
-   - 安装 AFX SDK。
-   - 确认 GPU、驱动、SDK 版本。
-   - 运行官方 AEC sample。官方示例命令形态：
+1. Runtime 可用性验证：
+   - 不要求普通测试者安装完整 AFX SDK。
+   - 如果已有 prepared runtime zip，先安装：
 
-```bat
-run_effect_demo.bat turing aec 16k 16k
-run_effect_demo.bat ampere aec 48k 48k
+```powershell
+.\echoless.exe nvafx install `
+  --common-zip .\echoless-rtx-aec-common-runtime-win64-2.1.0.zip `
+  --model-zip .\echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip
 ```
 
-2. 与 Echoless 同源样本对照：
-   - 优先使用 `diagnostics/aec3-*` 里的 `mic.wav` 和 `ref.wav` 作为 NVIDIA AEC 的 near/far 输入。
-   - 如果官方 sample 不支持直接喂入这两路 WAV，则记录 sample 限制，并用 SDK API 或最小 harness 跑离线对照。
-   - 如果短期只能测试 NVIDIA Broadcast GUI，则把它作为 downstream closed-box 测试：`Echoless AEC3 out -> Broadcast -> Discord/VRChat`，单独记录，不要说成 SDK AEC 结果。
+   - 或指向已解压的 runtime：
+
+```powershell
+.\echoless.exe nvafx doctor --runtime-dir "C:\Users\haor2\workspace\aec\runtime-packages\echoless-rtx-aec-runtime-win64-blackwell-2.1.0-aec48"
+```
+
+2. 与 Echoless 同源样本离线对照：
+   - 优先使用 `diagnostics/aec3-*` 里的 `mic.wav` 和 `ref.wav` 作为 near/far 输入。
+
+```powershell
+.\echoless.exe nvafx offline `
+  --mic .\diagnostics\aec3-mono-round1\session-1780739447\mic.wav `
+  --reference .\diagnostics\aec3-mono-round1\session-1780739447\ref.wav `
+  --out .\diagnostics\rtx-aec-standalone\nvafx_aec_out.wav
+```
+
+3. 实时 RTX AEC standalone：
+
+```powershell
+.\echoless.exe run --config .\example.toml `
+  --mic "<USB mic name or index>" `
+  --reference system `
+  --output "<VB-Cable input or monitor output>" `
+  --processor nvidia_afx_aec `
+  --reference-channels mono `
+  --diagnostic-dir .\diagnostics\rtx-aec-realtime `
+  --diagnostic-seconds 45 `
+  --verbose
+```
 
 RTX AEC 不要与 AEC3 串联后直接下结论。先做：
 
 - AEC3 mono
 - AEC3 stereo
 - RTX AEC standalone
-- AEC3 mono + NVIDIA Broadcast downstream
 
 ## 结果回传格式
 
 写到 `WINDOWS_RTX_AEC_TEST_RESULTS.md`，建议包含：
 
-- 机器信息：Windows 版本、GPU、驱动、SDK/Broadcast 版本、麦克风、外放设备、虚拟麦设备。
+- 机器信息：Windows 版本、GPU、驱动、AFX runtime 版本、麦克风、外放设备、虚拟麦设备。
 - Artifact 信息：Actions run id、commit SHA、压缩包名、解压文件列表。
 - 每个场景的命令、配置文件、诊断 session 路径。
 - 主观听感：人声保真、锯齿/电音、忽大忽小、回声残留、音乐/视频残留、双讲稳定性。
@@ -291,14 +321,12 @@ RTX AEC 不要与 AEC3 串联后直接下结论。先做：
 ## 已知风险
 
 - LocalVQE v1.3 更强但更重，也可能比 v1.2 更 aggressive；它不是当前默认主线。
-- AEC3 的 double-talk 忽大忽小优先从 `ns=false`、`agc=false`、tail、reference_channels、下游 Broadcast 串联顺序排查。
+- AEC3 的 double-talk 忽大忽小优先从 `ns=false`、`agc=false`、tail、reference_channels 排查。
 - NVIDIA AFX SDK 是外部二进制 SDK。先评估 license、redistribution、模型下载/安装、驱动门槛，再考虑正式集成。
-- 如果 Windows 侧只测试 Broadcast GUI，结论只能用于用户工作流，不等价于我们可嵌入 SDK backend。
 
 ## 下一步建议
 
 Windows agent 完成测试后，把 `WINDOWS_RTX_AEC_TEST_RESULTS.md` 与至少一组诊断 session 打包回传。Mac 侧再根据样本决定：
 
-- 是否只保留 AEC3 + downstream Broadcast 的产品路线。
-- 是否把 RTX AEC 做成独立 backend。
+- 是否保留 RTX AEC 为 Windows RTX 用户的独立 backend。
 - 是否需要给 GUI 增加 `diagnostics`、`reference_channels`、`ns/agc/tail`、backend 切换的调参面板。

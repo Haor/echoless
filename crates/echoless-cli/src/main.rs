@@ -8,9 +8,15 @@ mod backends;
 #[cfg(feature = "realtime")]
 mod realtime;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
-use std::path::PathBuf;
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::fs::{create_dir_all, File};
+use std::io::{copy, Read, Write};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use zip::ZipArchive;
 
 use echoless_core::{
     apply_reference_channels_to_chain, run_offline, DiagnosticsConfig, PipelineConfig,
@@ -125,6 +131,10 @@ struct NvafxArgs {
 enum NvafxCmd {
     /// 检查 RTX AEC runtime、GPU、driver、VC++ runtime 是否可用
     Doctor(NvafxDoctorArgs),
+    /// 离线运行 RTX AEC:mic.wav + ref.wav → out.wav
+    Offline(NvafxOfflineArgs),
+    /// 从本地 zip 安装 Echoless RTX AEC runtime 与模型
+    Install(NvafxInstallArgs),
 }
 
 #[derive(Args)]
@@ -132,6 +142,50 @@ struct NvafxDoctorArgs {
     /// 覆盖 runtime 根目录;默认读 ECHOLESS_NVAFX_RUNTIME_DIR,再退到 %LOCALAPPDATA%\Echoless\nvafx\2.1.0
     #[arg(long)]
     runtime_dir: Option<PathBuf>,
+    /// 输出 JSON,供 GUI/installer 消费
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct NvafxOfflineArgs {
+    /// 近端麦克风 WAV
+    #[arg(long)]
+    mic: String,
+    /// far-end 参考 WAV
+    #[arg(long)]
+    reference: String,
+    /// 输出 WAV
+    #[arg(long)]
+    out: String,
+    /// 覆盖 runtime 根目录
+    #[arg(long)]
+    runtime_dir: Option<PathBuf>,
+    /// 覆盖模型路径;默认按 GPU 架构自动选择
+    #[arg(long)]
+    model_path: Option<PathBuf>,
+    /// AFX AEC 强度
+    #[arg(long, default_value_t = 1.0)]
+    intensity_ratio: f32,
+}
+
+#[derive(Args)]
+struct NvafxInstallArgs {
+    /// common runtime zip
+    #[arg(long)]
+    common_zip: PathBuf,
+    /// 当前 GPU 架构对应的 model zip
+    #[arg(long)]
+    model_zip: PathBuf,
+    /// 覆盖安装根目录;默认 %LOCALAPPDATA%\Echoless\nvafx\2.1.0
+    #[arg(long)]
+    runtime_dir: Option<PathBuf>,
+    /// 覆盖 common zip 期望 SHA256;不填则按官方 asset 名称自动匹配
+    #[arg(long)]
+    common_sha256: Option<String>,
+    /// 覆盖 model zip 期望 SHA256;不填则按官方 asset 名称自动匹配
+    #[arg(long)]
+    model_sha256: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -176,6 +230,7 @@ fn cmd_offline(a: OfflineArgs) -> Result<()> {
         diagnostics: DiagnosticsConfig::default(),
         chain,
     };
+    validate_nvafx_constraints(&cfg)?;
 
     let frame = cfg.frame_size();
     let mic = WavFileSource::new(&a.mic, frame)?;
@@ -207,9 +262,20 @@ fn cmd_offline(a: OfflineArgs) -> Result<()> {
     );
     for s in &rep.node_stats {
         println!(
-            "  - {}: ERLE {:.1} dB, delay {} ms, diverged={}",
-            s.name, s.erle_db, s.estimated_delay_ms, s.diverged
+            "  - {}: ERLE {:.1} dB, delay {} ms, process {:.2} ms, runtime_errors={}, diverged={}",
+            s.name,
+            s.erle_db,
+            s.estimated_delay_ms,
+            s.process_time_ms,
+            s.runtime_error_count,
+            s.diverged
         );
+        if let Some(model) = &s.selected_model {
+            println!("      model={model}");
+        }
+        if let Some(err) = &s.last_backend_error {
+            println!("      last_error={err}");
+        }
     }
     Ok(())
 }
@@ -226,11 +292,23 @@ fn cmd_processors() -> Result<()> {
 fn cmd_nvafx(args: NvafxArgs) -> Result<()> {
     match args.cmd {
         NvafxCmd::Doctor(a) => cmd_nvafx_doctor(a),
+        NvafxCmd::Offline(a) => cmd_nvafx_offline(a),
+        NvafxCmd::Install(a) => cmd_nvafx_install(a),
     }
 }
 
 fn cmd_nvafx_doctor(args: NvafxDoctorArgs) -> Result<()> {
     let report = echoless_processors::nvafx::doctor_report(args.runtime_dir.as_deref())?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ok": report.ok(),
+                "report": report,
+            }))?
+        );
+        return Ok(());
+    }
 
     println!("NVIDIA AFX / RTX AEC doctor");
     println!(
@@ -288,6 +366,271 @@ fn cmd_nvafx_doctor(args: NvafxDoctorArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_nvafx_offline(a: NvafxOfflineArgs) -> Result<()> {
+    if !a.intensity_ratio.is_finite() || a.intensity_ratio < 0.0 {
+        bail!("--intensity-ratio 必须是非负有限数");
+    }
+    let mut params = toml::Table::new();
+    if let Some(runtime_dir) = &a.runtime_dir {
+        params.insert(
+            "runtime_dir".into(),
+            toml::Value::String(runtime_dir.display().to_string()),
+        );
+    }
+    if let Some(model_path) = &a.model_path {
+        params.insert(
+            "model_path".into(),
+            toml::Value::String(model_path.display().to_string()),
+        );
+    }
+    params.insert(
+        "intensity_ratio".into(),
+        toml::Value::Float(a.intensity_ratio as f64),
+    );
+
+    let cfg = PipelineConfig {
+        mic: a.mic.clone(),
+        reference: a.reference.clone(),
+        output: a.out.clone(),
+        sample_rate: echoless_processors::nvafx::NVAFX_SAMPLE_RATE,
+        frame_ms: 10,
+        reference_channels: ReferenceChannels::Mono,
+        diagnostics: DiagnosticsConfig::default(),
+        chain: vec![NodeConfig {
+            kind: "nvidia_afx_aec".into(),
+            params,
+        }],
+    };
+    validate_nvafx_constraints(&cfg)?;
+
+    let frame = cfg.frame_size();
+    let mic = WavFileSource::new(&a.mic, frame)?;
+    let reference = WavFileSource::new(&a.reference, frame)?;
+    let sink = WavFileSink::new(&a.out);
+    println!("RTX AEC 离线运行: {} + {} → {}", a.mic, a.reference, a.out);
+    let rep = run_offline(&cfg, mic, reference, sink)?;
+    println!(
+        "完成: {} 帧 (~{:.2}s) · process 链 [{}]",
+        rep.frames,
+        rep.seconds,
+        rep.chain.join(", ")
+    );
+    for s in &rep.node_stats {
+        println!(
+            "  - {}: process {:.2} ms, runtime_errors={}, diverged={}",
+            s.name, s.process_time_ms, s.runtime_error_count, s.diverged
+        );
+        if let Some(arch) = &s.selected_gpu_arch {
+            println!("      arch={arch}");
+        }
+        if let Some(model) = &s.selected_model {
+            println!("      model={model}");
+        }
+        if let Some(err) = &s.last_backend_error {
+            println!("      last_error={err}");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_nvafx_install(a: NvafxInstallArgs) -> Result<()> {
+    let (runtime_dir, runtime_dir_source) =
+        echoless_processors::nvafx::resolve_runtime_dir(a.runtime_dir.as_deref());
+    create_dir_all(&runtime_dir)
+        .with_context(|| format!("创建 runtime 目录失败: {}", runtime_dir.display()))?;
+
+    let common_expected = a
+        .common_sha256
+        .as_deref()
+        .or_else(|| expected_sha256_for_asset(&a.common_zip));
+    let model_expected = a
+        .model_sha256
+        .as_deref()
+        .or_else(|| expected_sha256_for_asset(&a.model_zip));
+    let common_hash = verify_zip_sha256(&a.common_zip, common_expected, "common runtime")?;
+    let model_hash = verify_zip_sha256(&a.model_zip, model_expected, "model")?;
+
+    println!("解压 common runtime 到 {}", runtime_dir.display());
+    extract_zip(&a.common_zip, &runtime_dir)?;
+    println!("解压 model 到 {}", runtime_dir.display());
+    extract_zip(&a.model_zip, &runtime_dir)?;
+
+    let installed_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("系统时间早于 UNIX_EPOCH")?
+        .as_secs();
+    let manifest = json!({
+        "sdk_version": echoless_processors::nvafx::SDK_VERSION,
+        "runtime_file_version": echoless_processors::nvafx::RUNTIME_FILE_VERSION,
+        "installed_at_unix": installed_at,
+        "runtime_dir_source": runtime_dir_source,
+        "common_zip": a.common_zip.display().to_string(),
+        "common_sha256": common_hash,
+        "model_zip": a.model_zip.display().to_string(),
+        "model_sha256": model_hash,
+    });
+    let manifest_path = runtime_dir.join("echoless-runtime-install-manifest.json");
+    let mut file = File::create(&manifest_path)
+        .with_context(|| format!("写入安装 manifest 失败: {}", manifest_path.display()))?;
+    file.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
+    file.write_all(b"\n")?;
+
+    println!("安装 manifest: {}", manifest_path.display());
+    let report = echoless_processors::nvafx::doctor_report(Some(&runtime_dir))?;
+    print_nvafx_doctor_report(&report);
+    if !report.ok() {
+        bail!("runtime 已解压,但 doctor 仍未通过");
+    }
+    Ok(())
+}
+
+fn print_nvafx_doctor_report(report: &echoless_processors::nvafx::DoctorReport) {
+    println!("NVIDIA AFX / RTX AEC doctor");
+    println!(
+        "SDK {} · runtime file {} · 最低 driver {}",
+        echoless_processors::nvafx::SDK_VERSION,
+        echoless_processors::nvafx::RUNTIME_FILE_VERSION,
+        echoless_processors::nvafx::MIN_DRIVER_VERSION,
+    );
+    println!(
+        "Runtime: {} ({})",
+        report.runtime_dir.display(),
+        report.runtime_dir_source
+    );
+    if report.gpus.is_empty() {
+        println!("GPU:     未检测到 NVIDIA GPU");
+    } else {
+        println!("GPU:");
+        for (index, gpu) in report.gpus.iter().enumerate() {
+            let arch = gpu
+                .arch
+                .map(|arch| arch.as_str().to_string())
+                .unwrap_or_else(|| "unsupported".to_string());
+            println!(
+                "  [{index}] {} · driver {} · compute_cap {} · arch {}",
+                gpu.name, gpu.driver_version, gpu.compute_capability, arch
+            );
+        }
+    }
+    if let Some(asset) = report.expected_model_asset() {
+        println!("Model asset: {asset}");
+    }
+    println!();
+
+    let mut problems = 0usize;
+    for check in &report.checks {
+        if check.status.is_problem() {
+            problems += 1;
+        }
+        println!(
+            "[{}] {} — {}",
+            check.status.label(),
+            check.name,
+            check.detail
+        );
+        if let Some(action) = &check.action {
+            println!("      处理: {action}");
+        }
+    }
+
+    if problems == 0 {
+        println!("\nRTX AEC runtime 预检通过。");
+    } else {
+        println!("\nRTX AEC runtime 预检未通过: {problems} 个问题需要处理。");
+    }
+}
+
+fn expected_sha256_for_asset(path: &Path) -> Option<&'static str> {
+    match path.file_name()?.to_str()? {
+        "echoless-rtx-aec-common-runtime-win64-2.1.0.zip" => {
+            Some("dcacac954b7973ae18369b252d13f24b973b10114d00e5293eab0713601c7bcb")
+        }
+        "echoless-rtx-aec-model-win64-2.1.0-turing-aec48.zip" => {
+            Some("951e03bb144156f4b27cbf2caa6930f9dabc3f1cb26a0afd9d9523f4d286dae9")
+        }
+        "echoless-rtx-aec-model-win64-2.1.0-ampere-aec48.zip" => {
+            Some("066e06ec18a7d4509675411a1e050e11b0cfc4fee30d69d783871333018c9ab9")
+        }
+        "echoless-rtx-aec-model-win64-2.1.0-ada-aec48.zip" => {
+            Some("92170e6a259f9093397b93cf4385759c36697ecb9e308322405bce1abcb8e3df")
+        }
+        "echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip" => {
+            Some("0e75bb7442d317990ef0d5a6477105f86b9bbae1c2c5e4a6bdfb8d4e9f42df5b")
+        }
+        _ => None,
+    }
+}
+
+fn verify_zip_sha256(path: &Path, expected: Option<&str>, label: &str) -> Result<String> {
+    let actual = sha256_file(path)?;
+    match expected {
+        Some(expected) if actual.eq_ignore_ascii_case(expected) => {
+            println!("{label} SHA256 ok: {actual}");
+        }
+        Some(expected) => bail!(
+            "{label} SHA256 不匹配: actual={actual}, expected={expected}, file={}",
+            path.display()
+        ),
+        None => {
+            println!(
+                "{label} SHA256: {actual} (未找到官方期望值,仅记录;建议传 --{}-sha256)",
+                if label.starts_with("common") {
+                    "common"
+                } else {
+                    "model"
+                }
+            );
+        }
+    }
+    Ok(actual)
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path).with_context(|| format!("打开文件失败: {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 1024 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .with_context(|| format!("读取文件失败: {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
+    let file =
+        File::open(zip_path).with_context(|| format!("打开 zip 失败: {}", zip_path.display()))?;
+    let mut archive =
+        ZipArchive::new(file).with_context(|| format!("读取 zip 失败: {}", zip_path.display()))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .with_context(|| format!("读取 zip entry #{index} 失败: {}", zip_path.display()))?;
+        let enclosed = entry
+            .enclosed_name()
+            .with_context(|| format!("zip entry 路径不安全: {}", entry.name()))?;
+        let out_path = dest.join(enclosed);
+        if entry.is_dir() {
+            create_dir_all(&out_path)
+                .with_context(|| format!("创建目录失败: {}", out_path.display()))?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            create_dir_all(parent)
+                .with_context(|| format!("创建目录失败: {}", parent.display()))?;
+        }
+        let mut out = File::create(&out_path)
+            .with_context(|| format!("创建文件失败: {}", out_path.display()))?;
+        copy(&mut entry, &mut out)
+            .with_context(|| format!("解压文件失败: {}", out_path.display()))?;
+    }
+    Ok(())
+}
+
 #[cfg(feature = "realtime")]
 fn cmd_devices() -> Result<()> {
     realtime::print_devices()
@@ -303,6 +646,7 @@ fn cmd_devices() -> Result<()> {
 #[cfg(feature = "realtime")]
 fn cmd_run(a: RunArgs) -> Result<()> {
     let cfg = load_run_config(&a)?;
+    validate_nvafx_constraints(&cfg)?;
     let opts = runtime_options_from_args(&a)?;
     println!(
         "实时运行配置: mic={} ref={} out={}",
@@ -411,6 +755,29 @@ fn set_sonora_param(nodes: &mut [NodeConfig], key: &str, value: toml::Value) -> 
         bail!("{key} 需要配置中存在 sonora_aec3 节点,或使用 --processor sonora_aec3");
     };
     node.params.insert(key.to_string(), value);
+    Ok(())
+}
+
+fn validate_nvafx_constraints(cfg: &PipelineConfig) -> Result<()> {
+    if !cfg.chain.iter().any(|node| node.kind == "nvidia_afx_aec") {
+        return Ok(());
+    }
+    if cfg.sample_rate != echoless_processors::nvafx::NVAFX_SAMPLE_RATE {
+        bail!(
+            "nvidia_afx_aec v1 只支持 {} Hz,当前 sample_rate={}",
+            echoless_processors::nvafx::NVAFX_SAMPLE_RATE,
+            cfg.sample_rate
+        );
+    }
+    if cfg.frame_ms != 10 {
+        bail!(
+            "nvidia_afx_aec v1 只支持 10ms frame,当前 frame_ms={}",
+            cfg.frame_ms
+        );
+    }
+    if cfg.reference_channels != ReferenceChannels::Mono {
+        bail!("nvidia_afx_aec v1 只支持 mono reference;请设置 reference_channels = \"mono\"");
+    }
     Ok(())
 }
 

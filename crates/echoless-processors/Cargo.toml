@@ -15,6 +15,9 @@ libloading.workspace = true
 # 默认特性 sonora-engine 开启;关掉则 sonora_aec3 节点回退为直通(便于快速构建)。
 sonora = { path = "../../vendor/sonora/crates/sonora", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [features]
 default = ["sonora-engine"]
 sonora-engine = ["dep:sonora"]

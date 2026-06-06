@@ -56,6 +56,18 @@ features/nvafxaec/models/<arch>/aec_48k.trtpkg
 5. 把 model zip 解压到同一个安装根目录。
 6. 确认 `features\nvafxaec\models\<arch>\aec_48k.trtpkg` 存在。
 
+当前已支持本地 zip 安装：
+
+```powershell
+.\echoless.exe nvafx install `
+  --common-zip .\echoless-rtx-aec-common-runtime-win64-2.1.0.zip `
+  --model-zip .\echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip
+```
+
+命令会按已知 release asset 名称校验 SHA256、解压 zip、写入
+`echoless-runtime-install-manifest.json`，最后自动运行 `nvafx doctor`。如果使用非官方
+asset 名称，可传 `--common-sha256` / `--model-sha256` 显式校验。
+
 未来 GitHub Release URL 模板：
 
 ```text
@@ -84,6 +96,14 @@ staging 目录里的 `manifest.json` 已经按这个 asset 形态生成，包含
 
 1. [x] 增加 `nvafx doctor` 检测和可读错误提示。
 2. [x] 增加 runtime discovery：config、`ECHOLESS_NVAFX_RUNTIME_DIR`、默认 `%LOCALAPPDATA%` 安装根目录。
-3. [ ] 增加离线 AEC harness，用 WAV 做确定性对照。
-4. [ ] 增加实时 `nvidia_afx_aec` 可选 backend。
-5. [ ] 确认再分发条款后，再增加 installer/download 支持。
+3. [x] 增加本地 zip installer：common runtime + per-arch model。
+4. [x] 增加离线 AEC harness，用 WAV 做确定性对照。
+5. [x] 增加实时 `nvidia_afx_aec` 可选 backend。
+6. [ ] 确认再分发条款后，再增加远程下载 / 公开 release asset 支持。
+
+RTX AEC v1 运行约束：
+
+- Windows x64 only。
+- 48 kHz / 10 ms / 480 samples per frame。
+- mic mono、reference mono、output mono。
+- `NvAFX_Run` 以两路 planar input 调用：`input[0] = near mic`，`input[1] = far reference`。

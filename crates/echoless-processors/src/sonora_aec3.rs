@@ -353,6 +353,11 @@ impl SonoraAec3 {
                 .map(|p| p > 0.95)
                 .unwrap_or(false),
             mic_clipped: false,
+            process_time_ms: 0.0,
+            runtime_error_count: 0,
+            selected_model: None,
+            selected_gpu_arch: None,
+            last_backend_error: None,
         };
     }
 }

@@ -11,9 +11,9 @@
 - far reference 可用 `reference_channels = "mono" | "stereo"` 切换;默认 mono,stereo 用于外放 L/R 对比试听。
 - 离线评测:`echoless offline` 仍可用。
 - LocalVQE 已通过动态 C ABI 接入 `localvqe` 处理器;CI 会构建上游 shared library、跑 regression,再跑 Echoless FFI smoke。
-- NVIDIA AFX / RTX AEC 已接入 runtime discovery 与 `echoless nvafx doctor`;实时 DLL 调用仍在集成中。
+- NVIDIA AFX / RTX AEC 已作为 Windows-only 可选 backend 接入:`doctor` / 本地 runtime install / 离线 WAV / 实时 `nvidia_afx_aec`。
 - 原生平台 HAL、原生虚拟麦驱动仍是后续阶段;MVP 输出建议接 VB-Cable / BlackHole。
-- 产品默认策略:以 `sonora_aec3` 保真人声为主。LocalVQE 是独立可选方案,不作为 AEC3 默认后级;如果后面还接 NVIDIA Broadcast,本层默认不做 NS/AGC。
+- 产品默认策略:以 `sonora_aec3` 保真人声为主。LocalVQE 与 RTX AEC 都是独立可选方案,不作为 AEC3 默认后级。
 
 ## crate 结构
 
@@ -22,7 +22,7 @@
 | `echoless-hal` | 平台无关 trait(`AudioSource`/`AudioSink`/`MonotonicClock`)+ 类型 + 文件/null 后端 | ✅ |
 | `echoless-hal-win` | Windows HAL(WASAPI/WaveRT/QPC) | stub,实时 MVP 暂走 cpal |
 | `echoless-hal-mac` | macOS HAL(CoreAudio/Process Tap/AudioServerPlugin/mach) | stub,实时 MVP 暂走 cpal |
-| `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + `sonora_aec3` / `localvqe` / `nvidia_afx_aec` 节点 | ✅ AEC3 可用;LocalVQE 可加载 DLL/dylib + GGUF 推理;RTX AEC 先接 runtime 预检 |
+| `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + `sonora_aec3` / `localvqe` / `nvidia_afx_aec` 节点 | ✅ AEC3 可用;LocalVQE 可加载 DLL/dylib + GGUF 推理;RTX AEC Windows 可动态加载 AFX runtime |
 | `echoless-core` | 管线编排 + `PipelineConfig` + `ControlApi` + `run_offline` | ✅ 离线可用;实时 cpal 路径在 CLI |
 | `echoless-cli` | CLI 前端:`processors` / `devices` / `offline` / `run` | ✅ |
 
@@ -57,6 +57,14 @@ cargo run -- processors
 # 检查 NVIDIA AFX / RTX AEC runtime
 cargo run -- nvafx doctor
 
+# JSON 输出供 GUI/installer 消费
+cargo run -- nvafx doctor --json
+
+# 从本地 zip 安装 RTX AEC runtime 与当前 GPU 架构模型
+cargo run -- nvafx install \
+    --common-zip echoless-rtx-aec-common-runtime-win64-2.1.0.zip \
+    --model-zip echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip
+
 # 列出音频设备
 cargo run -- devices
 
@@ -72,6 +80,9 @@ cargo run -p echoless-cli --bin echoless -- offline \
 
 # 或用配置文件
 cargo run -p echoless-cli --bin echoless -- offline --mic m.wav --reference r.wav --out o.wav --config configs/example.toml
+
+# RTX AEC 离线快捷命令(Windows RTX 机器 + 已安装 runtime)
+cargo run -p echoless-cli --bin echoless -- nvafx offline --mic m.wav --reference r.wav --out rtx.wav
 ```
 
 ## GitHub Actions 构建
@@ -87,8 +98,8 @@ cargo run -p echoless-cli --bin echoless -- offline --mic m.wav --reference r.wa
 
 ## 下一步
 
-1. 完成 NVIDIA AFX AEC 离线 harness 与实时 `nvidia_afx_aec` DLL 调用。
-2. 用 Windows 外放 + USB mic + VB-Cable 做实机反馈,先调 `tail_ms` 与 reference mono/stereo;`ns_level` 只做低强度对照。
+1. 用 Windows 外放 + USB mic + VB-Cable 做 RTX AEC standalone 实时 diagnostics,确认 GPU 满载和长时间稳定性。
+2. 确认 NVIDIA AFX runtime/model 再分发许可后,再开放远程下载/公开 release asset。
 3. 增加 `eval` 子命令,用 output/input energy ratio 做离线效果量化。
 4. `echoless-processors/chain.rs` 占位线性 SRC 换成 rubato 有状态 SRC。
 5. 把实时 runtime 从 CLI 层进一步抽成 GUI/daemon 可复用控制面。

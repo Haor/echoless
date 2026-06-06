@@ -26,7 +26,7 @@ pub struct IoSpec {
 }
 
 /// 单个节点的运行指标。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ProcessorStats {
     pub name: &'static str,
     pub erle_db: f32,
@@ -34,6 +34,11 @@ pub struct ProcessorStats {
     pub estimated_delay_ms: i32,
     pub diverged: bool,
     pub mic_clipped: bool,
+    pub process_time_ms: f32,
+    pub runtime_error_count: u64,
+    pub selected_model: Option<String>,
+    pub selected_gpu_arch: Option<String>,
+    pub last_backend_error: Option<String>,
 }
 
 impl ProcessorStats {
@@ -45,6 +50,11 @@ impl ProcessorStats {
             estimated_delay_ms: 0,
             diverged: false,
             mic_clipped: false,
+            process_time_ms: 0.0,
+            runtime_error_count: 0,
+            selected_model: None,
+            selected_gpu_arch: None,
+            last_backend_error: None,
         }
     }
 }

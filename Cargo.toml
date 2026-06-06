@@ -28,8 +28,15 @@ hound = "3.5"
 bitflags = "2"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
 libloading = "0.8"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+] }
 # rubato 留作处理器边界 SRC 的正式实现(蓝本 §10);骨架先用 chain.rs 里的占位线性重采样
 rubato = "0.15"

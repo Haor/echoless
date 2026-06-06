@@ -26,7 +26,7 @@ kind = "sonora_aec3"
 # tail_ms = 120              # echo tail 长度(默认 52ms;外放+房间混响常需更长)
 # delay_num_filters = 5      # 延迟搜索窗(默认 5 ≈ 608ms)
 # linear_stable_echo_path = false
-ns = false                   # 保真人声优先:后面若接 NVIDIA Broadcast,这里不先做 NS
+ns = false                   # 保真人声优先:默认不在 AEC3 内额外降噪
 # ns_level = "low"           # 如必须在本层降噪,先试 low;moderate/high 更易出电音感
 agc = false                  # 保持电平自然,避免双讲时忽大忽小
 
@@ -43,7 +43,14 @@ agc = false                  # 保持电平自然,避免双讲时忽大忽小
 
 # NVIDIA AFX / RTX AEC 是可选 Windows backend。先运行:
 #   echoless nvafx doctor
-# 当前已接入 runtime discovery/doctor;实时 DLL 调用仍在集成中,配置误用会给出明确错误。
+# 如需本地安装 prepared runtime:
+#   echoless nvafx install --common-zip <common.zip> --model-zip <model.zip>
+# v1 只支持 Windows RTX + 48000 Hz + 10ms frame + mono reference。
 # [[chain]]
 # kind = "nvidia_afx_aec"
 # runtime_dir = "auto"           # auto = ECHOLESS_NVAFX_RUNTIME_DIR 或 %LOCALAPPDATA%\Echoless\nvafx\2.1.0
+# model_path = "auto"            # auto = 按 GPU 架构选择 features/nvafxaec/models/<arch>/aec_48k.trtpkg
+# intensity_ratio = 1.0
+# use_default_gpu = true
+# disable_cuda_graph = false
+# on_runtime_error = "silence"   # silence=出错静音并记 diagnostics;bypass=出错直通 near
