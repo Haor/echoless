@@ -83,6 +83,9 @@ cargo run -p echoless-cli --bin echoless -- offline --mic m.wav --reference r.wa
 
 # RTX AEC 离线快捷命令(Windows RTX 机器 + 已安装 runtime)
 cargo run -p echoless-cli --bin echoless -- nvafx offline --mic m.wav --reference r.wav --out rtx.wav
+
+# RTX AEC 实时运行(Windows RTX 机器 + 已安装 runtime)
+cargo run -p echoless-cli --bin echoless --release -- run --config configs/example.toml --processor nvidia_afx_aec --reference-channels mono --diagnostic-dir diagnostics/rtx-aec-realtime --diagnostic-seconds 45 --verbose
 ```
 
 ## GitHub Actions 构建
