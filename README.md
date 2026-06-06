@@ -12,6 +12,7 @@
 - 离线评测:`echoless offline` 仍可用。
 - LocalVQE 已通过动态 C ABI 接入 `localvqe` 处理器;CI 会构建上游 shared library、跑 regression,再跑 Echoless FFI smoke。
 - 原生平台 HAL、原生虚拟麦驱动仍是后续阶段;MVP 输出建议接 VB-Cable / BlackHole。
+- 产品默认策略:以 `sonora_aec3` 保真人声为主。LocalVQE 是独立可选方案,不作为 AEC3 默认后级;如果后面还接 NVIDIA Broadcast,本层默认不做 NS/AGC。
 
 ## crate 结构
 
@@ -28,10 +29,11 @@
 
 ## 核心设计:统一可组合处理器
 
-sonora 经典 AEC3 与 LocalVQE 都是平级 `EchoProcessor` 节点,**可单开 / 串联 / 自由组合 / 扩展**:
+sonora 经典 AEC3 与 LocalVQE 都是平级 `EchoProcessor` 节点,**可单开 / 串联 / 自由组合 / 扩展**。
+当前产品主线是 AEC3 保真优先,LocalVQE 保留为独立可选处理器:
 - 单开经典:`--chain sonora_aec3`
 - 单开 LocalVQE:`--chain localvqe`
-- 串联:`--chain sonora_aec3,localvqe`
+- 串联能力保留给实验,不作为默认推荐路径
 - 加新方案 = 在 `echoless-processors` 写一个 `impl EchoProcessor` + 在 `registry` 登记一行,其余不动。
 
 `ProcessorChain` 自动处理节点间采样率/声道适配与 far ref 分发(每级都拿真实 ref)。
@@ -62,7 +64,7 @@ cargo run -p echoless-cli --bin echoless -- offline \
     --mic takes/doubletalk_01.mic.wav \
     --reference takes/doubletalk_01.ref.wav \
     --out out.wav \
-    --chain "sonora_aec3,localvqe"
+    --chain "sonora_aec3"
 
 # 或用配置文件
 cargo run -p echoless-cli --bin echoless -- offline --mic m.wav --reference r.wav --out o.wav --config configs/example.toml
@@ -81,7 +83,7 @@ cargo run -p echoless-cli --bin echoless -- offline --mic m.wav --reference r.wa
 
 ## 下一步
 
-1. 用 Windows 外放 + USB mic + VB-Cable 做实机反馈,调 `tail_ms` / `ns_level`。
+1. 用 Windows 外放 + USB mic + VB-Cable 做实机反馈,先调 `tail_ms` 与 reference mono/stereo;`ns_level` 只做低强度对照。
 2. 增加 `eval` 子命令,用 output/input energy ratio 做离线效果量化。
 3. `echoless-processors/chain.rs` 占位线性 SRC 换成 rubato 有状态 SRC。
 4. 把实时 runtime 从 CLI 层进一步抽成 GUI/daemon 可复用控制面。

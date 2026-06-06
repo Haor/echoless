@@ -1,7 +1,7 @@
 //! echoless — 跨平台 reference-based AEC 工具 CLI。
 //!
 //! 当前可用:`processors` / `devices` / `offline` / `run`。
-//! 实时 MVP 走 cpal;处理方案 = 经典 AEC3(sonora)+ LocalVQE,可单开/串联/组合。
+//! 实时 MVP 走 cpal;主线走经典 AEC3(sonora)保真,LocalVQE 作为独立可选处理器。
 
 #[cfg(not(feature = "realtime"))]
 mod backends;
@@ -50,7 +50,7 @@ struct OfflineArgs {
     /// 处理链 TOML 配置(含 [[chain]]);给了则用其 chain/rate/frame_ms
     #[arg(long)]
     config: Option<String>,
-    /// 快捷处理链(逗号分隔),如 "sonora_aec3,localvqe";与 --config 二选一
+    /// 快捷处理链,如 "sonora_aec3" 或 "localvqe";逗号串联仅用于实验
     #[arg(long)]
     chain: Option<String>,
     #[arg(long, default_value_t = 48000)]
@@ -82,7 +82,7 @@ struct RunArgs {
     /// reference 送进 AEC 的声道模式:mono 或 stereo
     #[arg(long, value_parser = parse_reference_channels)]
     reference_channels: Option<ReferenceChannels>,
-    /// 覆盖处理链,可重复或逗号分隔,如 --processor sonora_aec3,localvqe
+    /// 覆盖处理链,可重复或逗号分隔;默认建议单开 sonora_aec3
     #[arg(long, value_delimiter = ',')]
     processor: Vec<String>,
     /// 开启 sonora_aec3 降噪
@@ -188,7 +188,7 @@ fn cmd_processors() -> Result<()> {
     for k in registry::kinds() {
         println!("  - {k}");
     }
-    println!("(在 --chain 或 config 的 [[chain]] 里按 kind 引用;可单开/串联/组合)");
+    println!("(在 --chain 或 config 的 [[chain]] 里按 kind 引用;默认建议单开 sonora_aec3,串联仅用于实验)");
     Ok(())
 }
 

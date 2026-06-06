@@ -55,34 +55,31 @@ The Rust processor stays a normal `EchoProcessor` node:
 - If `library` is omitted, Echoless tries the current executable directory,
   `./localvqe/`, the current working directory, and `ECHOLESS_LOCALVQE_LIBRARY`.
 
-Recommended first runtime chain:
+Recommended LocalVQE runtime test chain:
 
 ```toml
 reference_channels = "mono"
-
-[[chain]]
-kind = "sonora_aec3"
-ns = true
 
 [[chain]]
 kind = "localvqe"
 model = "models/localvqe-v1.2-1.3M-f32.gguf"
 library = "localvqe.dll" # macOS: "liblocalvqe.dylib"
 threads = 2
-noise_gate = true
-noise_gate_threshold_dbfs = -45.0
+noise_gate = false
 ```
 
 Use v1.2 first for Windows listening tests because it is the small/fast model.
-Use v1.3 after the FFI path is stable.
+Use v1.3 after the standalone path is stable.
 
 ## Current Limits
 
 - The LocalVQE processor is real, but the boundary SRC in `ProcessorChain` is
   still the placeholder per-block linear resampler. This is acceptable for a
   first Windows functionality/listening test, not a final quality claim.
-- LocalVQE is mono far-reference only. It can be tested after stereo AEC3, but
-  the LocalVQE node itself receives a downmixed reference.
+- LocalVQE is mono far-reference only. Keep it as a standalone optional
+  processor for now; do not treat AEC3 -> LocalVQE as the default product path.
+- If the user's downstream chain includes NVIDIA Broadcast, prioritize AEC3
+  voice fidelity and leave NS/gating to the downstream tool.
 - The GitHub workflow runs an Echoless FFI smoke test with the built shared
   library and model. The Windows handoff still needs real device listening
   evidence for delay, CPU, artifacts, and speech preservation.

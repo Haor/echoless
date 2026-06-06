@@ -20,16 +20,17 @@ kind = "sonora_aec3"
 # tail_ms = 120              # echo tail 长度(默认 52ms;外放+房间混响常需更长)
 # delay_num_filters = 5      # 延迟搜索窗(默认 5 ≈ 608ms)
 # linear_stable_echo_path = false
-ns = true                    # 顺带降噪(与 AEC3 同属一个 sonora APM;贴近上游 sonora-aec 默认体感)
-ns_level = "moderate"        # low / moderate / high / veryhigh
-# agc = false                # AGC2 自动增益
+ns = false                   # 保真人声优先:后面若接 NVIDIA Broadcast,这里不先做 NS
+# ns_level = "low"           # 如必须在本层降噪,先试 low;moderate/high 更易出电音感
+agc = false                  # 保持电平自然,避免双讲时忽大忽小
 
-# 可串 LocalVQE:CI artifact 会把 Windows 所需 DLL 与小模型一起放入包内。
+# LocalVQE 作为独立可选方案存在,不作为 AEC3 默认后级。
+# CI artifact 会把 Windows 所需 DLL 与小模型一起放入包内。
 # 注意:当前链路边界 SRC 仍是占位线性重采样,LocalVQE 可测真实推理,但不是最终音质版 SRC。
 # [[chain]]
 # kind = "localvqe"
 # model = "models/localvqe-v1.2-1.3M-f32.gguf"
 # library = "localvqe.dll"       # Windows artifact 根目录;macOS 用 "liblocalvqe.dylib"
 # threads = 2                    # CPU 线程数;0/不填 = 上游 auto
-# noise_gate = true
-# noise_gate_threshold_dbfs = -45.0
+# noise_gate = false             # 保真人声优先;门限过高会吃掉轻声/尾音
+# noise_gate_threshold_dbfs = -60.0
