@@ -3,7 +3,7 @@ name = "echoless-cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "AEC 工具 CLI 前端(当前):离线跑链可用;实时/设备依赖平台 HAL(TODO)"
+description = "Echoless CLI: realtime and offline reference-based AEC pipeline"
 
 [[bin]]
 name = "echoless"

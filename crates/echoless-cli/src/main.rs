@@ -1,7 +1,7 @@
-//! aec — 跨平台 reference-based AEC 工具 CLI(骨架)。
+//! echoless — 跨平台 reference-based AEC 工具 CLI。
 //!
-//! 当前可用:`offline`(mic.wav + ref.wav 经处理链 → out.wav)。
-//! 待平台 HAL:`devices` / `run`(实时)。处理方案 = 经典 AEC3(sonora)+ LocalVQE,可单开/串联/组合。
+//! 当前可用:`processors` / `devices` / `offline` / `run`。
+//! 实时 MVP 走 cpal;处理方案 = 经典 AEC3(sonora)+ LocalVQE,可单开/串联/组合。
 
 #[cfg(not(feature = "realtime"))]
 mod backends;
@@ -16,7 +16,7 @@ use echoless_hal::file::{WavFileSink, WavFileSource};
 use echoless_processors::{registry, NodeConfig};
 
 #[derive(Parser)]
-#[command(name = "echoless", about = "跨平台 reference-based AEC 工具(骨架)", version)]
+#[command(name = "echoless", about = "跨平台 reference-based AEC 工具", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -24,13 +24,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 离线:mic.wav + ref.wav 经处理链 → out.wav(当前可用)
+    /// 离线:mic.wav + ref.wav 经处理链 → out.wav
     Offline(OfflineArgs),
-    /// 列出可用处理器种类(设备枚举依赖平台 HAL,TODO)
+    /// 列出可用处理器种类
     Processors,
-    /// 列出音频设备(平台 HAL,TODO)
+    /// 列出音频设备
     Devices,
-    /// 实时运行(平台 HAL,TODO)
+    /// 实时运行
     Run(RunArgs),
 }
 

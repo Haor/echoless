@@ -1,21 +1,26 @@
-# echoless — 跨平台实时 AEC 工具(cargo workspace 骨架)
+# echoless — 跨平台实时 reference-based AEC 工具
 
 面向 **Windows 10/11 + macOS 14.4+** 的本地自用 reference-based AEC 工具。
-设计蓝本:`../research/cross_platform_architecture.md`。
+目标场景是外放音箱 + USB 麦克风做 Discord / VRChat 语音连麦时,用系统播放声音
+作为 far-end reference,消除麦克风里的扬声器回声。
 
-> **当前是骨架**:架构/trait/链路/配置/CLI 全部就位且**可编译**,离线链路**已能跑通**(stub 处理器先直通)。
-> sonora / LocalVQE 的真实算法、平台 HAL(WASAPI/CoreAudio)、原生虚拟麦为标注好的 TODO。
+当前状态:
+
+- 真实 WebRTC AEC3 路径:vendored `sonora` fork + `sonora_aec3` 处理器。
+- 实时 MVP:`echoless run --config configs/example.toml` 走 `cpal` + ringbuf。
+- 离线评测:`echoless offline` 仍可用。
+- LocalVQE、原生平台 HAL、原生虚拟麦驱动仍是后续阶段;MVP 输出建议接 VB-Cable / BlackHole。
 
 ## crate 结构
 
 | crate | 职责 | 状态 |
 |---|---|---|
 | `echoless-hal` | 平台无关 trait(`AudioSource`/`AudioSink`/`MonotonicClock`)+ 类型 + 文件/null 后端 | ✅ |
-| `echoless-hal-win` | Windows HAL(WASAPI/WaveRT/QPC) | stub(TODO) |
-| `echoless-hal-mac` | macOS HAL(CoreAudio/Process Tap/AudioServerPlugin/mach) | stub(TODO) |
-| `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + sonora/localvqe 节点 | ✅ 框架 / 算法 TODO |
-| `echoless-core` | 管线编排 + `PipelineConfig` + `ControlApi` + `run_offline` | ✅ 离线 / 实时 TODO |
-| `echoless-cli` | CLI 前端(`aec`):`offline` 可用,`devices`/`run` TODO | ✅ |
+| `echoless-hal-win` | Windows HAL(WASAPI/WaveRT/QPC) | stub,实时 MVP 暂走 cpal |
+| `echoless-hal-mac` | macOS HAL(CoreAudio/Process Tap/AudioServerPlugin/mach) | stub,实时 MVP 暂走 cpal |
+| `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + `sonora_aec3` / `localvqe` 节点 | ✅ AEC3 可用;LocalVQE stub |
+| `echoless-core` | 管线编排 + `PipelineConfig` + `ControlApi` + `run_offline` | ✅ 离线可用;实时 cpal 路径在 CLI |
+| `echoless-cli` | CLI 前端:`processors` / `devices` / `offline` / `run` | ✅ |
 
 依赖单向:`echoless-cli/daemon → 平台HAL → echoless-hal`;`echoless-cli → echoless-core → echoless-processors`。**核心永不依赖平台 crate;前端只经 `ControlApi`。**
 
@@ -27,15 +32,25 @@ sonora 经典 AEC3 与 LocalVQE 都是平级 `EchoProcessor` 节点,**可单开 
 - 串联:`--chain sonora_aec3,localvqe`
 - 加新方案 = 在 `echoless-processors` 写一个 `impl EchoProcessor` + 在 `registry` 登记一行,其余不动。
 
-`ProcessorChain` 自动处理节点间采样率/声道适配(sonora 48k/stereo-ref ↔ LocalVQE 16k/mono)与 far ref 分发(每级都拿真实 ref)。
+`ProcessorChain` 自动处理节点间采样率/声道适配与 far ref 分发(每级都拿真实 ref)。
+当前边界 SRC 仍是占位线性重采样;LocalVQE 接入前需要替换成有状态 SRC。
 
 ## 构建与试跑
 
 ```bash
-cd aec
-cargo build
+cd echoless
+cargo build --release
 
-# 离线跑链(用 tools/echoless-recorder 录的 WAV;stub 阶段输出≈输入,验证链路通)
+# 列出处理器种类
+cargo run -- processors
+
+# 列出音频设备
+cargo run -- devices
+
+# 实时运行
+cargo run --release -- run --config configs/example.toml
+
+# 离线跑链
 cargo run -p echoless-cli --bin echoless -- offline \
     --mic takes/doubletalk_01.mic.wav \
     --reference takes/doubletalk_01.ref.wav \
@@ -44,19 +59,21 @@ cargo run -p echoless-cli --bin echoless -- offline \
 
 # 或用配置文件
 cargo run -p echoless-cli --bin echoless -- offline --mic m.wav --reference r.wav --out o.wav --config configs/example.toml
-
-# 列出处理器种类
-cargo run -p echoless-cli --bin echoless -- processors
-
-# 实时(当前会在平台 HAL 处报「未实现」,精确指向待办)
-cargo run -p echoless-cli --bin echoless -- run --config configs/example.toml
 ```
 
-## 下一步(给算法/平台填空)
+## GitHub Actions 构建
 
-1. `echoless-processors/sonora_aec3.rs` → 接 sonora APM/AEC3(analyze_render + process_capture)。
-2. `echoless-processors/localvqe.rs` → FFI 接 liblocalvqe(`localvqe_process_frame_f32`)。
-3. `echoless-processors/chain.rs` → 占位线性 SRC 换成 rubato 有状态 SRC + 立体声保留。
-4. `echoless-hal-win` / `echoless-hal-mac` → 实现采集/loopback(Process Tap)/虚拟麦;参考 `../tools/echoless-recorder`。
-5. `echoless-core::run_realtime` → 线程化实时管线(SPSC ring + 对齐 + drift);加 `ControlApi` 实体。
-6. `echoless-daemon`(新 crate)+ Electron 前端(蓝本 §14)。
+推送到 `main` 后,`.github/workflows/build.yml` 会在 GitHub-hosted Windows/macOS runner 上:
+
+1. 安装 Rust stable 与 clippy。
+2. 运行 `cargo test --workspace --locked`。
+3. 运行 `cargo clippy --workspace --all-targets --locked -- -D warnings`。
+4. 生成 release artifact:`echoless-windows-*` / `echoless-macos-*`。
+
+## 下一步
+
+1. 用 Windows 外放 + USB mic + VB-Cable 做实机反馈,调 `tail_ms` / `ns_level`。
+2. 增加 `eval` 子命令,用 output/input energy ratio 做离线效果量化。
+3. `echoless-processors/localvqe.rs` FFI 接 LocalVQE。
+4. `echoless-processors/chain.rs` 占位线性 SRC 换成 rubato 有状态 SRC。
+5. 原生 WASAPI/CoreAudio/虚拟麦驱动阶段再替换 cpal MVP。

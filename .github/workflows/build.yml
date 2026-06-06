@@ -1,0 +1,72 @@
+name: Build Echoless
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            package: windows
+          - name: macOS
+            os: macos-latest
+            package: macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add clippy
+          rustc --version
+          cargo --version
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Build release
+        run: cargo build --release --workspace --locked
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            cp target/release/echoless.exe dist/
+            cp configs/example.toml dist/
+            powershell -NoLogo -NoProfile -Command \
+              "Compress-Archive -Path dist/* -DestinationPath echoless-${{ matrix.package }}-${{ runner.arch }}.zip -Force"
+          else
+            cp target/release/echoless dist/
+            cp configs/example.toml dist/
+            tar -czf "echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz" -C dist .
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: echoless-${{ matrix.package }}-${{ runner.arch }}
+          path: |
+            echoless-${{ matrix.package }}-${{ runner.arch }}.zip
+            echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz
+          if-no-files-found: error
