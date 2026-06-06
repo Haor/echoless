@@ -114,5 +114,6 @@ cargo run -p echoless-cli --bin echoless --release -- run --config configs/examp
 1. 确认 NVIDIA AFX runtime/model 再分发许可后,再开放远程下载/公开 release asset。
 2. 增加 `eval` 子命令,用 output/input energy ratio 做离线效果量化。
 3. `echoless-processors/chain.rs` 占位线性 SRC 换成 rubato 有状态 SRC。
-4. 把实时 runtime 从 CLI 层进一步抽成 GUI/daemon 可复用控制面。
-5. 原生 WASAPI/CoreAudio/虚拟麦驱动阶段再替换 cpal MVP。
+4. 按 `docs/frontend/FRONTEND_ADAPTATION_PLAN.md` 把实时 runtime 适配成 GUI/daemon 可复用控制面,同时保留 CLI 一等入口。
+5. 前端实现交接见 `docs/frontend/FRONTEND_AGENT_HANDOFF.md`。
+6. 原生 WASAPI/CoreAudio/虚拟麦驱动阶段再替换 cpal MVP。
