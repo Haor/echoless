@@ -34,7 +34,10 @@ ctest --test-dir localvqe-regression-build -C Release -R "^regression_" --output
 
 On Windows this produces `localvqe.dll`; on macOS this produces `liblocalvqe.dylib`.
 Keep the GGML backend libraries next to the binary/library when packaging or
-manual testing.
+manual testing. On macOS the required GGML backend modules are emitted as
+`libggml-*.so` files, for example `libggml-cpu-apple_m1.so`,
+`libggml-metal.so`, and `libggml-blas.so`; packaging only `*.dylib` is not
+enough and fails at runtime with `backend 'CPU' not registered`.
 
 The Windows upstream regression target may need a temporary compatibility shim
 for `S_ISREG` in `ggml/tests/test_helpers.h`; the Echoless GitHub workflow
@@ -83,6 +86,8 @@ a lower-cost fallback or if v1.3 produces excessive speech damage.
   processor for now; do not treat AEC3 -> LocalVQE as the default product path.
 - If the user's downstream chain includes NVIDIA Broadcast, prioritize AEC3
   voice fidelity and leave NS/gating to the downstream tool.
-- The GitHub workflow runs an Echoless FFI smoke test with the built shared
-  library and model. The Windows handoff still needs real device listening
-  evidence for delay, CPU, artifacts, and speech preservation.
+- The GitHub workflow runs both an Echoless FFI smoke test with the built
+  shared library/model and a packaged macOS artifact smoke test after extracting
+  the tarball. The latter guards against missing GGML backend modules in the
+  final user-facing package. The Windows handoff still needs real device
+  listening evidence for delay, CPU, artifacts, and speech preservation.

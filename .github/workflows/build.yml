@@ -168,9 +168,76 @@ jobs:
           else
             cp target/release/echoless dist/
             cp configs/example.toml dist/
-            find "${shared_build}" -name '*.dylib' -exec cp -P {} dist/ \;
+            find "${shared_build}" \( -name '*.dylib' -o -name '*.so' \) -exec cp -P {} dist/ \;
             tar -czf "echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz" -C dist .
           fi
+
+      - name: Packaged macOS LocalVQE smoke
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz"
+          smoke_dir="${RUNNER_TEMP}/echoless-package-smoke"
+          rm -rf "${smoke_dir}"
+          mkdir -p "${smoke_dir}"
+          tar -xzf "${package}" -C "${smoke_dir}"
+
+          python3 - <<'PY'
+          import math
+          import struct
+          import wave
+
+          rate = 48000
+          seconds = 2
+          frames = rate * seconds
+          reference = []
+          mic = []
+          for n in range(frames):
+              t = n / rate
+              far = 0.20 * math.sin(2 * math.pi * 440 * t)
+              near = 0.08 * math.sin(2 * math.pi * 180 * t) if 0.55 <= t <= 1.55 else 0.0
+              delayed = reference[n - 960] * 0.35 if n >= 960 else 0.0
+              reference.append(far)
+              mic.append(max(-1.0, min(1.0, near + delayed)))
+
+          for name, data in (("smoke_ref.wav", reference), ("smoke_mic.wav", mic)):
+              with wave.open(name, "wb") as wav:
+                  wav.setnchannels(1)
+                  wav.setsampwidth(2)
+                  wav.setframerate(rate)
+                  wav.writeframes(
+                      b"".join(
+                          struct.pack("<h", int(max(-1.0, min(1.0, sample)) * 32767))
+                          for sample in data
+                      )
+                  )
+          PY
+
+          cat > "${smoke_dir}/localvqe-smoke.toml" <<'TOML'
+          sample_rate = 48000
+          frame_ms = 10
+          reference_channels = "mono"
+
+          [[chain]]
+          kind = "localvqe"
+          model = "models/localvqe-v1.3-4.8M-f32.gguf"
+          library = "./liblocalvqe.0.1.0.dylib"
+          threads = 2
+          noise_gate = false
+          TOML
+
+          mv smoke_mic.wav smoke_ref.wav "${smoke_dir}/"
+          cd "${smoke_dir}"
+          ./echoless processors
+          DYLD_LIBRARY_PATH="${PWD}:${DYLD_LIBRARY_PATH:-}" \
+          DYLD_FALLBACK_LIBRARY_PATH="${PWD}:${DYLD_FALLBACK_LIBRARY_PATH:-}" \
+            ./echoless offline \
+              --config localvqe-smoke.toml \
+              --mic smoke_mic.wav \
+              --reference smoke_ref.wav \
+              --out smoke_localvqe_out.wav
+          test -s smoke_localvqe_out.wav
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
