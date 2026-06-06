@@ -1,36 +1,56 @@
 //! 经典 AEC3 节点(包 vendored sonora — 纯 Rust WebRTC AudioProcessing 移植)。
 //!
-//! io_spec:48k,near mono,far stereo(保留 L/R,蓝本 §7 / 主文档 §8.3)。
-//! 处理域固定 10ms = 480 样本/声道(sonora 硬要求);本节点内部按 480 分块 + 末块零填充。
+//! io_spec:48k,near mono,**far mono**(对齐上游 sonora-aec 实战配置:loopback 下混单声道,
+//! 已在 Windows 验证有效;立体声参考留作后续可选)。处理域固定 10ms = 480 样本/声道。
 //! 调用顺序铁律:每块先 process_render(far),再 process_capture(near)。
 //!
-//! 调参:经 vendored fork 开放的 `AudioProcessingBuilder::aec3_config()` 注入
-//! `EchoCanceller3Config`(上游高层只放行 transparent_mode)。当前映射 tail 长度、
-//! 延迟搜索范围、loopback 稳定路径标记;详见 research/sonora_aec3_internal_map.md §2/§9。
+//! 调参(经 vendored fork 开放的 `aec3_config()` 注入 EchoCanceller3Config):
+//!   tail_ms / delay_num_filters / linear_stable_echo_path。
+//! 顺带可选 NS(降噪)/ AGC(自动增益)—— 与 AEC3 同属一个 sonora APM pipeline。
+//! 详见 research/sonora_aec3_internal_map.md §2/§9/§11。
 //!
-//! feature `sonora-engine`(默认开)= 真实 AEC3;关掉 = 直通(便于快速构建)。
+//! feature `sonora-engine`(默认开)= 真实 AEC3;关掉 = 直通。
 
 use crate::{EchoProcessor, IoSpec, ProcessorStats};
 
 const SR: u32 = 48_000;
 const FRAME: usize = 480; // 10ms @ 48k
 
-/// 我们的高层调参(映射到底层 EchoCanceller3Config)。None = 用上游默认。
-#[derive(Clone, Default)]
+/// 我们的高层调参。tail/num_filters/linear 映射到 EchoCanceller3Config;ns/agc 走 sonora APM。
+#[derive(Clone)]
 #[cfg_attr(not(feature = "sonora-engine"), allow(dead_code))]
 struct Aec3Tuning {
-    /// echo tail 长度(ms);底层 4ms/block,默认 52ms(13 blocks)。外放+房间混响常需更长。
+    /// echo tail 长度(ms);底层 4ms/block,默认 52ms。外放+房间混响常需更长。
     tail_ms: Option<u32>,
-    /// 延迟搜索的并行匹配滤波器数(默认 5 ≈ 608ms 搜索窗);链路延迟大时加。
+    /// 延迟搜索的并行匹配滤波器数(默认 5 ≈ 608ms 搜索窗)。
     delay_num_filters: Option<usize>,
     /// 标记 echo path 线性且稳定(纯 loopback 参考时可酌情开)。
     linear_stable_echo_path: bool,
+    /// 开启降噪(NoiseSuppression)。
+    ns: bool,
+    /// 降噪强度:low / moderate / high / veryhigh。
+    ns_level: String,
+    /// 开启 AGC2 自适应增益。
+    agc: bool,
+}
+
+impl Default for Aec3Tuning {
+    fn default() -> Self {
+        Self {
+            tail_ms: None,
+            delay_num_filters: None,
+            linear_stable_echo_path: false,
+            ns: false,
+            ns_level: "moderate".into(),
+            agc: false,
+        }
+    }
 }
 
 impl Aec3Tuning {
-    /// 是否全为默认(无任何调参)。全默认时不注入 config,走上游原始默认路径
-    /// (含 create_default_multichannel_config),避免无谓改变默认行为。
-    fn is_default(&self) -> bool {
+    /// 是否对 EchoCanceller3Config 无任何调参(决定是否走上游原始默认路径,见 §11.4)。
+    /// 注:ns/agc 属高层 APM 配置,不影响 aec3_config 注入,故不计入。
+    fn aec3_is_default(&self) -> bool {
         self.tail_ms.is_none() && self.delay_num_filters.is_none() && !self.linear_stable_echo_path
     }
 }
@@ -70,7 +90,7 @@ impl EchoProcessor for SonoraAec3 {
         "sonora_aec3"
     }
     fn io_spec(&self) -> IoSpec {
-        IoSpec { sample_rate: SR, near_channels: 1, far_channels: 2, algorithmic_latency_ms: 0.0 }
+        IoSpec { sample_rate: SR, near_channels: 1, far_channels: 1, algorithmic_latency_ms: 0.0 }
     }
     fn configure(&mut self, params: &toml::Table) -> anyhow::Result<()> {
         // 注:外部延迟在默认路径下基本无效(只在 reset 时用一次,见 §4.3);保留备用。
@@ -85,6 +105,15 @@ impl EchoProcessor for SonoraAec3 {
         }
         if let Some(v) = params.get("linear_stable_echo_path").and_then(|v| v.as_bool()) {
             self.tuning.linear_stable_echo_path = v;
+        }
+        if let Some(v) = params.get("ns").and_then(|v| v.as_bool()) {
+            self.tuning.ns = v;
+        }
+        if let Some(v) = params.get("ns_level").and_then(|v| v.as_str()) {
+            self.tuning.ns_level = v.to_string();
+        }
+        if let Some(v) = params.get("agc").and_then(|v| v.as_bool()) {
+            self.tuning.agc = v;
         }
         // config 在引擎构造时注入,故参数变化需重建引擎。
         #[cfg(feature = "sonora-engine")]
@@ -139,7 +168,7 @@ fn build_aec3_config(t: &Aec3Tuning) -> sonora::EchoCanceller3Config {
         c.filter.refined.length_blocks = blocks;
         c.filter.coarse.length_blocks = blocks;
         // 注:不动 refined_initial / coarse_initial。上游初始滤波器故意短(快速粗收敛,
-        // 再切到长滤波器精修);拉长 initial 会破坏这个两阶段收敛、显著劣化效果。
+        // 再切到长滤波器精修);拉长 initial 会破坏两阶段收敛、显著劣化效果(§11.3)。
     }
     if let Some(nf) = t.delay_num_filters {
         c.delay.num_filters = nf;
@@ -152,51 +181,69 @@ fn build_aec3_config(t: &Aec3Tuning) -> sonora::EchoCanceller3Config {
     c
 }
 
+#[cfg(feature = "sonora-engine")]
+fn ns_level(s: &str) -> sonora::config::NoiseSuppressionLevel {
+    use sonora::config::NoiseSuppressionLevel as L;
+    match s.to_ascii_lowercase().as_str() {
+        "low" => L::Low,
+        "high" => L::High,
+        "veryhigh" | "very_high" | "very-high" => L::VeryHigh,
+        _ => L::Moderate,
+    }
+}
+
 // ── 真实 AEC3 实现 ────────────────────────────────────────────────────────────
 #[cfg(feature = "sonora-engine")]
 struct Inner {
     apm: sonora::AudioProcessing,
     near_buf: Vec<f32>,
-    far_l: Vec<f32>,
-    far_r: Vec<f32>,
-    far_out_l: Vec<f32>,
-    far_out_r: Vec<f32>,
+    far_buf: Vec<f32>,
+    far_out: Vec<f32>,
     out_buf: Vec<f32>,
 }
 
 #[cfg(feature = "sonora-engine")]
 impl Inner {
     fn new(tuning: &Aec3Tuning) -> Self {
-        use sonora::config::{EchoCanceller, Pipeline};
+        use sonora::config::{
+            AdaptiveDigital, EchoCanceller, GainController2, NoiseSuppression, Pipeline,
+        };
         use sonora::{AudioProcessing, Config, StreamConfig};
 
         let config = Config {
             echo_canceller: Some(EchoCanceller::default()),
+            noise_suppression: tuning.ns.then(|| NoiseSuppression {
+                level: ns_level(&tuning.ns_level),
+                ..Default::default()
+            }),
+            gain_controller2: tuning.agc.then(|| GainController2 {
+                adaptive_digital: Some(AdaptiveDigital::default()),
+                ..Default::default()
+            }),
             pipeline: Pipeline {
-                multi_channel_render: true,   // far = stereo
+                multi_channel_render: false, // far = mono
                 multi_channel_capture: false, // near = mono
                 ..Default::default()
             },
             ..Default::default()
         };
+
         let mut builder = AudioProcessing::builder().config(config);
-        // 仅在真有调参时注入(经 vendored fork 开放的入口);否则保持上游默认路径。
-        if !tuning.is_default() {
+        // 仅在真有 AEC3 调参时注入(经 vendored fork 开放的入口);否则保持上游默认路径(§11.4)。
+        if !tuning.aec3_is_default() {
             builder = builder.aec3_config(build_aec3_config(tuning));
         }
         let apm = builder
             .capture_config(StreamConfig::new(SR, 1))
-            .render_config(StreamConfig::new(SR, 2))
+            .render_config(StreamConfig::new(SR, 1))
             .echo_detector(true) // 提供 residual_echo_likelihood(独立 EchoDetector,§7)
             .build();
 
         Self {
             apm,
             near_buf: vec![0.0; FRAME],
-            far_l: vec![0.0; FRAME],
-            far_r: vec![0.0; FRAME],
-            far_out_l: vec![0.0; FRAME],
-            far_out_r: vec![0.0; FRAME],
+            far_buf: vec![0.0; FRAME],
+            far_out: vec![0.0; FRAME],
             out_buf: vec![0.0; FRAME],
         }
     }
@@ -214,30 +261,26 @@ impl SonoraAec3 {
         while i < frames {
             let blk = (frames - i).min(FRAME);
 
-            // near(mono)→ pad 到 480
-            for j in 0..FRAME {
-                self.inner.near_buf[j] = if j < blk { near.get(i + j).copied().unwrap_or(0.0) } else { 0.0 };
-            }
-            // far(stereo interleaved)→ 去交织 + pad
+            // near / far 均 mono → pad 到 480
             for j in 0..FRAME {
                 if j < blk {
-                    self.inner.far_l[j] = far.get((i + j) * 2).copied().unwrap_or(0.0);
-                    self.inner.far_r[j] = far.get((i + j) * 2 + 1).copied().unwrap_or(0.0);
+                    self.inner.near_buf[j] = near.get(i + j).copied().unwrap_or(0.0);
+                    self.inner.far_buf[j] = far.get(i + j).copied().unwrap_or(0.0);
                 } else {
-                    self.inner.far_l[j] = 0.0;
-                    self.inner.far_r[j] = 0.0;
+                    self.inner.near_buf[j] = 0.0;
+                    self.inner.far_buf[j] = 0.0;
                 }
             }
 
             // 先 render(far),再 capture(near)
-            let _ = self.inner.apm.process_render_f32(
-                &[&self.inner.far_l, &self.inner.far_r],
-                &mut [&mut self.inner.far_out_l, &mut self.inner.far_out_r],
-            );
-            let _ = self.inner.apm.process_capture_f32(
-                &[&self.inner.near_buf],
-                &mut [&mut self.inner.out_buf],
-            );
+            let _ = self
+                .inner
+                .apm
+                .process_render_f32(&[&self.inner.far_buf], &mut [&mut self.inner.far_out]);
+            let _ = self
+                .inner
+                .apm
+                .process_capture_f32(&[&self.inner.near_buf], &mut [&mut self.inner.out_buf]);
 
             let n = blk.min(out.len().saturating_sub(i));
             out[i..i + n].copy_from_slice(&self.inner.out_buf[..n]);

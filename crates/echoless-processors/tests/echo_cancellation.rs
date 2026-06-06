@@ -43,7 +43,7 @@ fn run(params: toml::Table, paths: &[(usize, f32)]) -> f32 {
     let total = SR * 5;
     let warmup = SR * 2;
     let mut near = vec![0.0f32; FRAME];
-    let mut far = vec![0.0f32; FRAME * 2]; // stereo interleaved
+    let mut far = vec![0.0f32; FRAME]; // mono
     let mut out = vec![0.0f32; FRAME];
 
     let (mut mic_sq, mut out_sq, mut cnt) = (0.0f64, 0.0f64, 0u64);
@@ -51,9 +51,7 @@ fn run(params: toml::Table, paths: &[(usize, f32)]) -> f32 {
     while i + FRAME <= total {
         for j in 0..FRAME {
             let n = i + j;
-            let r = refsig(n);
-            far[j * 2] = r;
-            far[j * 2 + 1] = r;
+            far[j] = refsig(n);
             let mut echo = 0.0;
             for &(d, g) in paths {
                 if n >= d {

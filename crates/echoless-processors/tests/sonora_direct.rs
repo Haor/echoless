@@ -99,7 +99,8 @@ fn run(delay: usize, far_stereo: bool, set_delay_ms: Option<i32>) -> (f32, f32, 
 /// (与经 wrapper 的 echo_cancellation 测试互为对照,隔离 wrapper vs 引擎问题。)
 #[test]
 fn engine_cancels_nonstationary_echo() {
-    let (_, _, db) = run(2400, true, None);
+    // mono far,对齐 sonora_aec3 节点的 mono 配置。
+    let (_, _, db) = run(2400, false, None);
     assert!(db > 18.0, "sonora 引擎对非平稳回声压低不足:{db:.1} dB");
 }
 

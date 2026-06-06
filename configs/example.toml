@@ -1,17 +1,29 @@
 # 管线配置示例(CLI 用 TOML;后期 Electron 用等价 JSON,映射到同一 PipelineConfig)
-mic = "default"          # 麦克风设备
-reference = "system"     # far-end 参考:Win=loopback / mac=Process Tap
-output = "BlackHole 2ch" # 虚拟麦输出:Win=VB-Cable 名 / mac=BlackHole 名
-sample_rate = 48000
+#
+# 实时跑:echoless run --config configs/example.toml
+# 先看设备:echoless devices
+
+mic = "default"          # 麦克风:default / 设备名片段 / 索引
+reference = "system"     # far-end 参考:
+                         #   system = 默认输出做 loopback(Windows 原生有效)
+                         #   none   = 无参考(仅 NS 等单端处理)
+                         #   output:<名> / input:<名> / 设备名 / 索引
+                         #   macOS 取系统声音需 BlackHole 之类:reference = "input:BlackHole"
+output = "default"       # 输出:虚拟麦设备名(Win=VB-Cable / mac=BlackHole),或 default 试听
+sample_rate = 48000      # 必须能整除 100(10ms 帧);mic/ref/out 共用此率
 frame_ms = 10
 
-# 处理链:有序节点 = 串联;单个节点 = 单开;空 = 直通。运行时可换。
-# 每个 [[chain]] 的 kind 之外的键都作为该方案的参数。
+# 处理链:有序节点 = 串联;单个 = 单开;空 = 直通。kind 之外的键 = 该方案参数。
 [[chain]]
 kind = "sonora_aec3"
-initial_delay_ms = 80
-max_tail_ms = 256
+# tail_ms = 120              # echo tail 长度(默认 52ms;外放+房间混响常需更长)
+# delay_num_filters = 5      # 延迟搜索窗(默认 5 ≈ 608ms)
+# linear_stable_echo_path = false
+ns = true                    # 顺带降噪(与 AEC3 同属一个 sonora APM;贴近上游 sonora-aec 默认体感)
+ns_level = "moderate"        # low / moderate / high / veryhigh
+# agc = false                # AGC2 自动增益
 
-[[chain]]
-kind = "localvqe"
-model = "models/localvqe-v1.3.gguf"
+# 后续可串 LocalVQE(需 rubato 边界重采样 + GGML 模型,尚未落地):
+# [[chain]]
+# kind = "localvqe"
+# model = "models/localvqe-v1.3.gguf"

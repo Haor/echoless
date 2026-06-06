@@ -3,12 +3,15 @@
 //! 当前可用:`offline`(mic.wav + ref.wav 经处理链 → out.wav)。
 //! 待平台 HAL:`devices` / `run`(实时)。处理方案 = 经典 AEC3(sonora)+ LocalVQE,可单开/串联/组合。
 
+#[cfg(not(feature = "realtime"))]
 mod backends;
+#[cfg(feature = "realtime")]
+mod realtime;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
-use echoless_core::{run_offline, run_realtime, PipelineConfig};
+use echoless_core::{run_offline, PipelineConfig};
 use echoless_hal::file::{WavFileSink, WavFileSource};
 use echoless_processors::{registry, NodeConfig};
 
@@ -134,25 +137,28 @@ fn cmd_processors() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "realtime")]
 fn cmd_devices() -> Result<()> {
-    println!("设备枚举依赖平台 HAL,当前为 stub(蓝本 §5/§8)。");
-    // 演示 dispatch 已就位:
-    let mut mic = backends::make_mic("default");
-    if let Err(e) = mic.start() {
-        println!("  mic: {e}");
-    }
+    realtime::print_devices()
+}
+
+#[cfg(not(feature = "realtime"))]
+fn cmd_devices() -> Result<()> {
+    println!("设备枚举需 realtime 特性(cpal);当前构建未启用。");
+    let _ = backends::make_mic("default");
     Ok(())
 }
 
+#[cfg(feature = "realtime")]
 fn cmd_run(a: RunArgs) -> Result<()> {
     let s = std::fs::read_to_string(&a.config)?;
     let cfg: PipelineConfig = toml::from_str(&s)?;
     println!("实时运行配置: mic={} ref={} out={}", cfg.mic, cfg.reference, cfg.output);
+    realtime::run(&cfg)
+}
 
-    let mic = backends::make_mic(&cfg.mic);
-    let reference = backends::make_reference(&cfg.reference);
-    let sink = backends::make_output(&cfg.output);
-
-    // 当前会在平台 HAL 的 start() 处报「未实现」,精确指向待办点。
-    run_realtime(&cfg, mic, reference, sink)
+#[cfg(not(feature = "realtime"))]
+fn cmd_run(_a: RunArgs) -> Result<()> {
+    let _ = backends::make_mic("default");
+    anyhow::bail!("实时管线需 realtime 特性(cpal);当前构建未启用")
 }

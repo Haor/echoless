@@ -142,16 +142,20 @@ where
     })
 }
 
-/// 实时管线:待平台 HAL(echoless-hal-win / echoless-hal-mac)落地后实现(蓝本 §5/§6/§8)。
+/// 实时管线(基于泛型 AudioSource/Sink 的版本)。
+///
+/// 注:MVP 的实时管线已落在 `echoless-cli` 的 cpal 实现(`realtime.rs`)——cpal 的回调
+/// 是 push 模型且 Stream !Send,直接套 pull 式 AudioSource 代价大,故 I/O 与处理分离、
+/// 处理仍走同一个 `ProcessorChain`。此泛型版保留供未来把实时编排抽回 core(经 daemon
+/// 复用)时使用;当前用 cpal 路径,见 cli。
 pub fn run_realtime<M, R, S>(_cfg: &PipelineConfig, mut mic: M, _reference: R, _sink: S) -> anyhow::Result<()>
 where
     M: AudioSource,
     R: AudioSource,
     S: AudioSink,
 {
-    // 触发平台后端的明确「未实现」错误,便于定位待办点。
     let _ = mic.start()?;
-    anyhow::bail!("实时管线尚未接线 —— 先实现 echoless-hal-{{win,mac}} 的源/汇(蓝本 §5/§8)");
+    anyhow::bail!("请用 echoless-cli 的 cpal 实时管线(`echoless run`);core 泛型版待重构")
 }
 
 fn downmix_to_mono(data: &[f32], channels: u16, frames: u32) -> Vec<f32> {
