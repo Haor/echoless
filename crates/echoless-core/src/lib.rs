@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use echoless_hal::{AudioFormat, AudioSink, AudioSource, DeviceInfo};
+use echoless_audio_io::{AudioFormat, AudioSink, AudioSource, DeviceInfo};
 use echoless_processors::{chain_from_nodes, NodeConfig, ProcessorStats};
 
 pub use echoless_processors::{
@@ -65,7 +65,7 @@ pub struct PipelineConfig {
     pub mic: String,
     /// far-end 参考源:Win="system"(loopback),mac="system"(Process Tap),或设备名。
     pub reference: String,
-    /// 虚拟麦输出:Win=VB-Cable 名,mac=BlackHole 名。
+    /// 虚拟音频输出:Win=VB-Cable 名,mac=BlackHole 名。
     pub output: String,
     #[serde(default = "default_sample_rate")]
     pub sample_rate: u32,
@@ -138,7 +138,7 @@ where
     if mic_fmt.sample_rate != cfg.sample_rate || ref_fmt.sample_rate != cfg.sample_rate {
         anyhow::bail!(
             "离线骨架要求 mic/ref 采样率 == cfg.sample_rate ({});实际 mic={}, ref={}。\
-             HAL 边界重采样属 TODO,请先按 {} 录制。",
+             音频 I/O 边界重采样属 TODO,请先按 {} 录制。",
             cfg.sample_rate,
             mic_fmt.sample_rate,
             ref_fmt.sample_rate,
@@ -205,10 +205,10 @@ pub fn apply_reference_channels_to_chain(nodes: &mut [NodeConfig], mode: Referen
 
 /// 实时管线(基于泛型 AudioSource/Sink 的版本)。
 ///
-/// 注:MVP 的实时管线已落在 `echoless-cli` 的 cpal 实现(`realtime.rs`)——cpal 的回调
+/// 注:当前实时管线已落在 `echoless-cli` 的 cpal 实现(`realtime.rs`)——cpal 的回调
 /// 是 push 模型且 Stream !Send,直接套 pull 式 AudioSource 代价大,故 I/O 与处理分离、
 /// 处理仍走同一个 `ProcessorChain`。此泛型版保留供未来把实时编排抽回 core(经 daemon
-/// 复用)时使用;当前用 cpal 路径,见 cli。
+/// 复用)时使用;当前主路径用 cpal,见 cli。
 pub fn run_realtime<M, R, S>(
     _cfg: &PipelineConfig,
     mut mic: M,

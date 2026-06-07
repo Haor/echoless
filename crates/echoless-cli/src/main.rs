@@ -1,10 +1,8 @@
 //! echoless — 跨平台 reference-based AEC 工具 CLI。
 //!
 //! 当前可用:`processors` / `devices` / `offline` / `run` / `nvafx doctor`。
-//! 实时 MVP 走 cpal;主线走经典 AEC3(sonora)保真,LocalVQE 作为独立可选处理器。
+//! 实时主路径走 cpal;主线走经典 AEC3(sonora)保真,LocalVQE 作为独立可选处理器。
 
-#[cfg(not(feature = "realtime"))]
-mod backends;
 #[cfg(feature = "realtime")]
 mod realtime;
 
@@ -22,7 +20,7 @@ use echoless_core::{
     apply_reference_channels_to_chain, run_offline, DiagnosticsConfig, PipelineConfig,
     ReferenceChannels,
 };
-use echoless_hal::file::{WavFileSink, WavFileSource};
+use echoless_audio_io::file::{WavFileSink, WavFileSource};
 use echoless_processors::{registry, NodeConfig};
 
 #[derive(Parser)]
@@ -98,7 +96,7 @@ struct OfflineArgs {
     /// 处理链 TOML 配置(含 [[chain]]);给了则用其 chain/rate/frame_ms
     #[arg(long)]
     config: Option<String>,
-    /// 快捷处理链,如 "sonora_aec3" 或 "localvqe";逗号串联仅用于实验
+    /// 快捷处理器 kind,如 "sonora_aec3" 或 "localvqe"
     #[arg(long)]
     chain: Option<String>,
     #[arg(long, default_value_t = 48000)]
@@ -130,7 +128,7 @@ struct RunArgs {
     /// reference 送进 AEC 的声道模式:mono 或 stereo
     #[arg(long, value_parser = parse_reference_channels)]
     reference_channels: Option<ReferenceChannels>,
-    /// 覆盖处理链,可重复或逗号分隔;默认建议单开 sonora_aec3
+    /// 覆盖处理器,可重复或逗号分隔;默认建议 sonora_aec3
     #[arg(long, value_delimiter = ',')]
     processor: Vec<String>,
     /// 开启 sonora_aec3 降噪
@@ -331,7 +329,7 @@ fn cmd_processors(args: ProcessorsArgs) -> Result<()> {
     for k in registry::kinds() {
         println!("  - {k}");
     }
-    println!("(在 --chain 或 config 的 [[chain]] 里按 kind 引用;默认建议单开 sonora_aec3,串联仅用于实验)");
+    println!("(在 --chain 或 config 的 [[chain]] 里按 kind 引用;默认建议 sonora_aec3)");
     Ok(())
 }
 
@@ -361,13 +359,11 @@ fn processor_manifest() -> serde_json::Value {
                     "reference_channels": {
                         "type": "select",
                         "values": ["mono", "stereo"],
-                        "default": "mono",
-                        "ui": "segmented"
+                        "default": "mono"
                     },
                     "ns": {
                         "type": "bool",
-                        "default": false,
-                        "ui": "toggle"
+                        "default": false
                     },
                     "ns_level": {
                         "type": "select",
@@ -378,8 +374,12 @@ fn processor_manifest() -> serde_json::Value {
                     "agc": {
                         "type": "bool",
                         "default": false,
-                        "advanced": true,
-                        "ui": "toggle"
+                        "advanced": true
+                    },
+                    "initial_delay_ms": {
+                        "type": "number",
+                        "default": null,
+                        "advanced": true
                     },
                     "tail_ms": {
                         "type": "number",
@@ -1266,7 +1266,6 @@ fn cmd_devices(args: DevicesArgs) -> Result<()> {
         return Ok(());
     }
     println!("设备枚举需 realtime 特性(cpal);当前构建未启用。");
-    let _ = backends::make_mic("default");
     Ok(())
 }
 
@@ -1289,10 +1288,10 @@ fn cmd_run(a: RunArgs) -> Result<()> {
 
 #[cfg(not(feature = "realtime"))]
 fn cmd_run(_a: RunArgs) -> Result<()> {
-    let _ = backends::make_mic("default");
     anyhow::bail!("实时管线需 realtime 特性(cpal);当前构建未启用")
 }
 
+#[cfg_attr(not(feature = "realtime"), allow(dead_code))]
 fn load_run_config(a: &RunArgs) -> Result<PipelineConfig> {
     let cfg = if let Some(path) = &a.config {
         let s = std::fs::read_to_string(path)?;
@@ -1303,6 +1302,7 @@ fn load_run_config(a: &RunArgs) -> Result<PipelineConfig> {
     apply_run_overrides(cfg, a)
 }
 
+#[cfg_attr(not(feature = "realtime"), allow(dead_code))]
 fn apply_run_overrides(mut cfg: PipelineConfig, a: &RunArgs) -> Result<PipelineConfig> {
     if let Some(v) = &a.mic {
         cfg.mic = v.clone();
@@ -1382,6 +1382,7 @@ fn parse_reference_channels(s: &str) -> Result<ReferenceChannels, String> {
     }
 }
 
+#[cfg_attr(not(feature = "realtime"), allow(dead_code))]
 fn set_sonora_param(nodes: &mut [NodeConfig], key: &str, value: toml::Value) -> Result<()> {
     let Some(node) = nodes.iter_mut().find(|node| node.kind == "sonora_aec3") else {
         bail!("{key} 需要配置中存在 sonora_aec3 节点,或使用 --processor sonora_aec3");

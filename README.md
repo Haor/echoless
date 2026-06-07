@@ -1,52 +1,66 @@
 # echoless — 跨平台实时 reference-based AEC 工具
 
 面向 **Windows 10/11 + macOS 14.4+** 的本地自用 reference-based AEC 工具。
-目标场景是外放音箱 + USB 麦克风做 Discord / VRChat 语音连麦时,用系统播放声音
+目标场景是外放音箱 + USB 麦克风做 Discord 等语音连麦时,用系统播放声音
 作为 far-end reference,消除麦克风里的扬声器回声。
 
 当前状态:
 
 - 真实 WebRTC AEC3 路径:vendored `sonora` fork + `sonora_aec3` 处理器。
-- 实时 MVP:`echoless run --config configs/example.toml` 走 `cpal` + ringbuf。
+- 实时主路径:`echoless run --config configs/example.toml` 走 `cpal` + ringbuf。
 - far reference 可用 `reference_channels = "mono" | "stereo"` 切换;默认 mono,stereo 用于外放 L/R 对比试听。
 - 离线评测:`echoless offline` 仍可用。
 - LocalVQE 已通过动态 C ABI 接入 `localvqe` 处理器;CI 会构建上游 shared library、跑 regression,再跑 Echoless FFI smoke。
 - NVIDIA AFX / RTX AEC 已作为 Windows-only 可选 backend 接入:`doctor` / 本地 runtime install / 离线 WAV / 实时 `nvidia_afx_aec`。
 - Windows 本机 RTX AEC standalone 已完成 45s diagnostics smoke:RTX 5080 Blackwell runtime 可用,USB mic index `4`,reference `system`,output `3`(CABLE Input),`runtime_errors=0`。
 - macOS artifact 可正常构建 AEC3/LocalVQE 路径;RTX AEC 在 macOS 上按设计不可用,GUI/安装器应通过 `echoless nvafx doctor --json` 禁用该 backend。
-- 原生虚拟麦驱动明确不做;输出长期依赖 VB-Cable / BlackHole / Virtual Desktop Mic 等外部虚拟设备。
-- 原生平台 HAL 仅保留为后续可选 I/O 优化,当前实时路径继续走 `cpal`;边界见 `docs/architecture/native_hal_scope.md`。
-- 产品默认策略:以 `sonora_aec3` 保真人声为主。LocalVQE 与 RTX AEC 都是独立可选方案,不作为 AEC3 默认后级。
+- 输出依赖外部虚拟音频设备:Windows 推荐 VB-CABLE,macOS 推荐 BlackHole 或 VB-CABLE MAC;也可使用 Virtual Desktop Mic 等用户已有设备。
+- GUI/安装器应提供虚拟音频设备安装引导:检测设备是否已安装,未安装时引导用户安装,安装后重新枚举并验证 output/input 端可用。
+- 产品默认策略:以 `sonora_aec3` 保真人声为主。LocalVQE 与 RTX AEC 是独立可选 backend。
 
 ## crate 结构
 
 | crate | 职责 | 状态 |
 |---|---|---|
-| `echoless-hal` | 平台无关 trait(`AudioSource`/`AudioSink`/`MonotonicClock`)+ 类型 + 文件/null 后端 | ✅ |
-| `echoless-hal-win` | Windows HAL(WASAPI loopback/capture/QPC,不含自研虚拟麦驱动) | stub,实时 MVP 暂走 cpal |
-| `echoless-hal-mac` | macOS HAL(CoreAudio/Process Tap/mach,不含 AudioServerPlugin 虚拟麦) | stub,实时 MVP 暂走 cpal |
+| `echoless-audio-io` | 平台无关音频 I/O trait + 类型 + 文件/null 后端 | ✅ |
 | `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + `sonora_aec3` / `localvqe` / `nvidia_afx_aec` 节点 | ✅ AEC3 可用;LocalVQE 可加载 DLL/dylib + GGUF 推理;RTX AEC Windows 可动态加载 AFX runtime |
 | `echoless-core` | 管线编排 + `PipelineConfig` + `ControlApi` + `run_offline` | ✅ 离线可用;实时 cpal 路径在 CLI |
 | `echoless-cli` | CLI 前端:`processors` / `devices` / `offline` / `run` | ✅ |
 
-依赖单向:`echoless-cli/daemon → 平台HAL → echoless-hal`;`echoless-cli → echoless-core → echoless-processors`。**核心永不依赖平台 crate;前端只经 `ControlApi`。**
+依赖单向:`echoless-cli → echoless-core → echoless-processors`。**核心不依赖平台专用 crate;前端只经 CLI JSON 接口或 `ControlApi`。**
 
-## 核心设计:统一可组合处理器
+## 核心设计:统一处理器
 
-sonora 经典 AEC3 与 LocalVQE 都是平级 `EchoProcessor` 节点,**可单开 / 串联 / 自由组合 / 扩展**。
+sonora 经典 AEC3、LocalVQE、RTX AEC 都是平级 `EchoProcessor` 节点。
 当前产品主线是 AEC3 保真优先,LocalVQE 保留为独立可选处理器:
-- 单开经典:`--chain sonora_aec3`
-- 单开 LocalVQE:`--chain localvqe`
-- 串联能力保留给实验,不作为默认推荐路径
+- AEC3:`--chain sonora_aec3`
+- LocalVQE:`--chain localvqe`
 - 加新方案 = 在 `echoless-processors` 写一个 `impl EchoProcessor` + 在 `registry` 登记一行,其余不动。
 
-`ProcessorChain` 自动处理节点间采样率/声道适配与 far ref 分发(每级都拿真实 ref)。
+`ProcessorChain` 自动处理处理器边界的采样率/声道适配与 far ref 分发。
 当前边界 SRC 仍是占位线性重采样;LocalVQE 已可真实推理,但最终音质版仍应把边界 SRC 换成有状态实现。
 
 LocalVQE 推理约束见 `docs/localvqe_inference.md`:上游 C API 是 16 kHz mono
 mic + mono far reference,streaming hop 为 256 samples/16 ms。
 配置参数放在 `[[chain]]` 节点里,例如 `model`、`library`、`threads`、`noise_gate`;
 这让后续 Tauri GUI 可以编辑同一份 `PipelineConfig`,而不是依赖 CLI-only flag。
+
+## 外部虚拟音频设备
+
+Echoless 不创建系统级虚拟麦克风。实时管线会把处理后的人声写入用户选择的
+`output` 设备;要让 Discord 等语音应用把它当作麦克风,系统里需要一个外部虚拟
+音频设备把 output 端桥接成 input 端。
+
+推荐引导:
+
+- Windows:检测并引导安装 VB-CABLE。Echoless 写入 `CABLE Input`,语音应用选择 `CABLE Output`。
+- macOS:检测并引导安装 BlackHole 2ch 或 VB-CABLE MAC。Echoless 写入对应虚拟设备,语音应用选择同名输入设备。
+- 用户已有 Virtual Desktop Mic、Loopback 或等价虚拟音频设备时,只要它同时提供可写 output 端和下游可选 input 端,也可以作为 output 候选。
+
+产品集成建议:
+
+- 首版使用“检测 + 显式安装引导 + 安装后验证”。
+- 安装器集成第三方驱动时必须让用户清楚知道正在安装虚拟音频设备,并处理管理员权限、重启、许可说明和卸载入口。
 
 ## 构建与试跑
 
@@ -123,4 +137,4 @@ cargo run -p echoless-cli --bin echoless --release -- run --config configs/examp
 3. `echoless-processors/chain.rs` 占位线性 SRC 换成 rubato 有状态 SRC。
 4. 按 `docs/frontend/FRONTEND_ADAPTATION_PLAN.md` 把实时 runtime 适配成 GUI/daemon 可复用控制面,同时保留 CLI 一等入口。
 5. 前端实现交接见 `docs/frontend/FRONTEND_AGENT_HANDOFF.md`。
-6. 仅在 `cpal` 实测暴露不可接受的枚举、timestamp、loopback、device recovery 或延迟/抖动问题时,再评估窄范围原生 HAL;不要规划原生虚拟麦驱动。
+6. 产品自更新只预留抽象,不在当前 CLI 后端实现;Velopack / Tauri updater 调研见 `docs/productization/update_strategy.md`。

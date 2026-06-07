@@ -9,7 +9,7 @@
 //! 全程 mono、同采样率 → 链上零重采样(rubato 仅 LocalVQE 进来才需要)。
 //! 跨平台靠 cpal:Windows WASAPI(含 output loopback)/ macOS CoreAudio。
 //! 系统声音参考 = output 设备做 loopback(Windows 原生;macOS 需 BlackHole 之类)。
-//! 虚拟麦输出 = 选 VB-Cable / BlackHole 作 output 设备。
+//! 虚拟音频输出 = 选 VB-Cable / BlackHole 作 output 设备。
 
 use std::fs::{create_dir, create_dir_all, File};
 use std::io::{BufWriter, Write};

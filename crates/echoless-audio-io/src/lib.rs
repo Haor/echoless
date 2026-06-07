@@ -1,8 +1,8 @@
-//! echoless-hal — 平台无关音频硬件抽象层。
+//! echoless-audio-io — 平台无关音频 I/O 抽象。
 //!
 //! 核心思想(蓝本 §1):**麦克风与 far-end reference 都是一个 `AudioSource`**;
-//! 核心永远不知道一帧 reference 来自 WASAPI loopback、macOS Process Tap 还是虚拟声卡。
-//! 平台后端(echoless-hal-win / echoless-hal-mac)实现这些 trait;文件后端用于离线评测;null 作 fallback。
+//! 核心永远不知道一帧 reference 来自 WASAPI loopback、macOS 路由还是虚拟声卡。
+//! 当前实时路径直接走 cpal;本 crate 保留通用 trait、文件后端与 null 后端,用于离线评测和未来抽回 core 的实时编排。
 
 use std::time::Duration;
 
@@ -52,7 +52,7 @@ pub trait AudioSink: Send {
     fn stop(&mut self);
 }
 
-// 让 `Box<dyn AudioSource/Sink>`(平台 dispatch 返回的类型)也满足 trait,可直接喂泛型管线。
+// 让 `Box<dyn AudioSource/Sink>` 也满足 trait,可直接喂泛型管线。
 impl AudioSource for Box<dyn AudioSource> {
     fn start(&mut self) -> anyhow::Result<AudioFormat> {
         (**self).start()
@@ -77,7 +77,7 @@ impl AudioSink for Box<dyn AudioSink> {
     }
 }
 
-/// 单调时钟(Win=QPC,mac=mach_absolute_time)。
+/// 单调时钟。当前默认实现用 std Instant;未来如需平台时基可在这里接入。
 pub trait MonotonicClock: Send + Sync {
     fn now_ns(&self) -> u64;
 }

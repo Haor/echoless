@@ -9,7 +9,7 @@ reference = "system"     # far-end 参考:
                          #   none   = 无参考(仅 NS 等单端处理)
                          #   output:<名> / input:<名> / 设备名 / 索引
                          #   macOS 取系统声音需 BlackHole 之类:reference = "input:BlackHole"
-output = "default"       # 输出:虚拟麦设备名(Win=VB-Cable / mac=BlackHole),或 default 试听
+output = "default"       # 输出:虚拟音频设备名(Win=VB-Cable / mac=BlackHole),或 default 试听
 sample_rate = 48000      # 必须能整除 100(10ms 帧);mic/ref/out 共用此率
 frame_ms = 10
 reference_channels = "mono" # mono=当前稳定基线;stereo=保留 L/R far reference 供外放对比测试
@@ -20,9 +20,10 @@ reference_channels = "mono" # mono=当前稳定基线;stereo=保留 L/R far refe
 # record_dir = "diagnostics"
 # max_seconds = 30
 
-# 处理链:有序节点 = 串联;单个 = 单开;空 = 直通。kind 之外的键 = 该方案参数。
+# 处理节点:首版建议选择一个 backend;空 = 直通。kind 之外的键 = 该方案参数。
 [[chain]]
 kind = "sonora_aec3"
+# initial_delay_ms = 48      # AEC3 初始延迟 hint;默认依赖运行时动态估计
 # tail_ms = 120              # echo tail 长度(默认 52ms;外放+房间混响常需更长)
 # delay_num_filters = 5      # 延迟搜索窗(默认 5 ≈ 608ms)
 # linear_stable_echo_path = false
@@ -30,7 +31,7 @@ ns = false                   # 保真人声优先:默认不在 AEC3 内额外降
 # ns_level = "low"           # 如必须在本层降噪,先试 low;moderate/high 更易出电音感
 agc = false                  # 保持电平自然,避免双讲时忽大忽小
 
-# LocalVQE 作为独立可选方案存在,不作为 AEC3 默认后级。
+# LocalVQE 是独立可选方案。
 # CI artifact 会把 Windows 所需 DLL 与当前 v1.3 模型一起放入包内。
 # 注意:当前链路边界 SRC 仍是占位线性重采样,LocalVQE 可测真实推理,但不是最终音质版 SRC。
 # [[chain]]

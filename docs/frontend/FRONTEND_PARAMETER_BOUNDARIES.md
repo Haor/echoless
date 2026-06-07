@@ -1,0 +1,144 @@
+# Frontend Feature and Parameter Boundaries
+
+本文档给 Echoless GUI/Tauri 前端使用,定义当前产品功能边界、参数 contract、推荐暴露层级和不应暴露/不存在的选项。本文档不规定 UI/UX 设计,只规定前端生成配置和展示能力时不能越过的后端边界。
+
+## Source of Truth
+
+前端实现按以下优先级判断功能和参数是否可用:
+
+1. `echoless processors --json`: processor kind、平台、参数类型、默认值、可选值、`advanced`、约束。
+2. `echoless config validate --config <file> --json`: 配置是否被当前后端接受。
+3. `echoless devices --json`: 当前机器真实可用的输入、输出、reference source。
+4. `configs/example.toml`: 人类可读的推荐默认配置。
+5. 本文档和 `FRONTEND_AGENT_HANDOFF.md`: 产品边界和前端接入规则。
+
+Open Design / HTML prototype 只能作为视觉原型,不能作为配置 contract。若原型里的选项和 `processors --json` 或本文档冲突,以后端 manifest 为准。
+
+## Product Capability Boundary
+
+### 默认主路径
+
+- `sonora_aec3` 是默认 backend。
+- 默认管线为 `48000 Hz / 10ms frame / mono reference`。
+- 默认音质策略是保真人声优先: AEC 开启,NS/AGC 默认关闭。
+- 输出依赖外部虚拟音频设备,例如 Windows VB-CABLE、macOS BlackHole 2ch 或 VB-CABLE MAC。
+- 前端应支持设备枚举、运行/停止、runtime status、diagnostics 录制、配置校验和虚拟音频设备安装状态提示。
+
+### 可选实验能力
+
+- `localvqe` 是独立可选 backend,需要 GGUF 模型和 LocalVQE 动态库。它不是默认主路径。
+- `nvidia_afx_aec` 是 Windows-only RTX AEC backend,需要 `echoless nvafx doctor --json` 通过。它不是 NVIDIA Broadcast App。
+- `passthrough` 可用于诊断链路,不是普通用户默认消回声方案。
+
+### 当前不作为产品主路径
+
+- 不默认提供 `AEC3 -> LocalVQE` 级联。此前听感反馈显示级联更容易加重电音/锯齿,当前产品保真优先。
+- 不自研/内置原生虚拟麦克风驱动。首版使用外部虚拟音频设备。
+- 不做原生 HAL 作为首版重点。当前 CPAL/系统音频路径没有证据表明已成为瓶颈。
+- 不把 macOS `system` reference 视为天然可用 loopback。macOS 系统声参考通常需要 BlackHole/VB-CABLE MAC 等路由设备。
+
+## Recommended Exposure Tiers
+
+### 常规用户可见
+
+这些能力适合放在普通设置或主流程中:
+
+| 参数/能力 | 默认 | 边界 |
+|---|---:|---|
+| `mic` | `default` | 只能来自 `devices --json` 的 input 或后端支持的 selector。 |
+| `reference` | `system` | Windows 可用 `system`;macOS 需按 `devices --json` 和路由设备判断。 |
+| `output` | `default` | 推荐选择虚拟音频 output;只能列出实际枚举到的 output。 |
+| backend select | `sonora_aec3` | 只展示 `processors --json` 返回且当前平台可用的 kind。 |
+| `reference_channels` | `mono` | 可选 `mono`/`stereo`;默认 mono;RTX AEC 只能 mono。 |
+| `ns` | `false` | AEC3 内置降噪;用户需要时可开启。 |
+| `diagnostics.record_dir` | null | 可让用户选择保存目录。 |
+| `diagnostics.max_seconds` | null | 可提供 30s/45s 等录制时长。 |
+
+### 常规可见但需要约束
+
+| 参数 | 默认 | 暴露规则 |
+|---|---:|---|
+| `ns_level` | `low` | 仅在 `ns=true` 时有效;可选值只能是 `low`、`moderate`、`high`、`veryhigh`。UI 可显示 "very high",但提交值必须是 `veryhigh`。 |
+| `sample_rate` | `48000` | 首版建议锁定或放高级设置。RTX AEC 必须是 `48000`;AEC3 推荐 `48000`;不要把 `44.1k`/`96k` 作为普通推荐项。 |
+| `frame_ms` | `10` | 首版建议锁定或放高级设置。RTX AEC 必须是 `10`;AEC3 推荐 `10`;不要把 `20ms` 作为普通推荐项。 |
+
+### 高级设置
+
+这些参数真实存在,但普通用户误调收益低、风险高:
+
+| 参数 | 默认 | 边界 |
+|---|---:|---|
+| `agc` | `false` | 保真优先默认关闭;可能造成音量泵动或双讲忽大忽小。 |
+| `initial_delay_ms` | null | AEC3 初始延迟 hint;运行时仍会动态估计回声对齐。 |
+| `tail_ms` | null | AEC3 echo tail 长度;最小值 4。 |
+| `delay_num_filters` | null | AEC3 延迟搜索窗;最小值 1。 |
+| `linear_stable_echo_path` | `false` | AEC3 高级调参项。 |
+
+### LocalVQE 仅在选择该 backend 后暴露
+
+| 参数 | 默认 | 边界 |
+|---|---:|---|
+| `model` | required | GGUF 模型路径,必须非空。 |
+| `library` | auto | 动态库路径,可为空让后端自动查找。 |
+| `threads` | auto | 数字,最小值 1;不填表示上游 auto。 |
+| `backend` | auto | 字符串 hint,例如上游 runtime 支持的 backend 名。 |
+| `device` | auto | 数字 device index;不要把 `auto/cpu/gpu` 写入 `device`。 |
+| `noise_gate` | `false` | 默认关闭;开启可能吃掉轻声和尾音。 |
+| `noise_gate_threshold_dbfs` | `-45.0` | 数字阈值;建议作为高级项。 |
+
+LocalVQE 的 native 处理边界是 16 kHz mono,但 GUI 不应因此把全局 `sample_rate` 改成 16 kHz。当前链路会在 processor 边界做适配。
+
+### RTX AEC 仅 Windows 可用
+
+| 参数 | 默认 | 边界 |
+|---|---:|---|
+| backend kind | `nvidia_afx_aec` | `rtx_aec` 不是有效 kind。 |
+| `runtime_dir` | auto | NVIDIA AFX runtime 目录。 |
+| `model_path` | auto | RTX AEC model 路径。 |
+| `intensity_ratio` | `1.0` | 数字,最小值 0。 |
+| `use_default_gpu` | `true` | 高级项。 |
+| `disable_cuda_graph` | `false` | 高级项。 |
+| `on_runtime_error` | `silence` | 只能是 `silence` 或 `bypass`。 |
+
+RTX AEC v1 硬约束:
+
+- `sample_rate = 48000`
+- `frame_ms = 10`
+- `reference_channels = "mono"`
+- Windows + RTX GPU + `nvafx doctor --json` 通过
+
+macOS/Linux 上前端可以展示为 unsupported,但不应生成可运行的 `nvidia_afx_aec` 配置。
+
+## Do Not Expose as User Parameters
+
+以下内容可以作为 diagnostics/status 展示,但不要作为稳定用户配置项:
+
+- ring buffer 大小和内部队列阈值。
+- stale drop 阈值。
+- CPAL stream 内部 buffer 选择。
+- AEC3 suppressor、nearend detector、matched filter 等内部结构。
+- diagnostics 文件轮转细节。
+- 原始设备 index 作为唯一持久配置。可以保存 selector,但应同时保存设备名称用于下次辅助匹配。
+
+## Known Invalid or Misleading Options
+
+如果前端从旧原型继承了这些值,需要修正:
+
+| 原型/错误值 | 正确值或处理 |
+|---|---|
+| `rtx_aec` backend kind | 使用 `nvidia_afx_aec`。 |
+| "NVIDIA Broadcast AFX" | 写作 NVIDIA AFX / RTX AEC SDK backend;不要等同于 Broadcast App。 |
+| `ns_level = "very"` | 使用 `veryhigh`。 |
+| LocalVQE `device = "auto" \| "cpu" \| "gpu"` | `device` 是数字;CPU/GPU 类 hint 应走 `backend` 字符串或隐藏。 |
+| macOS `系统输出 (loopback)` 永远可用 | 必须以 `devices --json` 和实际路由为准;通常需要 BlackHole/VB-CABLE MAC。 |
+| 硬编码 `Virtual Desktop Mic` 为 output | 只有枚举到可写 output endpoint 才能选择。 |
+| 普通设置中推荐 `44.1k`、`96k`、`20ms` | 首版默认/推荐应是 `48k / 10ms`;其他值放高级并用 validate 校验。 |
+
+## Runtime Rules for Frontend
+
+- 每次保存或应用配置前,运行 `echoless config validate --config <file> --json`。
+- 切换 backend、设备、采样率、frame、模型或 RTX runtime 后,重启 runtime。
+- 运行时展示 `estimated_user_latency_ms` 和 `aec_estimated_delay_ms` 时要区分语义:
+  - `estimated_user_latency_ms`: 用户说话到虚拟输出前的估算延迟。
+  - `aec_estimated_delay_ms`: AEC3 估计的回声路径对齐延迟。
+- diagnostics 录制应保存 `mic.wav`、`ref.wav`、`out.wav`、`stats.csv` 和 metadata,用于用户反馈和回归分析。

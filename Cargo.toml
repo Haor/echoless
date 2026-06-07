@@ -3,9 +3,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/echoless-hal",
-    "crates/echoless-hal-win",
-    "crates/echoless-hal-mac",
+    "crates/echoless-audio-io",
     "crates/echoless-processors",
     "crates/echoless-core",
     "crates/echoless-cli",

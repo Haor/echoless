@@ -411,6 +411,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "echoless-audio-io"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags",
+ "hound",
+]
+
+[[package]]
 name = "echoless-cli"
 version = "0.1.0"
 dependencies = [
@@ -418,10 +427,8 @@ dependencies = [
  "clap",
  "cpal",
  "ctrlc",
+ "echoless-audio-io",
  "echoless-core",
- "echoless-hal",
- "echoless-hal-mac",
- "echoless-hal-win",
  "echoless-processors",
  "hound",
  "ringbuf",
@@ -437,35 +444,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
- "echoless-hal",
+ "echoless-audio-io",
  "echoless-processors",
  "serde",
  "toml",
-]
-
-[[package]]
-name = "echoless-hal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags",
- "hound",
-]
-
-[[package]]
-name = "echoless-hal-mac"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "echoless-hal",
-]
-
-[[package]]
-name = "echoless-hal-win"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "echoless-hal",
 ]
 
 [[package]]

@@ -155,7 +155,7 @@ features/nvafxaec/models/<arch>/aec_48k.trtpkg
 3. `docs/research/sonora_aec3_internal_map.md`
    - AEC3 / sonora 当前可调能力、delay、stereo far reference、tail、NS/AGC 风险。
 4. `docs/research/cross_platform_architecture.md`
-   - HAL/Core/Processor/CLI/GUI 分层蓝本。Windows agent 如果要判断 RTX backend 应该挂在哪里，需要读这个。
+   - Audio I/O/Core/Processor/CLI/GUI 分层蓝本。Windows agent 如果要判断 RTX backend 应该挂在哪里，需要读这个。
 
 最低集合是 1 + 2 + 3；如果 Windows agent 会改架构或 GUI 配置面，把 4 也必须带上。
 

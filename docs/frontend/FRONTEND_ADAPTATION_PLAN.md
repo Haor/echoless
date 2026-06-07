@@ -1,23 +1,16 @@
-# Echoless Frontend Adaptation Plan
+# Frontend Integration Contract Plan
 
-本文档把 Echoless 从 CLI-first 工具演进到 Tauri/GUI 可控应用的改造计划落成到仓库内。目标是让前端可以稳定地列设备、生成配置、启动/停止实时 AEC、显示诊断指标，同时继续保留现有 CLI 能力。
+本文档记录 Echoless 后端为了接入 Tauri/GUI 需要提供的稳定能力。前端负责产品设计和 UI/UX;后端负责配置语义、JSON contract、运行状态、诊断证据和外部依赖边界。
 
-## 目标
+## 后端目标
 
-- 保留 CLI 作为一等入口: `devices`、`processors`、`offline`、`run`、`nvafx doctor/install/offline` 继续可用。
-- GUI 与 CLI 共用同一套 `PipelineConfig` / `NodeConfig` 配置模型。
-- GUI 不解析人类可读日志,而是消费 JSON 配置、JSON 状态事件和结构化诊断结果。
-- 首版 GUI 默认以 `sonora_aec3` 保真人声路径为主,LocalVQE 与 RTX AEC 作为独立可选 backend。
-- 前端能显示对用户有意义的运行健康指标: 电平、估算用户延迟、AEC 估计回声延迟、drop/underrun、backend runtime error。
-
-## 非目标
-
-- 不在首版把 CLI 替换成 GUI。
-- 不在首版要求参数热更新覆盖所有 backend。需要切换设备、采样率、backend 时可以重启 runtime。
-- 不默认级联 `sonora_aec3 + localvqe` 或 `sonora_aec3 + nvidia_afx_aec`。
-- 不把所有 AEC3 内部 suppressor 参数直接暴露给普通用户。
-- 不实现原生虚拟麦驱动。MVP 与后续版本都使用 VB-Cable / BlackHole / Virtual Desktop Mic 等外部虚拟设备。
-- 不在 GUI 首版接 native HAL。native HAL 只是后续可选 I/O 优化,不是虚拟麦;边界见 `docs/architecture/native_hal_scope.md`。
+- 保留 CLI 作为一等入口。
+- GUI 与 CLI 共用 `PipelineConfig` / `NodeConfig`。
+- 前端消费 JSON/JSONL,不解析人类可读日志。
+- 默认 backend 使用 `sonora_aec3`。
+- LocalVQE 与 RTX AEC 作为独立可选 backend。
+- 提供运行健康指标:电平、估算用户延迟、AEC 回声对齐延迟、drop/underrun、backend runtime error。
+- 提供虚拟音频设备安装状态的可检测边界,让前端可以做安装引导或 installer 集成。
 
 ## 当前基础
 
@@ -41,7 +34,7 @@
   - `kind`
   - flattened `params`
 
-`configs/example.toml` 已经是 GUI 配置蓝本。后续 GUI 应生成等价 JSON/TOML,不要维护另一套独立配置语义。
+`configs/example.toml` 是配置语义蓝本。GUI 可以生成等价 JSON/TOML,但配置语义以 core 类型为准。
 
 ### 处理器
 
@@ -52,7 +45,7 @@
 - `localvqe`
 - `nvidia_afx_aec`
 
-默认产品路径:
+默认配置:
 
 ```toml
 sample_rate = 48000
@@ -65,7 +58,7 @@ ns = false
 agc = false
 ```
 
-### 已有诊断能力
+### Diagnostics
 
 实时 diagnostics 可写出:
 
@@ -75,72 +68,40 @@ agc = false
 - `stats.csv`
 - metadata
 
-`stats.csv` 已包含电平、队列长度、drop/underrun、node runtime error 等字段。GUI 首版可以把“一键诊断录制”作为产品能力。
+该能力用于生成可交接证据,尤其适合处理用户反馈里的回声、断音、音量骤降和延迟问题。
 
-## CLI 保留契约
+## Sidecar 集成形态
 
-后续前端适配不得破坏以下能力:
-
-- `echoless devices`
-- `echoless processors`
-- `echoless offline --mic ... --reference ... --out ...`
-- `echoless run --config configs/example.toml`
-- `echoless run` 的命令行覆盖能力:
-  - `--mic`
-  - `--reference`
-  - `--output`
-  - `--sample-rate`
-  - `--frame-ms`
-  - `--reference-channels`
-  - `--processor`
-  - `--ns` / `--no-ns`
-  - `--ns-level`
-  - `--tail-ms`
-  - `--diagnostic-dir`
-  - `--diagnostic-seconds`
-  - `--verbose`
-  - `--stats-interval-ms`
-- Windows-only RTX AEC commands:
-  - `echoless nvafx doctor`
-  - `echoless nvafx doctor --json`
-  - `echoless nvafx install`
-  - `echoless nvafx offline`
-
-CLI 文本输出可以继续优化,但 GUI 不应依赖文本格式。新增 JSON 输出时,文本输出仍保留给人工调试。
-
-## 目标架构
-
-首版建议使用 Tauri sidecar 模式:
+首版建议使用 Tauri sidecar 管理 `echoless` 进程:
 
 ```text
-Tauri frontend
-  -> Tauri Rust commands
-     -> spawn/manage echoless sidecar
-        -> JSON commands / JSONL status events
-           -> existing echoless runtime
+Tauri app
+  -> Rust command / process manager
+     -> spawn echoless sidecar
+        -> JSON/JSONL contract
 ```
 
-中期再把实时 runtime 从 `echoless-cli/src/realtime.rs` 下沉为可复用 runtime,实现 `echoless-core::ControlApi`:
+后端需要保证:
+
+- `echoless devices --json`
+- `echoless processors --json`
+- `echoless config validate --config <file> --json`
+- `echoless run --config <file> --status-json`
+- `echoless nvafx doctor --json`
+
+中期可以把 realtime runtime 从 CLI 下沉为可复用 runtime:
 
 ```text
-Tauri frontend
-  -> Tauri Rust backend
-     -> EcholessRuntime implements ControlApi
-        -> PipelineConfig
-        -> ProcessorChain
-        -> platform audio IO
+Tauri Rust backend
+  -> EcholessRuntime implements ControlApi
+     -> PipelineConfig
+     -> ProcessorChain
+     -> platform audio IO
 ```
 
-选择 sidecar 首版的原因:
+## JSON Contract
 
-- 不破坏现有 CLI 发布形态。
-- 音频权限、崩溃、长运行进程更容易隔离。
-- Windows/macOS artifact 打包更直接。
-- 前端可以先基于稳定 JSON contract 开发。
-
-## 后端接口 contract
-
-### 1. 设备列表 JSON
+### 1. Devices
 
 已实现:
 
@@ -148,7 +109,7 @@ Tauri frontend
 echoless devices --json
 ```
 
-输出结构:
+目标语义:
 
 ```json
 {
@@ -190,9 +151,13 @@ echoless devices --json
 }
 ```
 
-说明:当前设备 selector 使用设备索引,与 CLI 既有选择规则一致。某些 macOS 会话可能返回空 `inputs` / `outputs`;前端应按空状态处理并提供刷新。
+注意:
 
-### 2. Processor manifest JSON
+- 当前设备 selector 使用设备索引,跨重启不保证稳定。
+- 前端可以保存用户可识别名称作为辅助匹配。
+- 某些 macOS 会话可能返回空设备数组,需要支持刷新。
+
+### 2. Processor Manifest
 
 已实现:
 
@@ -200,43 +165,62 @@ echoless devices --json
 echoless processors --json
 ```
 
-输出结构包含 `passthrough`、`sonora_aec3`、`localvqe`、`nvidia_afx_aec` 四类 backend。AEC3 manifest 的核心字段:
+目标语义:
+
+- `kind`: 后端稳定标识。
+- `label`: 人类可读名称。
+- `platforms`: 支持平台。
+- `default`: 后端默认推荐标记。
+- `experimental`: 实验能力标记。
+- `constraints`: 采样率、frame、声道等约束。
+- `params`: 参数类型、默认值、可选值、范围、required、advanced。
+
+示例:
 
 ```json
 {
-  "processors": [
-    {
-      "kind": "sonora_aec3",
-      "label": "AEC3",
-      "platforms": ["windows", "macos", "linux"],
-      "default": true,
-      "params": {
-        "ns": { "type": "bool", "default": false, "ui": "toggle" },
-        "ns_level": {
-          "type": "select",
-          "values": ["low", "moderate", "high", "veryhigh"],
-          "default": "low",
-          "requires": { "ns": true }
-        },
-        "agc": { "type": "bool", "default": false, "ui": "toggle" },
-        "tail_ms": { "type": "number", "default": null, "advanced": true },
-        "delay_num_filters": { "type": "number", "default": null, "advanced": true },
-        "linear_stable_echo_path": { "type": "bool", "default": false, "advanced": true }
-      }
-    }
-  ]
+  "kind": "sonora_aec3",
+  "label": "AEC3",
+  "platforms": ["windows", "macos", "linux"],
+  "default": true,
+  "experimental": false,
+  "constraints": {
+    "preferred_sample_rate": 48000,
+    "preferred_frame_ms": 10
+  },
+  "params": {
+    "reference_channels": {
+      "type": "select",
+      "values": ["mono", "stereo"],
+      "default": "mono"
+    },
+    "ns": { "type": "bool", "default": false },
+    "ns_level": {
+      "type": "select",
+      "values": ["low", "moderate", "high", "veryhigh"],
+      "default": "low",
+      "requires": { "ns": true }
+    },
+    "agc": { "type": "bool", "default": false, "advanced": true },
+    "initial_delay_ms": { "type": "number", "default": null, "advanced": true },
+    "tail_ms": { "type": "number", "default": null, "min": 4, "advanced": true }
+  }
 }
 ```
 
-### 3. Runtime status JSONL
+Manifest 只表达后端能力,不规定控件形态。
 
-已实现一种机器可读运行模式:
+### 3. Runtime Status
+
+已实现:
 
 ```bash
 echoless run --config config.toml --status-json
 ```
 
-此模式下 stdout 只输出 JSONL status events,人类提示走 stderr。默认每 1000ms 输出一次,可用 `--stats-interval-ms` 覆盖。事件结构:
+stdout 为 JSONL status events,stderr 为人类日志。默认 1000ms 一条,可用 `--stats-interval-ms` 覆盖。
+
+核心字段:
 
 ```json
 {
@@ -249,29 +233,20 @@ echoless run --config config.toml --status-json
   "mic_dbfs": -18.2,
   "ref_dbfs": -31.0,
   "out_dbfs": -20.5,
-  "mic_q_samples": 320,
-  "ref_q_samples": 640,
-  "out_q_samples": 3000,
   "output_queue_latency_ms": 62.5,
   "algorithmic_latency_ms": 0.0,
   "estimated_user_latency_ms": 67.5,
   "aec_estimated_delay_ms": 48,
-  "mic_input_drops": 0,
-  "ref_input_drops": 0,
   "input_drops": 0,
-  "stale_drops": 0,
   "ref_underruns": 0,
   "output_underruns": 0,
-  "output_overruns": 0,
-  "node_process_time_ms": 0.1,
   "runtime_errors": 0,
   "diverged": false,
-  "last_backend_error": null,
   "diagnostics_session_dir": "diagnostics/session-1765000000"
 }
 ```
 
-估算用户延迟:
+延迟估算:
 
 ```text
 estimated_user_latency_ms =
@@ -280,12 +255,13 @@ estimated_user_latency_ms =
   + out_q_samples / sample_rate * 1000
 ```
 
-注意:
+字段语义:
 
-- `aec_estimated_delay_ms` 是 AEC3 估计的回声对齐延迟,不是用户感知延迟。
-- `output_queue_latency_ms` 更接近用户说话进入虚拟麦前的可见队列延迟。
+- `estimated_user_latency_ms`: 用户说话到进入虚拟输出设备前的估算延迟。
+- `aec_estimated_delay_ms`: AEC3 对回声路径的动态对齐估计。
+- `output_queue_latency_ms`: 输出队列贡献的延迟。
 
-### 4. 配置校验
+### 4. Config Validate
 
 已实现:
 
@@ -293,7 +269,7 @@ estimated_user_latency_ms =
 echoless config validate --config config.toml --json
 ```
 
-无论配置是否有效,`--json` 都会先在 stdout 输出结构化结果;无效时进程非 0 退出。错误结构:
+目标语义:
 
 ```json
 {
@@ -307,190 +283,174 @@ echoless config validate --config config.toml --json
 }
 ```
 
-### 5. Runtime 控制
+配置无效时 stdout 仍输出 JSON,进程用非 0 exit code 表达失败。
 
-短期:
+## 外部虚拟音频设备集成
 
-- Tauri backend spawn sidecar。
-- Stop 通过 SIGINT / child process kill with graceful timeout。
-- 参数变更后重启 sidecar。
+### Windows / VB-CABLE
 
-中期:
+调研结论:
 
-- 抽出 `RealtimeRuntime`。
-- 实现 `ControlApi::start/stop/set_chain/subscribe_stats`。
-- 引入明确的 `RuntimeState`: `Idle` / `Starting` / `Running` / `Stopping` / `Error`。
+- 基础 VB-CABLE 可以作为随应用分发/嵌入安装包的候选,官方 licensing 对 donationware 可见性和来源标注有要求。
+- 驱动安装需要管理员权限,安装/卸载后通常需要重启。
+- 面向专业/组织分发需要处理官方 licensing。
 
-## GUI 参数分层
+后端可提供的能力:
 
-### 普通模式
+- 在 `devices --json` 中保留设备名称、kind、selector。
+- 后续增加 `doctor audio --json`:
+  - `virtual_output_detected`
+  - `candidate_outputs`
+  - `candidate_inputs`
+  - `recommended_driver`
+  - `install_status`
+  - `needs_reboot`
+- 后续 installer 可以调用供应商安装包,但要采用显式用户授权流程。
 
-- Mic device
-- Reference source
-- Output device
-- Backend
-- Reference channels: mono / stereo
-- Noise suppression: off / low / moderate / high
-- Diagnostics duration: 30s / 45s / custom
+首版前端可依赖的最小能力:
 
-### 高级模式
+- 通过设备名识别 `CABLE Input` / `VB-Audio Virtual Cable`。
+- 未识别到时展示“需要安装虚拟音频设备”的产品状态。
+- 安装后重新调用 `devices --json` 验证。
+
+### macOS / BlackHole 或 VB-CABLE MAC
+
+调研结论:
+
+- BlackHole 是开源 macOS virtual audio loopback driver,支持 installer 和 Homebrew cask。
+- BlackHole 安装后可能需要重启。
+- VB-CABLE MAC 是 VB-Audio 的 macOS audio driver,支持 Intel / Apple Silicon。
+- Echoless 需要麦克风权限;虚拟音频设备由系统音频设置和第三方 driver 提供。
+
+后端可提供的能力:
+
+- 在 `devices --json` 中暴露当前系统实际枚举到的 BlackHole / VB-CABLE MAC / Virtual Desktop Mic 等设备。
+- 后续 `doctor audio --json` 可以给出平台建议:
+  - `recommended_driver: "blackhole-2ch" | "vb-cable-mac"`
+  - `install_methods: ["official_installer", "homebrew"]`
+  - `permission_state`
+  - `needs_reboot`
+
+首版前端可依赖的最小能力:
+
+- 通过设备名识别 `BlackHole`、`VB-CABLE`、`Virtual Desktop` 等候选。
+- 用户安装或授权后刷新设备列表。
+- 输出设备和下游 app input 选择同一个虚拟设备。
+
+## 参数暴露策略
+
+完整功能和参数边界见 `docs/frontend/FRONTEND_PARAMETER_BOUNDARIES.md`。后端只提供参数元数据、默认值、平台约束和校验结果;前端可以自行决定具体 UI,但必须遵守以下 contract。
+
+### 硬性 contract
+
+- backend kind 只能来自 `processors --json`;当前用户相关 kind 是 `sonora_aec3`、`localvqe`、`nvidia_afx_aec`。`rtx_aec` 不是有效 kind。
+- AEC3 `ns_level` 的提交值只能是 `low`、`moderate`、`high`、`veryhigh`;UI 可以显示 "very high",但不能提交 `very`。
+- RTX AEC v1 只支持 Windows + `sample_rate = 48000` + `frame_ms = 10` + `reference_channels = "mono"`。
+- LocalVQE 的 `device` 是数字 device index;`auto/cpu/gpu` 不能写入 `device`。
+- 设备下拉只能来自 `devices --json` 当前枚举结果;不要硬编码 Virtual Desktop Mic、BlackHole 或 VB-CABLE 为一定可用。
+- macOS 系统声 reference 不能假设存在原生 loopback;通常需要 BlackHole/VB-CABLE MAC 等外部路由。
+
+### 建议作为常规能力
+
+- `mic`
+- `reference`
+- `output`
+- `reference_channels`
+- `diagnostics.record_dir`
+- `diagnostics.max_seconds`
+- `ns`
+- `ns_level`
+
+### 建议作为高级设置
 
 - `sample_rate`
 - `frame_ms`
+- `agc`
+- `initial_delay_ms`
 - `tail_ms`
 - `delay_num_filters`
 - `linear_stable_echo_path`
-- `agc`
-- LocalVQE:
-  - `model`
-  - `library`
-  - `backend`
-  - `device`
-  - `threads`
-  - `noise_gate`
-  - `noise_gate_threshold_dbfs`
-- RTX AEC:
-  - `runtime_dir`
-  - `model_path`
-  - `intensity_ratio`
-  - `use_default_gpu`
-  - `disable_cuda_graph`
-  - `on_runtime_error`
+- LocalVQE: `model`、`library`、`threads`、`backend`、`device`、`noise_gate`、`noise_gate_threshold_dbfs`
+- RTX AEC: `runtime_dir`、`model_path`、`intensity_ratio`、`use_default_gpu`、`disable_cuda_graph`、`on_runtime_error`
 
-### 暂不暴露给普通用户
+首版默认推荐保持 `48000 Hz / 10ms / mono reference / sonora_aec3 / ns=false / agc=false`。高级项可以暴露给愿意调参的用户,但每次应用前必须走 `config validate --json`。
 
-- AEC3 suppressor / nearend detection 内部细节。
-- external delay estimator 模式。
-- ring buffer / stale drop 阈值。
+### 后端内部项
 
-这些应先做成预设:
+这些由后端维护,不进入稳定用户配置 contract:
 
-- `voice_fidelity`: 保真人声,默认。
-- `echo_removal`: 更强残余回声抑制,可能压人声。
-- `diagnostic`: 更多日志和录制。
+- ring buffer 阈值。
+- stale drop 阈值。
+- AEC3 suppressor 内部结构。
+- nearend detection 内部结构。
+- diagnostics 文件内部轮转策略。
 
-## 产品默认策略
+## 产品自更新预留
 
-### AEC3 默认
+产品自更新和运行时参数变更是两件事:
 
-```toml
-sample_rate = 48000
-frame_ms = 10
-reference_channels = "mono"
+- 运行时参数变更:设备、backend、模型、AEC 参数变化时重启 runtime。
+- 产品自更新:GUI app、`echoless` sidecar、模型/runtime assets、配置 schema 升级。
 
-[[chain]]
-kind = "sonora_aec3"
-ns = false
-agc = false
+前端可预留的后端抽象:
+
+```text
+UpdateService
+  -> getStatus()
+  -> check()
+  -> download()
+  -> applyAndRestart()
+  -> setChannel()
 ```
 
-理由:
+策略:
 
-- AEC3 内部工作域就是 48k / 10ms。
-- Mac 实测 48k 比 44.1k 更稳。
-- `ns=false` / `agc=false` 更符合音质保真优先。
-- 用户后面可能会级联 NVIDIA Broadcast,本层不应默认重度降噪。
+- GUI 若走 Tauri,优先评估 Tauri updater plugin。
+- 若需要 installer、delta update、release channel 和对象存储部署,再评估 Velopack。
+- app update 前停止 `echoless` sidecar 并保存配置。
+- release/update workflow 由 tag 或手动 release 触发。
+- RTX AEC runtime/model 的再分发许可单独确认。
 
-### LocalVQE 默认
+详细调研见 `docs/productization/update_strategy.md`。
 
-LocalVQE 只作为 standalone backend,不默认和 AEC3 级联。
+## 后端完成度
 
-首版 GUI 文案应标为实验:
-
-- 需要模型和动态库。
-- 当前 16k mono 推理。
-- 可能增加延迟和吃字。
-
-### RTX AEC 默认
-
-RTX AEC 只在 Windows + RTX + doctor 通过时显示。
-
-首版 GUI:
-
-- macOS 上隐藏或禁用。
-- Windows 上显示 doctor 状态。
-- 不和 AEC3 默认级联。
-
-## 验收标准
-
-### 后端适配完成
-
-- `echoless devices --json` 可被前端直接消费。
-- `echoless processors --json` 提供参数 manifest。
-- `echoless run --status-json` 或 sidecar JSONL 能持续输出 status event。
-- status event 包含:
-  - `mic_dbfs`
-  - `ref_dbfs`
-  - `out_dbfs`
-  - `output_queue_latency_ms`
-  - `estimated_user_latency_ms`
-  - `aec_estimated_delay_ms`
-  - `input_drops`
-  - `stale_drops`
-  - `ref_underruns`
-  - `output_underruns`
-  - `runtime_errors`
-- `echoless run --config configs/example.toml` 继续可用。
-- `echoless offline` 继续可用。
-- RTX AEC JSON doctor 继续可用。
-
-### 前端首版完成
-
-- 能列设备并保存选择。
-- 能启动/停止 AEC3 推荐配置。
-- 能切换 mono/stereo reference。
-- 能切换 NS off/low/moderate/high。
-- 能显示运行状态和估算用户延迟。
-- 能触发 diagnostics 录制并显示生成目录。
-- Windows RTX backend 只在 doctor 通过时可选。
-- LocalVQE 可作为实验 backend 配置,但不默认启用。
-
-## 风险与缓解
-
-### 风险: GUI 解析 CLI 文本导致脆弱
-
-缓解:
-
-- 所有前端消费接口必须使用 JSON。
-- 人类文本 stdout 不纳入稳定 contract。
-
-### 风险: GUI 参数太多导致用户误调
-
-缓解:
-
-- 普通模式只放少量安全参数。
-- 高级模式用折叠面板。
-- 默认配置固定为 AEC3 保真基线。
-
-### 风险: 热更新复杂
-
-缓解:
-
-- 首版参数变更后重启 runtime。
-- 后续再按 backend 能力逐步支持热更新。
-
-### 风险: 延迟指标误导用户
-
-缓解:
-
-- 分开显示 `用户估算延迟` 和 `AEC 回声对齐延迟`。
-- Tooltip 说明 `aec_estimated_delay_ms` 不是说话输出延迟。
-
-### 风险: macOS/Windows 设备语义不同
-
-缓解:
-
-- 设备接口返回抽象字段。
-- 平台特有说明交给前端文案。
-- `system` / `none` / `input:<name>` / `output:<name>` 保持跨平台约定。
+| 模块 | 完成度 | 前端可接入程度 | 说明 |
+|---|---:|---|---|
+| CLI text commands | 90% | 可用 | `devices/processors/run/offline/nvafx` 保留 |
+| JSON devices | 75% | 可接 | schema 可用;设备为空态需处理 |
+| JSON processor manifest | 85% | 可接 | 参数 manifest 可用;已去掉 UI 指令字段 |
+| Config validate JSON | 75% | 可接 | 结构校验可用 |
+| Realtime AEC3 | 80% | 可接 | 主路径可用;真实设备仍要继续调参 |
+| Runtime JSONL status | 80% | 可接 | 电平、延迟、drop、runtime error 已输出 |
+| Diagnostics recording | 85% | 可接 | WAV/stats/metadata 可用 |
+| LocalVQE backend | 60% | 实验可接 | 真实推理已接入,音质仍需测试 |
+| RTX AEC backend | 70% | Windows 可接 | doctor/install/offline/realtime 已有 |
+| External audio device doctor | 20% | 暂由前端设备名识别 | 后续可加 `doctor audio --json` |
+| Config save/load | 60% | 前端自行实现 | 后端有 schema 和 validate |
+| Process lifecycle API | 60% | sidecar 可实现 | 首版 spawn/stop;后续抽 runtime |
+| Product auto update | 10% | 预留接口 | 见 update strategy |
 
 ## 推荐实施顺序
 
-1. 增加 JSON devices 和 processors。
-2. 增加 JSONL runtime status。
-3. 把 `estimated_delay_ms`、`output_queue_latency_ms`、`estimated_user_latency_ms` 纳入 status。
-4. 加 config validate。
-5. Tauri sidecar 读取 JSON 接口,实现主控页和设备页。
-6. 接 diagnostics 录制。
-7. 接 backend 调参页。
-8. 再抽 `RealtimeRuntime` / `ControlApi` 实现,减少 CLI 和 GUI runtime 重复。
+1. 固化 `devices --json` 和 `processors --json` schema。
+2. 固化 `run --status-json` status event。
+3. 固化 `config validate --json` 错误结构。
+4. 前端 sidecar adapter 接入 JSON 接口。
+5. 接入 diagnostics 录制。
+6. 接入 backend 参数配置。
+7. 增加 `doctor audio --json` 以支持虚拟音频设备检测和安装状态。
+8. 抽 `RealtimeRuntime` / `ControlApi` 减少 CLI 与 GUI runtime 重复。
+
+## 验收标准
+
+- `echoless devices --json` 可被前端直接消费。
+- `echoless processors --json` 提供 backend/参数 manifest。
+- `echoless run --status-json` 持续输出 status event。
+- status event 包含电平、延迟、drop/underrun、runtime error。
+- `echoless config validate --config <file> --json` 可用。
+- `echoless run --config configs/example.toml` 继续可用。
+- `echoless offline` 继续可用。
+- RTX AEC JSON doctor 继续可用。
+- 前端能识别 Windows/macOS 虚拟音频设备安装状态。
+- 配置变化后重启 runtime 能应用新配置。
