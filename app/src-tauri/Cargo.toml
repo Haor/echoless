@@ -1,0 +1,23 @@
+[package]
+name = "echoless-app"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Echoless desktop GUI (Tauri)"
+
+# 独立 workspace:与上层 echoless cargo workspace 解耦,避免被当成其成员。
+[workspace]
+
+[lib]
+name = "echoless_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# macOS 红绿灯垂直居中到自定 40px 标题栏(set_traffic_lights_inset)。
+tauri-plugin-decorum = "1.1"

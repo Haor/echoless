@@ -1,0 +1,680 @@
+/* Echoless — 定稿视觉语言移植自 Design/overview.html。
+   工业规格单 brutalist · 近纯单色 + 绿仅 live · 全直角 · 排版主角。 */
+
+@font-face {
+  font-family: "Chakra Petch";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./assets/fonts/chakra-petch-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Chakra Petch";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./assets/fonts/chakra-petch-700.woff2") format("woff2");
+}
+
+:root {
+  --bg: #08090b;
+  --raised: #0b0c0f;
+  --line: #23252c;
+  --line-soft: #15171c;
+  --t-strong: #f4f4f6;
+  --t: #d7d8dd;
+  --t-soft: #9a9ca4;
+  --t-mut: #6b6e78;
+  --t-faint: #474a53;
+  --t-dim: #2c2f37;
+  --live: #69d86d;
+  --live-ghost: rgba(105, 216, 109, 0.1);
+  --warn: #d8b45a;
+  --ink: #08090b;
+  --hatch: rgba(215, 216, 221, 0.26);
+  --mono: "JetBrains Mono", "Geist Mono", "IBM Plex Mono", "Cascadia Mono",
+    ui-monospace, monospace;
+  --disp: "Chakra Petch", "JetBrains Mono", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0 !important;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: var(--mono);
+  color: var(--t);
+  background: var(--bg);
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+.window {
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg);
+  display: grid;
+  grid-template-rows: 40px 1fr 30px;
+  position: relative;
+  overflow: hidden;
+}
+/* Windows/Linux 自绘边框(无原生装饰);macOS 边框交给 OS。 */
+.window.win {
+  border: 1px solid var(--line);
+}
+.window::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+.window > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hatch {
+  flex: 1;
+  height: 11px;
+  align-self: center;
+  background: repeating-linear-gradient(
+    108deg,
+    var(--hatch) 0 1.5px,
+    transparent 1.5px 7px
+  );
+}
+
+/* titlebar */
+.tbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+/* 整条可拖拽:非交互子元素不拦截指针,事件落到带 data-tauri-drag-region 的 .tbar。
+   caption 按钮保持 pointer-events:auto(可点击,不触发拖拽)。 */
+.tbar > .appicon,
+.tbar > .screen,
+.tbar > .hatch,
+.tbar > .uid {
+  pointer-events: none;
+}
+/* macOS:左侧给系统红绿灯让位(OS 绘制,约 70px)。 */
+.window.mac .tbar {
+  padding-left: 82px;
+}
+/* Windows/Linux:caption 按钮贴右边缘。 */
+.window.win .tbar {
+  padding-right: 0;
+}
+.appicon {
+  width: 15px;
+  height: 15px;
+  color: var(--t-soft);
+  flex: none;
+}
+.screen {
+  color: var(--t-mut);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.uid {
+  color: var(--t-faint);
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  white-space: nowrap;
+}
+/* 自绘 caption 按钮(Windows/Linux;close hover 变红) */
+.caption {
+  display: flex;
+  align-self: stretch;
+}
+.caption .cbtn {
+  width: 46px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--t-mut);
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.caption .cbtn svg {
+  width: 11px;
+  height: 11px;
+}
+.caption .cbtn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--t);
+}
+.caption .cbtn.close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.content {
+  padding: 20px 28px 14px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* hero */
+.kick {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--t-faint);
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+.kick .d {
+  display: flex;
+  gap: 5px;
+}
+.kick .d i {
+  width: 4px;
+  height: 4px;
+  background: var(--t-mut);
+}
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-top: 8px;
+}
+.word {
+  font-family: var(--disp);
+  font-weight: 700;
+  font-size: 60px;
+  line-height: 0.88;
+  letter-spacing: 1px;
+  color: #f2f2ec;
+  transform: scaleX(1.1);
+  transform-origin: left;
+}
+/* 物理滑动开关:条纹轨道 + 滑动主体方块(绿=ON 在右 / 暗=OFF 在左)。
+   切换时方块左右滑动 + 标签 scramble。固定宽度,不回缩。 */
+.power {
+  position: relative;
+  width: 150px;
+  height: 46px;
+  padding: 0;
+  border: 1.5px solid var(--line);
+  background: repeating-linear-gradient(
+    90deg,
+    var(--t-faint) 0 1.5px,
+    transparent 1.5px 5px
+  );
+  overflow: hidden;
+  font-family: var(--mono);
+}
+.power .slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  letter-spacing: 3px;
+  font-weight: 600;
+  color: var(--t-soft);
+  background: var(--t-dim);
+  transform: translateX(0);
+  transition:
+    transform 0.34s cubic-bezier(0.45, 0, 0.2, 1),
+    background-color 0.26s,
+    color 0.26s;
+}
+.power.on .slider {
+  transform: translateX(27px);
+  background: var(--live);
+  color: var(--ink);
+}
+.power:disabled {
+  opacity: 0.55;
+}
+
+/* status(boxed + 绿) */
+.status {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 14px;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.status .box {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--live);
+  color: var(--live);
+  padding: 5px 12px;
+  background: var(--live-ghost);
+  /* 固定宽度(贴合最长文字 REMOVING ECHO),两态/scramble 不回缩 */
+  min-width: 150px;
+  white-space: nowrap;
+}
+.status .box.stopped {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: transparent;
+}
+.status .box.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: transparent;
+}
+.status .box .sq {
+  width: 8px;
+  height: 8px;
+  background: var(--live);
+}
+/* 运行态:圆点;停止态:方块(覆盖全局 radius:0) */
+.status .box .sq.dot {
+  border-radius: 50% !important;
+}
+.status .box.stopped .sq,
+.status .box.warn .sq {
+  background: var(--warn);
+}
+.status .m {
+  color: var(--t-soft);
+}
+.status .m b {
+  color: var(--t);
+  font-weight: 400;
+}
+
+hr.hair {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 18px 0 2px;
+}
+
+/* control rows + 右侧功能图标 */
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+.row {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+.row:hover {
+  background: rgba(255, 255, 255, 0.018);
+}
+.row .bul {
+  width: 16px;
+  color: var(--t-mut);
+  font-size: 13px;
+}
+.row .k {
+  width: 74px;
+  color: var(--t-faint);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.row .co {
+  width: 16px;
+  color: var(--t-faint);
+}
+.row .v {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--t);
+  font-size: 15px;
+}
+.row .v .dn {
+  color: var(--t-mut);
+}
+
+/* 自绘下拉(brutalist 单色直角) */
+.dd {
+  position: relative;
+}
+.dd-trigger {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  border: none;
+  color: var(--t);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 15px;
+  padding: 2px 0;
+  max-width: 360px;
+}
+.dd-trigger .lbl {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dd-trigger .dn {
+  color: var(--t-mut);
+  font-size: 12px;
+  flex: none;
+}
+.dd-trigger:hover .lbl {
+  color: var(--t-strong);
+}
+.dd-panel {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: -10px;
+  min-width: 260px;
+  max-width: 430px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  z-index: 50;
+  max-height: 264px;
+  overflow-y: auto;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+.dd-panel.right {
+  left: auto;
+  right: -10px;
+}
+.dd-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: var(--t-soft);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  text-align: left;
+}
+.dd-opt + .dd-opt {
+  border-top: 1px solid var(--line-soft);
+}
+.dd-opt:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--t);
+}
+.dd-opt.sel {
+  color: var(--t-strong);
+}
+.dd-opt .mk {
+  width: 10px;
+  flex: none;
+  color: var(--live);
+  font-size: 8px;
+  line-height: 1;
+}
+.dd-opt .otext {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dd-empty {
+  padding: 8px 12px;
+  color: var(--t-faint);
+  font-size: 12px;
+}
+
+/* compact 变体:用于 MODEL 行内联的 reference 选择(配合 .meta 的小字号) */
+.dd-sm .dd-trigger {
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--t-soft);
+  gap: 6px;
+  padding: 0;
+}
+.dd-sm .dd-trigger.warn {
+  color: var(--warn);
+}
+.dd-sm .dd-trigger .dn {
+  font-size: 9px;
+}
+.dd-sm .dd-panel {
+  min-width: 190px;
+}
+.dd-sm .dd-opt {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0.3px;
+}
+.row .sp {
+  flex: 1;
+}
+.row .meta {
+  color: var(--t-faint);
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.row .meta b {
+  color: var(--t-soft);
+  font-weight: 400;
+}
+.row .meta .mk {
+  color: var(--t-mut);
+  letter-spacing: -1px;
+}
+.row .ico {
+  width: 30px;
+  margin-left: 18px;
+  display: flex;
+  justify-content: flex-end;
+  color: var(--t-soft);
+}
+.row .ico svg {
+  width: 22px;
+  height: 18px;
+}
+.segg {
+  display: flex;
+}
+.segg .b {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  color: var(--t-mut);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  background: transparent;
+  font-family: var(--mono);
+}
+.segg .b + .b {
+  border-left: none;
+}
+.segg .b.active {
+  background: var(--t-strong);
+  color: var(--ink);
+  border-color: var(--t-strong);
+  font-weight: 600;
+}
+.segg .b.exp {
+  color: var(--t-faint);
+}
+.segg .b:disabled {
+  cursor: default;
+}
+#ns .b {
+  min-width: 48px;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+
+/* signal — 三路示波(near-end MIC+REF → clean OUT) */
+.sig {
+  margin-top: auto;
+  padding-top: 10px;
+}
+.sig .h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+.sig .h .t {
+  color: var(--t-faint);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.sig .h .v {
+  color: var(--t-mut);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.sig .h .v b {
+  color: var(--t-soft);
+  font-weight: 400;
+}
+.scope {
+  display: flex;
+  align-items: stretch;
+}
+.near {
+  flex: 1.04;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding-right: 22px;
+  border-right: 1px solid var(--line);
+}
+.gap {
+  width: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--t-faint);
+  font-size: 15px;
+  letter-spacing: -2px;
+}
+.far {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding-left: 22px;
+}
+.trace {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 30px;
+}
+.far .trace {
+  height: 66px;
+  flex: 1;
+}
+.trace .lb {
+  width: 26px;
+  color: var(--t-faint);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  flex: none;
+}
+.trace canvas {
+  flex: 1;
+  height: 100%;
+  display: block;
+  min-width: 0;
+}
+.trace .db {
+  width: 60px;
+  text-align: right;
+  color: var(--t-soft);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.trace .db i {
+  color: var(--t-faint);
+  font-style: normal;
+  font-size: 8px;
+  letter-spacing: 0.5px;
+}
+
+/* footer */
+.fbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+  border-top: 1px solid var(--line);
+  color: var(--t-mut);
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+.fbar a {
+  color: var(--t-soft);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+.fbar a .mk {
+  color: var(--t-faint);
+  letter-spacing: -1px;
+}
+.fbar .sp {
+  flex: 1;
+}
+.fbar .stamp {
+  color: var(--t-faint);
+}
+.fbar .bg {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+  height: 12px;
+  margin-left: 14px;
+}
+.fbar .bg i {
+  width: 3px;
+  background: var(--t-soft);
+  height: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+  }
+}
