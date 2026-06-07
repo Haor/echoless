@@ -53,7 +53,7 @@ CLI bin 解析(`echoless_bin()`):
 | `doctor_audio` | — | `doctor audio --json` | DoctorAudio |
 | `nvafx_doctor` | `runtime_dir?` | `nvafx doctor [--runtime-dir D] --json` | `{ok, report}` |
 | `nvafx_install` | `common_zip, model_zip, runtime_dir?` | `nvafx install ...` → `nvafx doctor --json` | `{ok, report}` |
-| `nvafx_download_install` | `runtime_dir?` | **stub** → 待 `nvafx download-install --json` | `{ok, report}` |
+| `nvafx_download_install` | `runtime_dir?` | `nvafx download-install --json`(前端已接,**待后端子命令**) | `{ok, report}` |
 | `validate_config` | `toml_text` | `config validate --config <temp> --json` | `{ok, errors[]}` |
 | `start_run` | `toml_text, stats_interval_ms` | spawn `run --config <temp> --status-json --stats-interval-ms N` | 流式 event |
 | `stop_run` | — | kill child | — |
@@ -87,7 +87,7 @@ TS 镜像:`app/src/types.ts`;调用层:`app/src/api.ts`;配置 TOML 生成:`api.
 | 虚拟声卡检测提示(doctor audio) | ✅ |
 | LocalVQE:选择 + 手动选 `.gguf` | ✅(缺 bundled 探针,见 §6.2) |
 | NVAFX:doctor / 本地 zip 安装 / recheck / ready 选用 | ✅ 接 CLI |
-| NVAFX:公共 release 下载安装 | ⛔ 后端 stub(见 RTX 专题文档) |
+| NVAFX:公共 release 下载安装 | 前端已接 shell;⛔ 待后端 `nvafx download-install` 子命令 |
 | 打包 sidecar / bundled assets | ⛔ 待 Codex(§6) |
 
 ## 6. 打包集成待办(Codex)

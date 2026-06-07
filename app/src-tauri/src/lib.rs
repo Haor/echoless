@@ -122,11 +122,28 @@ fn nvafx_install(
 }
 
 /// 从公共 GitHub release 下载 common+架构 model zip,然后安装并回传 doctor。
-/// TODO(backend/Codex):接公共 release 下载器(按 nvafx doctor 的 selected_arch 选 model
-/// asset,校验 SHA256,落盘后调 `nvafx install`)。公共仓库上线前先返回明确错误。
+/// shell `echoless nvafx download-install [--runtime-dir D] --json`;该子命令需打印
+/// `{ok, report}` doctor JSON 到 stdout。后端(Codex)实现该子命令后此处即生效;
+/// 未实现前 CLI 会非 0 退出,错误经 stderr 透传给前端。
 #[tauri::command]
-fn nvafx_download_install(_runtime_dir: Option<String>) -> Result<Value, String> {
-    Err("RTX 下载安装器尚未接入(等公共 release 上线);当前请用 Local zip。".into())
+fn nvafx_download_install(runtime_dir: Option<String>) -> Result<Value, String> {
+    let rdir = runtime_dir.filter(|d| !d.is_empty());
+    let mut args: Vec<&str> = vec!["nvafx", "download-install", "--json"];
+    if let Some(dir) = rdir.as_deref() {
+        args.push("--runtime-dir");
+        args.push(dir);
+    }
+    let out = Command::new(echoless_bin())
+        .args(&args)
+        .output()
+        .map_err(|e| format!("spawn echoless failed: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("nvafx download-install 失败: {err}"));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(&stdout)
+        .map_err(|e| format!("parse json failed: {e}; raw: {stdout}"))
 }
 
 /// 在系统默认浏览器打开外部链接(驱动 / VC++ 下载页)。
