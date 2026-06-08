@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Health } from "../App";
+import type { DoctorAudio } from "../types";
 import { openPath } from "../api";
 import { useI18n } from "../i18n";
 import { Field } from "../components/Controls";
@@ -11,6 +12,8 @@ interface Props {
   diagDir: string;
   running: boolean;
   health: Health;
+  doctor: DoctorAudio | null;
+  onMicSetup: () => void;
   onRec: (v: boolean) => void;
   onSeconds: (v: number | null) => void;
   onDir: (v: string) => void;
@@ -22,12 +25,25 @@ export function DiagnosticsPage({
   diagDir,
   running,
   health,
+  doctor,
+  onMicSetup,
   onRec,
   onSeconds,
   onDir,
 }: Props) {
   const { t } = useI18n();
   const active = rec && running;
+
+  // 虚拟麦路由摘要(诊断行):就绪? 通话软件该选哪个 mic?
+  const routeReady =
+    doctor?.virtual_route_ready ??
+    ((doctor?.candidate_outputs.length ?? 0) > 0 &&
+      (doctor?.candidate_inputs.length ?? 0) > 0);
+  const appMic =
+    doctor?.recommended_app_mic ??
+    doctor?.candidate_inputs.find((i) => /cable output|blackhole/i.test(i.name)) ??
+    doctor?.candidate_inputs[0] ??
+    null;
 
   async function pickDir() {
     try {
@@ -61,6 +77,18 @@ export function DiagnosticsPage({
         {t("diagNote")}
       </div>
       <hr className="hair" />
+
+      <div className="asec">// {t("virtualMic")}</div>
+      <div className="drow">
+        <span className="dk">ROUTE</span>
+        <span className={`dpath ${routeReady ? "live" : ""}`}>
+          {routeReady ? t("micReadyShort") : t("micSetupShort")}
+          {appMic ? ` · ${t("micPickShort")}: ${appMic.name}` : ""}
+        </span>
+        <button className="dopen" onClick={onMicSetup}>
+          {t("setupBtn")} <span className="mk">&raquo;</span>
+        </button>
+      </div>
 
       <div className="asec">// {t("secRecord")}</div>
       <div className="acols">
@@ -97,6 +125,15 @@ export function DiagnosticsPage({
         {active && health.session_dir ? (
           <>
             <span className="dpath live">{health.session_dir}</span>
+            {health.recording && (
+              <span className="recbadge">
+                ● {health.rec_elapsed_s.toFixed(1)}s
+                {seconds ? ` / ${seconds}s` : ""}
+              </span>
+            )}
+            {health.rec_drops > 0 && (
+              <span className="recbadge warn">{health.rec_drops} drops</span>
+            )}
             <button
               className="dopen"
               onClick={() => openPath(health.session_dir!)}

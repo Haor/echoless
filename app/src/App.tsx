@@ -13,6 +13,8 @@ import {
   nvafxInstall,
   onRunEvent,
   onRunExit,
+  openPath,
+  openUrl,
   startRun,
   stopRun,
   validateConfig,
@@ -46,9 +48,15 @@ import { AdvancedPage } from "./pages/AdvancedPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { EnginePage } from "./pages/EnginePage";
 import { RtxSetupPage } from "./pages/RtxSetupPage";
+import { MicSetupPage } from "./pages/MicSetupPage";
 import { simNvafxDoctor, type RtxState } from "./nvafx";
+import { simMicDoctor, type MicState } from "./mic";
 
 const appWindow = getCurrentWindow();
+
+// 系统设置 › 隐私与安全性(系统音频录制权限在此开启;具体面板随 macOS 版本)。
+const SYS_AUDIO_PRIVACY_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy";
 
 // 设备选择值统一用 stable_id(跨重启稳定;mic/output 配置直接吃它)。
 // 选默认输出:优先虚拟声卡(VB-CABLE / BlackHole),否则系统默认。
@@ -106,6 +114,10 @@ export interface Health {
   diverged: boolean;
   session_dir: string | null;
   backend_error: string | null;
+  // 诊断录制实时态(后端 status 提供)。
+  recording: boolean;
+  rec_elapsed_s: number;
+  rec_drops: number;
 }
 const ZERO_HEALTH: Health = {
   input_drops: 0,
@@ -116,6 +128,9 @@ const ZERO_HEALTH: Health = {
   diverged: false,
   session_dir: null,
   backend_error: null,
+  recording: false,
+  rec_elapsed_s: 0,
+  rec_drops: 0,
 };
 
 export default function App() {
@@ -136,7 +151,12 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [view, setView] = useState<
-    "overview" | "engine" | "advanced" | "diagnostics" | "rtxsetup"
+    | "overview"
+    | "engine"
+    | "advanced"
+    | "diagnostics"
+    | "rtxsetup"
+    | "micsetup"
   >("overview");
   const [doctor, setDoctor] = useState<DoctorAudio | null>(null);
   const [nvafx, setNvafx] = useState<NvafxDoctor | null>(null);
@@ -155,6 +175,10 @@ export default function App() {
   const [dev, setDev] = useState(false);
   // 开发态下用模拟 doctor 走 RTX 安装流程(mac 上也能逐屏过)。
   const [devRtxState, setDevRtxState] = useState<RtxState>("runtime_not_installed");
+  // 开发态下用模拟 doctor 走虚拟麦路由流程(mac 上也能逐屏过)。
+  const [devMicState, setDevMicState] = useState<MicState>("missing");
+  // 开发态下按 ` 把整机平台模拟成 Windows,用于在 mac 上预览 win 全流程。
+  const [devWin, setDevWin] = useState(false);
   // 诊断录制
   const [rec, setRec] = useState(false);
   const [diagSeconds, setDiagSeconds] = useState<number | null>(null);
@@ -205,10 +229,18 @@ export default function App() {
             setRunning(true);
             // 录制时立即拿到 session 目录(不必等第一条 status)。
             if (ev.diagnostics_session_dir) {
-              setHealth((h) => ({
-                ...h,
-                session_dir: ev.diagnostics_session_dir ?? null,
-              }));
+              const dir = ev.diagnostics_session_dir;
+              setHealth((h) => ({ ...h, session_dir: dir }));
+            }
+            return;
+          }
+          // 诊断录制收尾:writer 已 finalize 文件。仅「录满 max_seconds」时
+          // 自动关开关 + 打开会话目录;run_exit / error(手动停或改设置触发)不弹目录。
+          if (ev.type === "diagnostics_done") {
+            if (ev.reason === "max_seconds") {
+              recRef.current = false;
+              setRec(false);
+              if (ev.session_dir) openPath(ev.session_dir).catch(() => {});
             }
             return;
           }
@@ -230,16 +262,20 @@ export default function App() {
             healthy:
               !s.diverged && s.runtime_errors === 0 && !s.last_backend_error,
           });
-          setHealth({
+          setHealth((h) => ({
             input_drops: s.input_drops ?? 0,
             ref_underruns: s.ref_underruns ?? 0,
             output_underruns: s.output_underruns ?? 0,
             stale_drops: s.stale_drops ?? 0,
             runtime_errors: s.runtime_errors ?? 0,
             diverged: Boolean(s.diverged),
-            session_dir: s.diagnostics_session_dir ?? null,
+            // status 的 session_dir 缺省时保留 started 给的值。
+            session_dir: s.diagnostics_session_dir ?? h.session_dir,
             backend_error: s.last_backend_error ?? null,
-          });
+            recording: Boolean(s.recording),
+            rec_elapsed_s: s.diagnostics_elapsed_s ?? 0,
+            rec_drops: s.diagnostics_drops ?? 0,
+          }));
         }),
       );
       uns.push(
@@ -289,6 +325,20 @@ export default function App() {
     return () => window.removeEventListener("keydown", onTilde);
   }, []);
 
+  // 开发态下按 `(同一物理键不按 Shift)在 Windows / macOS 模拟平台间切换。
+  useEffect(() => {
+    const onBacktick = (e: KeyboardEvent) => {
+      if (e.key !== "`") return;
+      const el = document.activeElement;
+      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+      if (!dev) return;
+      e.preventDefault();
+      setDevWin((w) => !w);
+    };
+    window.addEventListener("keydown", onBacktick);
+    return () => window.removeEventListener("keydown", onBacktick);
+  }, [dev]);
+
   function refreshDevices() {
     listDevices()
       .then((d) => {
@@ -309,6 +359,11 @@ export default function App() {
   function recheckNvafx(runtimeDir?: string) {
     if (dev) return; // dev 模拟:状态由 dev 切换条控制
     nvafxDoctor(runtimeDir).then(setNvafx).catch(() => {});
+  }
+
+  // 重跑虚拟声卡检测(MIC SETUP 向导的 recheck)。
+  function recheckAudio() {
+    doctorAudio().then(setDoctor).catch(() => {});
   }
 
   // RTX runtime 安装:解压 common + 架构 model,回传安装后 doctor 报告。
@@ -432,6 +487,11 @@ export default function App() {
       setView("engine");
       return;
     }
+    // mac 系统音频参考需 48k;采样率不符 → 去 Advanced 改,避免启动即被后端拒。
+    if (sysRefRateConflict) {
+      setView("advanced");
+      return;
+    }
     await start();
   }
 
@@ -511,7 +571,25 @@ export default function App() {
     applyChange({ diagnostics: dg });
   }
 
-  const refOptions = (devices?.reference_sources ?? [])
+  // dev 模拟 Windows 时,系统 render loopback 原生可用 → 注入一个 system 参考源,
+  // 让 win 预览忠实(真实 win 上后端本就返回 system available;mac 才退 none)。
+  const refSources =
+    dev && devWin
+      ? [
+          {
+            id: "system",
+            label: "System audio",
+            kind: "system" as const,
+            available: true,
+            stable_id: "system",
+            selector: "system",
+          },
+          ...(devices?.reference_sources ?? []).filter((r) => r.id !== "system"),
+        ]
+      : devices?.reference_sources ?? [];
+  // dev win 下默认就选 system(否则沿用真实选择)。
+  const referenceView = dev && devWin ? "system" : reference;
+  const refOptions = refSources
     .filter((r) => r.available)
     .map((r) => ({
       value: r.selector ?? r.id,
@@ -524,14 +602,19 @@ export default function App() {
             : r.label,
     }));
 
-  const isMac = platform === "macos";
+  // dev 下可把平台模拟成 Windows(按 `),让 mac 也能预览 win 全流程(标题栏/引擎/虚拟麦)。
+  const platformView: Platform = dev && devWin ? "windows" : platform;
+  const isMac = platformView === "macos";
   const off = !powerOn;
   const stopped = off;
   const unstable = powerOn && !live.healthy;
   // 诚实状态:没有有效参考(reference=none 或 ref 信号静默)时,AEC 无消回声依据
   // → 不显示绿色 "REMOVING ECHO",而是琥珀 "NO REFERENCE"。
+  // dev 预览态:跟随下拉展示值(referenceView),且不因 REF 静默判无参考
+  // (预览跑在真实 mac 上无对应音频);真实运行行为不变。
+  const refSel = dev ? referenceView : reference;
   const hasReference =
-    reference !== "none" && !(live.ref !== null && live.ref <= -100);
+    refSel !== "none" && (dev || !(live.ref !== null && live.ref <= -100));
   const noRef = powerOn && !unstable && !hasReference;
   const ns = Boolean(params.ns);
   // 降噪是 AEC3 管线独有(其它 backend 无 ns 参数)→ 不支持时置灰。
@@ -566,13 +649,27 @@ export default function App() {
         ? t("engine")
         : view === "rtxsetup"
           ? t("rtxSetup")
-          : view === "advanced"
-            ? t("advanced")
-            : t("diagnostics");
+          : view === "micsetup"
+            ? t("micSetup")
+            : view === "advanced"
+              ? t("advanced")
+              : t("diagnostics");
   // 当前引擎是否就绪(未就绪时 overview 提示去 Engine 配置)。
   const activeReady = engineReady(kind);
   // dev:用模拟 doctor 驱动 Engine 卡片 + RTX 向导,让 mac 也能逐屏走流程。
   const nvafxView = dev ? simNvafxDoctor(devRtxState) : nvafx;
+  // dev:同样用模拟 doctor 驱动诊断行 + 虚拟麦向导,逐屏走 missing→ready(随模拟平台切换)。
+  const doctorView = dev ? simMicDoctor(devMicState, platformView) : doctor;
+
+  // 系统音频录制权限引导:仅 mac + 用 system(Process Tap)reference 时相关。
+  // denied → 可点去隐私设置;undetermined → 提示首次运行会请求(OS 届时弹窗)。
+  const sysAudioPerm = doctorView?.system_audio_permission;
+  const usingSysRef = isMac && referenceView === "system";
+  const sysAudioDenied = usingSysRef && sysAudioPerm === "denied";
+  const sysAudioUndet = usingSysRef && sysAudioPerm === "undetermined";
+  // mac Process Tap reference 要求全局采样率必须 48k(与引擎无关 —— LocalVQE 的 16k
+  // 由 ProcessorChain 内部适配)。不符 → 阻止运行,引导去 Advanced 改采样率。
+  const sysRefRateConflict = usingSysRef && pipeline.sample_rate !== 48000;
 
   const dash = (v: number | null, d = 1) =>
     v === null ? "—" : v.toFixed(d);
@@ -586,7 +683,11 @@ export default function App() {
           <ScrambleText text={viewTitle} />
         </span>
         <span className="hatch" />
-        {dev && <span className="devtag">DEV</span>}
+        {dev && (
+          <span className="devtag">
+            DEV · {platformView === "windows" ? "WIN" : "MAC"}
+          </span>
+        )}
         <span className="uid">{modelName(kind)}</span>
         {!isMac && (
           <span className="caption">
@@ -635,6 +736,26 @@ export default function App() {
               style={{ color: "var(--warn)", cursor: "default" }}
             >
               {t("engSetupHint")} <span className="mk">&raquo;</span>
+            </span>
+          ) : sysRefRateConflict ? (
+            <span
+              className="m setup"
+              onClick={() => setView("advanced")}
+              style={{ color: "var(--warn)" }}
+            >
+              {t("sysRefRate")} <span className="mk">&raquo;</span>
+            </span>
+          ) : sysAudioDenied ? (
+            <span
+              className="m setup"
+              onClick={() => openUrl(SYS_AUDIO_PRIVACY_URL)}
+              style={{ color: "var(--warn)" }}
+            >
+              {t("sysAudioGrant")} <span className="mk">&raquo;</span>
+            </span>
+          ) : sysAudioUndet ? (
+            <span className="m" style={{ color: "var(--t-faint)" }}>
+              {t("sysAudioFirstRun")}
             </span>
           ) : (
             <span className="m">{unstable ? t("checkSetup") : t("stable")}</span>
@@ -708,8 +829,8 @@ export default function App() {
               <Dropdown
                 compact
                 align="right"
-                warn={reference === "none"}
-                value={reference}
+                warn={referenceView === "none"}
+                value={referenceView}
                 options={refOptions}
                 onChange={(v) => {
                   setReference(v);
@@ -826,7 +947,7 @@ export default function App() {
         {view === "engine" && (
           <EnginePage
             processors={processors}
-            platform={platform}
+            platform={platformView}
             kind={kind}
             params={params}
             doctor={nvafxView}
@@ -871,9 +992,22 @@ export default function App() {
             diagDir={diagDir}
             running={powerOn}
             health={health}
+            doctor={doctorView}
+            onMicSetup={() => setView("micsetup")}
             onRec={setRecording}
             onSeconds={setRecSeconds}
             onDir={setRecDir}
+          />
+        )}
+        {view === "micsetup" && (
+          <MicSetupPage
+            doctor={doctorView}
+            platform={platformView}
+            dev={dev}
+            devState={devMicState}
+            onDevState={setDevMicState}
+            onBack={() => setView("diagnostics")}
+            onRecheck={recheckAudio}
           />
         )}
       </main>
@@ -908,10 +1042,22 @@ export default function App() {
           <button
             className="link"
             style={linkStyle}
-            onClick={() => setView(view === "rtxsetup" ? "engine" : "overview")}
+            onClick={() =>
+              setView(
+                view === "rtxsetup"
+                  ? "engine"
+                  : view === "micsetup"
+                    ? "diagnostics"
+                    : "overview",
+              )
+            }
           >
             <span className="mk">&lt;&lt;&lt;</span>{" "}
-            {view === "rtxsetup" ? t("engine") : t("backToOverview")}
+            {view === "rtxsetup"
+              ? t("engine")
+              : view === "micsetup"
+                ? t("diagnostics")
+                : t("backToOverview")}
           </button>
         )}
         <span className="sp" />

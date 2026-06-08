@@ -15,8 +15,8 @@ const D: Record<string, { en: string; zh: string }> = {
   diagnostics: { en: "Diagnostics", zh: "诊断" },
 
   kicker: {
-    en: "Acoustic Echo Cancellation · Local",
-    zh: "声学回声消除 · 本地",
+    en: "Acoustic Echo Cancellation",
+    zh: "声学回声消除",
   },
 
   removingEcho: { en: "Removing Echo", zh: "正在消除回声" },
@@ -47,10 +47,22 @@ const D: Record<string, { en: string; zh: string }> = {
 
   backToOverview: { en: "Overview", zh: "返回总览" },
 
+  // 系统音频录制权限(mac Process Tap reference)
+  sysAudioGrant: { en: "grant system audio permission", zh: "授予系统音频权限" },
+  sysAudioFirstRun: {
+    en: "first run will request system audio permission",
+    zh: "首次运行将请求系统音频权限",
+  },
+  // 系统音频参考(Process Tap)要求全局采样率 = 48k(与引擎无关)。
+  sysRefRate: {
+    en: "System Audio ref needs 48k sample rate",
+    zh: "系统音频参考需 48k 采样率",
+  },
+
   // Engine
   engNote: {
-    en: "Pick the echo-removal brain · set it up here",
-    zh: "选消回声引擎 · 在这里备妥",
+    en: "Engine selection",
+    zh: "引擎选择",
   },
   active: { en: "ACTIVE", zh: "运行中" },
   rdyReady: { en: "READY", zh: "就绪" },
@@ -120,10 +132,57 @@ const D: Record<string, { en: string; zh: string }> = {
   wzUseEngine: { en: "use this engine", zh: "使用该引擎" },
   wzNoGpuArch: { en: "fix GPU / driver detection first", zh: "请先修复 GPU / 驱动检测" },
 
+  // 虚拟麦克风诊断 / 向导
+  micSetup: { en: "MIC SETUP", zh: "虚拟麦配置" },
+  virtualMic: { en: "Virtual Mic", zh: "虚拟麦克风" },
+  setupBtn: { en: "set up", zh: "配置" },
+  micRouteHead: { en: "VIRTUAL MIC ROUTE", zh: "虚拟麦路由" },
+  micRoute: { en: "Route", zh: "路由" },
+  micOut: { en: "out", zh: "输出" },
+  micCallApp: { en: "call app mic", zh: "通话软件麦克风" },
+  micSetAsOutput: { en: "set as Echoless output", zh: "设为 Echoless 输出" },
+  micPickHere: { en: "pick this in your call app", zh: "在通话软件里选这个" },
+  micNodeDriver: { en: "driver", zh: "驱动" },
+  micNodeRoute: { en: "route", zh: "路由" },
+  micNodePerm: { en: "mic perm", zh: "麦权限" },
+  // 状态摘要(Diagnostics 行)
+  micReadyShort: { en: "route ready", zh: "路由就绪" },
+  micSetupShort: { en: "set up", zh: "待配置" },
+  micPickShort: { en: "in app mic", zh: "通话软件麦选" },
+  // 动作卡
+  micReady: { en: "Virtual mic ready", zh: "虚拟麦已就绪" },
+  micPickInApp: { en: "In your call app pick mic:", zh: "在通话软件里把麦克风选成:" },
+  micMissing: { en: "Virtual audio not installed", zh: "未安装虚拟声卡" },
+  micInstallHint: { en: "Install a virtual audio device:", zh: "安装一个虚拟声卡:" },
+  micRebootAfter: { en: "reboot after install", zh: "装完需重启" },
+  micIncomplete: { en: "Route incomplete", zh: "路由不完整" },
+  micIncompleteHint: {
+    en: "Only one side detected. Reopen the driver installer or finish setup.",
+    zh: "只检测到一端。重开驱动安装器或完成安装。",
+  },
+  micMacRestartHint: {
+    en: "Only one side detected. Restart CoreAudio, then recheck:",
+    zh: "只检测到一端。重启 CoreAudio 后重检:",
+  },
+  micCopy: { en: "copy", zh: "复制" },
+  micCopied: { en: "copied", zh: "已复制" },
+  micReboot: { en: "Reboot to finish the virtual audio install.", zh: "重启以完成虚拟声卡安装。" },
+  micPermDenied: { en: "Microphone permission denied", zh: "麦克风权限被拒绝" },
+  micPermHint: {
+    en: "Echoless needs microphone access to capture your voice.",
+    zh: "Echoless 需要麦克风权限来采集你的声音。",
+  },
+  micPermUndet: {
+    en: "Grant microphone access on first run if prompted.",
+    zh: "首次运行若有提示,请允许麦克风权限。",
+  },
+  micOpenDriver: { en: "open driver download", zh: "打开驱动下载" },
+  micOpenPrivacy: { en: "open privacy settings", zh: "打开隐私设置" },
+
   // Advanced
   advNote: {
-    en: "Advanced parameters · validated before apply",
-    zh: "高级参数 · 应用前校验",
+    en: "Advanced parameters",
+    zh: "高级参数",
   },
   secPipeline: { en: "Pipeline", zh: "管线" },
   secSession: { en: "Session", zh: "会话" },
@@ -140,8 +199,8 @@ const D: Record<string, { en: string; zh: string }> = {
 
   // Diagnostics
   diagNote: {
-    en: "Record a session to capture issues",
-    zh: "录一段会话,留存问题现场",
+    en: "Record & diagnose",
+    zh: "录制并诊断",
   },
   openFolder: { en: "open", zh: "打开" },
   secRecord: { en: "Record", zh: "录制" },

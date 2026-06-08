@@ -110,10 +110,27 @@ export interface RuntimeStatus {
   last_backend_error?: string | null;
   diagnostics_session_dir?: string | null;
 
+  // 诊断录制实时态(后端 2026-06 起):录制中为 true + 已录帧/秒 + writer 丢帧。
+  recording?: boolean;
+  diagnostics_frames?: number;
+  diagnostics_elapsed_s?: number;
+  diagnostics_drops?: number;
+
   // 真实示波波形:每路 64 点,当前 stats interval 内的 peak 包络,范围 [0,1]。
   mic_wave?: number[];
   ref_wave?: number[];
   out_wave?: number[];
+}
+
+// 诊断录制收尾事件(writer 线程 finalize 后发;reason: max_seconds | run_exit | error)。
+export interface DiagnosticsDoneEvent {
+  type: "diagnostics_done";
+  session_dir: string;
+  frames: number;
+  seconds: number;
+  reason: "max_seconds" | "run_exit" | "error" | string;
+  drops: number;
+  ok: boolean;
 }
 
 // run --status-json 在音频流启动后先发的一条事件。
@@ -124,9 +141,11 @@ export interface StartedEvent {
   frame_ms: number;
   reference_channels: string;
   diagnostics_session_dir?: string | null;
+  // 实际生效的参考源:mac Process Tap 时为 "macos_process_tap";其它见后端 status_name。
+  reference_source?: string | null;
 }
 
-export type RunEvent = RuntimeStatus | StartedEvent;
+export type RunEvent = RuntimeStatus | StartedEvent | DiagnosticsDoneEvent;
 
 // ---- doctor audio --json(虚拟声卡检测) ----
 export interface DoctorCandidate {
@@ -145,9 +164,19 @@ export interface DoctorAudio {
   recommended_driver: string; // "vb-cable" | "blackhole-2ch" | "vb-cable-mac" ...
   install_status: "installed" | "missing" | "unknown";
   needs_reboot: boolean;
-  permission_state: "granted" | "denied" | "undetermined";
+  // 非 macOS 当前返回 "unknown";macOS 返回 granted/denied/undetermined。
+  permission_state: "granted" | "denied" | "undetermined" | "unknown";
+  // 系统音频录制权限(mac Process Tap reference 用)。helper 可发现=undetermined;
+  // 缺失/非 mac=unknown。普通 doctor 不主动触发系统弹窗(首次启动 tap 录制才触发)。
+  system_audio_permission?: "granted" | "denied" | "undetermined" | "unknown";
   hint?: string;
   reference_sources: ReferenceSource[];
+
+  // ↓ 后端建议补的字段(见 RTX/虚拟麦 handoff)。前端向后兼容:缺省时从上面字段派生。
+  virtual_route_ready?: boolean; // 同时检测到可输出虚拟设备 + 对应可作 mic 的输入端
+  route_status?: "ready" | "incomplete" | "missing" | string;
+  recommended_output?: DoctorCandidate | null; // Echoless 应输出到的设备(如 CABLE Input)
+  recommended_app_mic?: DoctorCandidate | null; // 通话软件里应选的麦(如 CABLE Output)
 }
 
 // ---- nvafx doctor --json(RTX AEC 引擎就绪探针) ----

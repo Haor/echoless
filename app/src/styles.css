@@ -374,6 +374,18 @@ body {
 .drow .dpath.live {
   color: var(--live);
 }
+/* 录制实时进度徽章(SESSION 行):● 已录秒数 / 上限 + writer 丢帧告警 */
+.recbadge {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--live);
+  white-space: nowrap;
+}
+.recbadge.warn {
+  color: var(--warn);
+}
 /* 可点击的目录文本(无框)→ 打开文件夹选择器 */
 .drow .dpick {
   color: var(--t);
@@ -784,6 +796,31 @@ body {
   line-height: 1.5;
   margin-top: 6px;
 }
+.wzcmd {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.wzcmd code {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--ink);
+  color: var(--live);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  padding: 6px 10px;
+  user-select: all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wzcmd code::before {
+  content: "$ ";
+  color: var(--t-faint);
+}
 .wzsrc {
   display: flex;
   align-items: center;
@@ -856,6 +893,46 @@ body {
 }
 .wzassets .sz {
   color: var(--t-faint);
+}
+
+/* MIC SETUP:虚拟麦路由图 */
+.mroute {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.mroute .mrow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+.mroute .mfrom {
+  color: var(--t-soft);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.mroute .marrow {
+  color: var(--t-faint);
+}
+.mroute .mdev {
+  color: var(--t-strong);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mroute .mnote {
+  margin-left: auto;
+  color: var(--t-mut);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.mroute .mnote.hl {
+  color: var(--live);
 }
 
 /* hero */
