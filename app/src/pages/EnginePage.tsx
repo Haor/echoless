@@ -145,7 +145,7 @@ export function EnginePage({
   // 就绪判定:AEC3 永远就绪;LocalVQE 需模型;NVAFX 需 doctor 通过(dev 跳过)。
   const ready = (k: string): boolean => {
     if (!supported(k)) return false;
-    if (k === "localvqe") return Boolean(localvqeModel);
+    if (k === "localvqe") return Boolean(localvqeModel && lvAssets?.native_ready);
     if (k === "nvidia_afx_aec") return dev || Boolean(doctor?.ok);
     return true;
   };
@@ -206,6 +206,11 @@ export function EnginePage({
           {t("lvqeOpenDir")} <span className="mk">↗</span>
         </button>
       </div>
+      {lvAssets && !lvAssets.native_ready && (
+        <div className="cdetail warn" title={lvAssets.native_dir ?? undefined}>
+          {t("lvqeRuntimeMissing")}
+        </div>
+      )}
       {lvErr && <div className="cdetail warn">{lvErr}</div>}
     </div>
   );

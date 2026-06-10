@@ -3,3 +3,9 @@ dist
 .DS_Store
 src-tauri/target
 src-tauri/gen/schemas
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep
+src-tauri/resources/helpers/echoless-process-tap-poc
+src-tauri/resources/localvqe/models/*.gguf
+src-tauri/resources/localvqe/native/*
+!src-tauri/resources/localvqe/native/README.md

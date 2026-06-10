@@ -2,7 +2,8 @@
 
 **From:** 前端(GUI)
 **To:** Codex(后端 / 打包)
-**状态:** 前端模型列表 + 下载已实现;**默认模型打包 + 原生库打包/注入 仍需后端**
+**状态:** 前端模型列表 + 下载已实现;Tauri sidecar/resource 接入已补。
+默认模型与 native runtime 会由 `pnpm prepare:tauri-assets` 在构建环境提供产物时复制进 bundle。
 
 ---
 
@@ -21,32 +22,43 @@
   应用内下载也落这里;任何 .gguf 会被自动检测并可在引擎页选用」。
 - 无选中模型时不再显示突兀的红/黄「需要模型」文案;由卡片右上角状态(`待配置`/SET UP,amber)体现。
 
-### 新增 Tauri 命令(`app/src-tauri/src/lib.rs`)
-- `localvqe_assets() -> { models_dir, models: [{filename, path, source: "downloaded"|"bundled"}] }`
+### Tauri 命令(`app/src-tauri/src/lib.rs`)
+- `localvqe_assets() -> { models_dir, models, native_ready, library_path, native_dir, native_files, cli_path, process_tap_helper_path }`
   - `models_dir` = `<app_local_data>/localvqe/models`(自动创建)。
   - 扫描下载目录 + **打包资源 `resources/localvqe/models`** 里的 `.gguf`。
+  - 扫描 Tauri sidecar / resource 路径,返回 LocalVQE native runtime 是否可用。
 - `download_localvqe_model(filename) -> path`
   - 从 `https://huggingface.co/LocalAI-io/LocalVQE/resolve/main/<filename>` 用 `curl -fL` 下载到
     `models_dir`(先写 `.part` 再 rename);限定 `.gguf` 文件名、防路径穿越。
 - 前端 `api.ts`:`localvqeAssets()` / `downloadLocalvqeModel()`;`EnginePage` 内消费。
 
-## 2. 仍需 Codex 做
+## 2. 后端 / 打包现状
 
-### 2.1 打包默认模型(用户确认:**v1.3-4.8M**)
-- 把 `localvqe-v1.3-4.8M-f32.gguf`(~18MB)放进打包资源 **`resources/localvqe/models/`**,
-  使 `localvqe_assets` 的资源扫描能发现它(`source: "bundled"`)→ 用户开箱即有默认模型,无需下载。
-- `tauri.conf.json` 的 `bundle.resources` 需包含 `resources/localvqe/**`。
+### 2.1 默认模型(用户确认:**v1.3-4.8M**)
+- `tauri.conf.json` 已包含 `bundle.resources = ["resources/"]`。
+- `pnpm prepare:tauri-assets` 会在发现 `ECHOLESS_LOCALVQE_MODEL` / `LOCALVQE_MODEL` /
+  CI `RUNNER_TEMP` 中的 `localvqe-v1.3-4.8M-f32.gguf` 时,复制到
+  **`resources/localvqe/models/`**。
+- 普通 dev 环境没有模型产物时不会阻塞,`localvqe_assets` 仍会扫描用户下载目录。
 
-### 2.2 ⚠️ 原生库打包 + env 注入(LocalVQE 能跑的**前提**,当前缺)
+### 2.2 原生库打包 + env 注入(LocalVQE 能跑的**前提**)
 后端 `crates/echoless-processors/src/localvqe.rs` 启动需要原生库
 (`liblocalvqe.dylib` / `.so` / `localvqe.dll`),查找顺序:`library` 参数 →
-`ECHOLESS_LOCALVQE_LIBRARY` env → **模型同目录 / cwd / 各自 localvqe 子目录**。
-- 现在模型下载到 `<app_local_data>/localvqe/models`,**库不在那旁边** → 运行会
-  `bail: localvqe library not found`。
-- 需要:① 把原生库随 app 打包(`resources/localvqe/`);② 在 `echoless_command()` 里
-  **注入 `ECHOLESS_LOCALVQE_LIBRARY`**(指向打包的库,类似现在注入 `ECHOLESS_PROCESS_TAP_HELPER`),
-  使任意位置的模型都能加载库。
-- 前端无法注入这个(不知道打包库的路径);属后端/打包。
+`ECHOLESS_LOCALVQE_LIBRARY` env → CLI 自身的默认搜索。
+- Tauri 后端已在 `echoless_command()` 注入 `ECHOLESS_LOCALVQE_LIBRARY`,并把 native 目录 prepend 到
+  `PATH` / `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` / `DYLD_FALLBACK_LIBRARY_PATH`。
+- `pnpm prepare:tauri-assets` 会在发现 `ECHOLESS_LOCALVQE_LIBRARY` 或 CI LocalVQE build 产物时,
+  把 `liblocalvqe*` / `localvqe.dll` 与 GGML companion libraries 复制到
+  **`resources/localvqe/native/`**。
+- 前端以 `native_ready` 判定是否允许 LocalVQE READY;只有模型存在但 native runtime 缺失时显示
+  `SET UP` / `缺少原生运行库`。
+
+### 2.3 CLI sidecar / helper
+- `tauri.conf.json` 已配置 `bundle.externalBin = ["binaries/echoless"]`。
+- `pnpm prepare:tauri-assets` 会构建当前平台 CLI,复制为
+  `src-tauri/binaries/echoless-<target-triple>{.exe}`。
+- macOS 会构建/复制 `tools/macos-process-tap-poc` 到 `resources/helpers/echoless-process-tap-poc`;
+  Tauri 后端会注入 `ECHOLESS_PROCESS_TAP_HELPER`。
 
 ## 3. 验收
 - 打包后:LocalVQE 默认就有 v1.3 模型可直接「使用」+ 开 ON 能跑(库被找到)。

@@ -42,6 +42,12 @@ export interface LocalvqeModel {
 export interface LocalvqeAssets {
   models_dir: string;
   models: LocalvqeModel[];
+  native_ready?: boolean;
+  library_path?: string | null;
+  native_dir?: string | null;
+  native_files?: string[];
+  cli_path?: string | null;
+  process_tap_helper_path?: string | null;
 }
 export function localvqeAssets(): Promise<LocalvqeAssets> {
   return invoke<LocalvqeAssets>("localvqe_assets");

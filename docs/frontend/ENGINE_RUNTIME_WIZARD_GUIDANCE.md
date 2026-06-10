@@ -25,7 +25,9 @@
 
 - `localvqe` 处理器已经真实接入上游动态 C ABI。
 - 后端配置需要 `model` 非空。
-- `library` 可显式填写;不填时后端会在 executable dir、`./localvqe/`、cwd、`ECHOLESS_LOCALVQE_LIBRARY` 等位置寻找动态库。
+- `library` 可显式填写;不填时 CLI 会优先使用 Tauri 后端注入的
+  `ECHOLESS_LOCALVQE_LIBRARY`。Tauri 后端会从环境变量、打包资源
+  `resources/localvqe/native/`、CLI 同目录 / `localvqe/` 子目录中寻找 native runtime。
 - CI 产出的 CLI artifact 会包含:
   - `models/localvqe-v1.3-4.8M-f32.gguf`
   - Windows: `localvqe.dll`
@@ -33,12 +35,12 @@
 
 前端策略:
 
-- 开发态或 Tauri bundle 尚未正式包含 LocalVQE assets 时,显示 `SET UP` 并提供 `.gguf` 文件选择是正确的。
+- 开发态或 Tauri bundle 尚未正式包含 LocalVQE assets 时,显示 `SET UP` 并提供模型下载/模型目录入口是正确的。
 - 产品化后应优先使用 bundled model:
-  - 如果能检测到 bundled `models/localvqe-v1.3-4.8M-f32.gguf`,LocalVQE 显示 `READY`。
+  - 只有同时检测到 bundled/downloaded `.gguf` 模型与 `native_ready=true`,LocalVQE 才显示 `READY`。
   - 前端自动写入 `model = <bundled model absolute path>`。
-  - `library` 可以省略,或由后端/资源探针返回 bundled library path 后写入。
-- 用户手选 `.gguf` 应是 secondary action,例如 `Change model`,不是首屏必须项。
+  - `library` 可以省略;后端会通过 env 注入 bundled native library path。
+- 用户手动放入 `.gguf` 是 secondary action,通过打开模型目录完成,不是首屏必须项。
 - LocalVQE 卡片应标为 experimental,避免暗示它一定优于 AEC3。
 - LocalVQE 不要求把全局 `sample_rate` 改成 `16000`;GUI 应保持默认 `48000 / 10ms`。
   `ProcessorChain` 会把 48 kHz runtime mic/ref 边界适配到 LocalVQE 的 16 kHz mono 域,
@@ -47,20 +49,23 @@
   `sample_rate = 48000`。只在用户把全局 `sample_rate` 改成非 48000 时阻止/提示
   Process Tap 不支持。
 
-建议补一个后端/Tauri 探针:
+当前后端/Tauri 探针:
 
 ```ts
 interface LocalVqeAssets {
-  ok: boolean;
-  model_path: string | null;
-  library_path: string | null;
-  bundled: boolean;
-  version: string | null; // e.g. "v1.3-4.8M"
-  missing: string[];
+  models_dir: string;
+  models: Array<{ filename: string; path: string; source: "downloaded" | "bundled" | string }>;
+  native_ready?: boolean;
+  library_path?: string | null;
+  native_dir?: string | null;
+  native_files?: string[];
+  cli_path?: string | null;
+  process_tap_helper_path?: string | null;
 }
 ```
 
-在这个探针存在前,前端不要硬编码 Tauri bundle 内部路径;可以继续使用文件选择器。
+前端不要硬编码 Tauri bundle 内部路径;以 `localvqe_assets()` 返回的绝对路径和
+`native_ready` 为准。
 
 ## NVIDIA AFX / RTX AEC 选择规则
 

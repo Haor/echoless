@@ -98,6 +98,10 @@ const D: Record<string, { en: string; zh: string }> = {
   lvqeGet: { en: "GET", zh: "下载" },
   lvqeOpenDir: { en: "open model folder", zh: "打开模型目录" },
   lvqeSource: { en: "official repo", zh: "官方 repo" },
+  lvqeRuntimeMissing: {
+    en: "native runtime missing",
+    zh: "缺少原生运行库",
+  },
   engSetupHint: { en: "set up in Engine", zh: "去 Engine 配置" },
   engSetupRtx: { en: "set up RTX", zh: "配置 RTX" },
 
