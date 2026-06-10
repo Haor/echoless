@@ -6,6 +6,7 @@
 mod audio_commands;
 mod cli;
 mod config_validate;
+mod dsp;
 mod nvafx_install;
 mod offline;
 mod probe_delay;

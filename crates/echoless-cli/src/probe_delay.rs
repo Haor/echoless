@@ -11,6 +11,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args;
 use serde_json::json;
 
+use crate::dsp::rms_dbfs;
+
 #[derive(Args)]
 pub(crate) struct ProbeDelayArgs {
     /// 近端麦克风设备 selector
@@ -459,8 +461,8 @@ fn analyze_probe_session(a: &ProbeDelayArgs, session_dir: &Path) -> Result<Probe
         let drift = valid_lags.last().unwrap() - valid_lags.first().unwrap();
         (mean, variance.sqrt(), drift)
     };
-    let ref_dbfs = rms_db(&reference);
-    let mic_dbfs = rms_db(&mic);
+    let ref_dbfs = rms_dbfs(&reference);
+    let mic_dbfs = rms_dbfs(&mic);
     let mut warnings = Vec::new();
     if ref_dbfs < -45.0 {
         warnings.push("ref is very quiet; play the beep through the system output".to_string());
@@ -541,17 +543,6 @@ fn envelope(samples: &[f32], step_frames: usize) -> Vec<f64> {
             (energy / chunk.len().max(1) as f64).sqrt()
         })
         .collect()
-}
-
-fn rms_db(samples: &[f32]) -> f64 {
-    if samples.is_empty() {
-        return -120.0;
-    }
-    let energy = samples
-        .iter()
-        .map(|sample| f64::from(*sample) * f64::from(*sample))
-        .sum::<f64>();
-    20.0 * ((energy / samples.len() as f64).sqrt() + 1e-12).log10()
 }
 
 fn standardize(values: &[f64]) -> Vec<f64> {

@@ -151,11 +151,7 @@ impl EchoProcessor for SonoraAec3 {
         #[cfg(not(feature = "sonora-engine"))]
         {
             let _ = (far, frames);
-            let n = out.len().min(near.len());
-            out[..n].copy_from_slice(&near[..n]);
-            for v in out[n..].iter_mut() {
-                *v = 0.0;
-            }
+            crate::dsp::copy_or_zero(near, out);
         }
     }
     fn stats(&self) -> ProcessorStats {

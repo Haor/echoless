@@ -14,7 +14,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
-use crate::{EchoProcessor, IoSpec, ProcessorStats};
+use crate::{dsp::copy_or_zero, EchoProcessor, IoSpec, ProcessorStats};
 
 pub const SDK_VERSION: &str = "2.1.0";
 pub const RUNTIME_FILE_VERSION: &str = "2.1.0.9";
@@ -330,7 +330,7 @@ impl NvidiaAfxAec {
         self.last_error = Some(err.into());
         match self.cfg.on_runtime_error {
             RuntimeErrorMode::Silence => out.fill(0.0),
-            RuntimeErrorMode::Bypass => copy_into(near, out),
+            RuntimeErrorMode::Bypass => copy_or_zero(near, out),
         }
     }
 }
@@ -854,12 +854,6 @@ fn parse_version_parts(value: &str) -> Option<Vec<u32>> {
         .collect::<std::result::Result<_, _>>()
         .ok()?;
     (!parts.is_empty()).then_some(parts)
-}
-
-fn copy_into(src: &[f32], dst: &mut [f32]) {
-    let n = dst.len().min(src.len());
-    dst[..n].copy_from_slice(&src[..n]);
-    dst[n..].fill(0.0);
 }
 
 #[cfg(windows)]

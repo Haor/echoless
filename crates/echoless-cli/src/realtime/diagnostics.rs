@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::dsp::{rms_dbfs_from_sum_squares as rms_dbfs, sum_squares};
 use anyhow::{bail, Context, Result};
 use echoless_core::{output_level_gain_db, DiagnosticsConfig};
 use echoless_processors::ProcessorStats;
@@ -17,7 +18,7 @@ use super::print_human;
 use super::stats::{
     aggregate_diverged, aggregate_estimated_delay_ms, aggregate_last_error,
     aggregate_process_time_ms, aggregate_runtime_errors, estimate_user_latency_ms,
-    input_queue_latency_ms, output_queue_latency_ms, rms_dbfs, sum_squares, StatsSample,
+    input_queue_latency_ms, output_queue_latency_ms, StatsSample,
 };
 
 const DIAGNOSTIC_QUEUE_FRAMES: usize = 128;

@@ -1,6 +1,6 @@
 //! Passthrough:直通节点(near→out),用于测试链路与作链尾占位。
 
-use crate::{EchoProcessor, IoSpec, ProcessorStats};
+use crate::{dsp::copy_or_zero, EchoProcessor, IoSpec, ProcessorStats};
 
 pub struct Passthrough;
 
@@ -31,11 +31,7 @@ impl EchoProcessor for Passthrough {
         Ok(())
     }
     fn process(&mut self, near: &[f32], _far: &[f32], out: &mut [f32], _frames: u32) {
-        let n = out.len().min(near.len());
-        out[..n].copy_from_slice(&near[..n]);
-        for v in out[n..].iter_mut() {
-            *v = 0.0;
-        }
+        copy_or_zero(near, out);
     }
     fn stats(&self) -> ProcessorStats {
         ProcessorStats::empty("passthrough")

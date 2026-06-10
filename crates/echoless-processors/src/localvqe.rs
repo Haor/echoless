@@ -13,7 +13,7 @@ use std::os::raw::c_void;
 use std::os::raw::{c_char, c_float, c_int};
 use std::path::{Path, PathBuf};
 
-use crate::{EchoProcessor, IoSpec, ProcessorStats};
+use crate::{dsp::copy_or_zero, EchoProcessor, IoSpec, ProcessorStats};
 
 const LOCALVQE_SAMPLE_RATE: u32 = 16_000;
 const DEFAULT_NOISE_GATE_THRESHOLD_DBFS: f32 = -45.0;
@@ -226,13 +226,13 @@ impl EchoProcessor for LocalVqe {
 
     fn process(&mut self, near: &[f32], far: &[f32], out: &mut [f32], frames: u32) {
         if self.runtime.is_none() {
-            copy_into(near, out);
+            copy_or_zero(near, out);
             return;
         }
 
         if let Err(err) = self.process_loaded(near, far, out, frames as usize) {
             self.last_error = Some(err.to_string());
-            copy_into(near, out);
+            copy_or_zero(near, out);
         }
     }
 
@@ -641,12 +641,6 @@ fn check_runtime(api: &LocalVqeApi, ctx: LocalVqeCtx, ret: c_int, call: &str) ->
         let error = api.last_error(ctx);
         bail!("localvqe {call} failed with code {ret}: {error}");
     }
-}
-
-fn copy_into(src: &[f32], dst: &mut [f32]) {
-    let n = dst.len().min(src.len());
-    dst[..n].copy_from_slice(&src[..n]);
-    dst[n..].fill(0.0);
 }
 
 #[cfg(test)]

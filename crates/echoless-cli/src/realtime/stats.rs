@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use crate::dsp::{rms_dbfs_from_sum_squares as rms_dbfs, sum_squares};
 use echoless_core::output_level_gain_db;
 use echoless_processors::ProcessorStats;
 
@@ -424,18 +425,6 @@ impl RealtimeStats {
             "diagnostics_drops": diagnostics_drops,
         })
     }
-}
-
-pub(super) fn sum_squares(samples: &[f32]) -> f64 {
-    samples.iter().map(|v| (*v as f64) * (*v as f64)).sum()
-}
-
-pub(super) fn rms_dbfs(sum_sq: f64, samples: u64) -> f64 {
-    if samples == 0 || sum_sq <= 0.0 {
-        return -120.0;
-    }
-    let rms = (sum_sq / samples as f64).sqrt().max(1e-6);
-    (20.0 * rms.log10()).max(-120.0)
 }
 
 #[cfg(test)]

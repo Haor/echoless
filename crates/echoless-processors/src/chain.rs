@@ -5,7 +5,7 @@
 //!
 //! 节点边界 SRC 使用 rubato 同步 FFT resampler,并在 chain 生命周期内复用 scratch buffer。
 
-use crate::{registry, EchoProcessor, NodeConfig, ProcessorStats};
+use crate::{dsp::copy_or_zero, registry, EchoProcessor, NodeConfig, ProcessorStats};
 use rubato::{FftFixedIn, Resampler};
 
 pub struct ProcessorChain {
@@ -80,7 +80,7 @@ impl ProcessorChain {
         _frames: u32,
     ) {
         if self.nodes.is_empty() {
-            copy_into(near_base_mono, out_base_mono);
+            copy_or_zero(near_base_mono, out_base_mono);
             return;
         }
         self.cur_near_base.clear();
@@ -98,7 +98,7 @@ impl ProcessorChain {
             self.cur_near_base.clear();
             self.cur_near_base.extend_from_slice(out_base);
         }
-        copy_into(&self.cur_near_base, out_base_mono);
+        copy_or_zero(&self.cur_near_base, out_base_mono);
     }
 }
 
@@ -115,14 +115,6 @@ pub fn chain_from_nodes(
         chain.push(p);
     }
     Ok(chain)
-}
-
-fn copy_into(src: &[f32], dst: &mut [f32]) {
-    let n = dst.len().min(src.len());
-    dst[..n].copy_from_slice(&src[..n]);
-    for v in dst[n..].iter_mut() {
-        *v = 0.0;
-    }
 }
 
 struct NodeAdapters {
@@ -360,7 +352,7 @@ mod tests {
         }
 
         fn process(&mut self, near: &[f32], _far: &[f32], out: &mut [f32], _frames: u32) {
-            copy_into(near, out);
+            copy_or_zero(near, out);
         }
 
         fn stats(&self) -> ProcessorStats {
@@ -390,7 +382,7 @@ mod tests {
 
         fn process(&mut self, near: &[f32], far: &[f32], out: &mut [f32], _frames: u32) {
             *self.far_seen.lock().unwrap() = far.to_vec();
-            copy_into(near, out);
+            copy_or_zero(near, out);
         }
 
         fn stats(&self) -> ProcessorStats {

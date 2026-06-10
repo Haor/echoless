@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod chain;
+mod dsp;
 pub mod localvqe;
 pub mod nvafx;
 pub mod passthrough;
