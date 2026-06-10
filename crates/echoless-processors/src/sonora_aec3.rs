@@ -289,8 +289,17 @@ impl Inner {
 #[cfg(feature = "sonora-engine")]
 impl SonoraAec3 {
     fn process_sonora(&mut self, near: &[f32], far: &[f32], out: &mut [f32], frames: usize) {
+        let mut runtime_error_count = self.last.runtime_error_count;
+        let mut last_backend_error = self.last.last_backend_error.clone();
         if !self.delay_applied && self.initial_delay_ms > 0 {
-            let _ = self.inner.apm.set_stream_delay_ms(self.initial_delay_ms);
+            if let Err(err) = self.inner.apm.set_stream_delay_ms(self.initial_delay_ms) {
+                record_backend_error(
+                    &mut runtime_error_count,
+                    &mut last_backend_error,
+                    "set_stream_delay_ms",
+                    err,
+                );
+            }
             self.delay_applied = true;
         }
 
@@ -319,21 +328,37 @@ impl SonoraAec3 {
             }
 
             // 先 render(far),再 capture(near)
-            if self.inner.far_channels > 1 {
-                let _ = self.inner.apm.process_render_f32(
+            let render_result = if self.inner.far_channels > 1 {
+                self.inner.apm.process_render_f32(
                     &[&self.inner.far_l, &self.inner.far_r],
                     &mut [&mut self.inner.far_out_l, &mut self.inner.far_out_r],
-                );
+                )
             } else {
-                let _ = self
-                    .inner
+                self.inner
                     .apm
-                    .process_render_f32(&[&self.inner.far_l], &mut [&mut self.inner.far_out_l]);
+                    .process_render_f32(&[&self.inner.far_l], &mut [&mut self.inner.far_out_l])
+            };
+            if let Err(err) = render_result {
+                record_backend_error(
+                    &mut runtime_error_count,
+                    &mut last_backend_error,
+                    "process_render_f32",
+                    err,
+                );
             }
-            let _ = self
+            if let Err(err) = self
                 .inner
                 .apm
-                .process_capture_f32(&[&self.inner.near_buf], &mut [&mut self.inner.out_buf]);
+                .process_capture_f32(&[&self.inner.near_buf], &mut [&mut self.inner.out_buf])
+            {
+                record_backend_error(
+                    &mut runtime_error_count,
+                    &mut last_backend_error,
+                    "process_capture_f32",
+                    err,
+                );
+                self.inner.out_buf[..blk].copy_from_slice(&self.inner.near_buf[..blk]);
+            }
 
             let n = blk.min(out.len().saturating_sub(i));
             out[i..i + n].copy_from_slice(&self.inner.out_buf[..n]);
@@ -354,12 +379,23 @@ impl SonoraAec3 {
                 .unwrap_or(false),
             mic_clipped: false,
             process_time_ms: 0.0,
-            runtime_error_count: 0,
+            runtime_error_count,
             selected_model: None,
             selected_gpu_arch: None,
-            last_backend_error: None,
+            last_backend_error,
         };
     }
+}
+
+#[cfg(feature = "sonora-engine")]
+fn record_backend_error(
+    runtime_error_count: &mut u64,
+    last_backend_error: &mut Option<String>,
+    stage: &str,
+    err: sonora::Error,
+) {
+    *runtime_error_count = runtime_error_count.saturating_add(1);
+    *last_backend_error = Some(format!("{stage}: {err}"));
 }
 
 #[cfg(test)]
@@ -370,5 +406,24 @@ mod tests {
     fn aec3_default_ns_level_matches_frontend_contract() {
         let tuning = Aec3Tuning::default();
         assert_eq!(tuning.ns_level, "low");
+    }
+
+    #[cfg(feature = "sonora-engine")]
+    #[test]
+    fn sonora_backend_errors_are_reported_in_stats() {
+        let mut processor = SonoraAec3::new();
+        processor.set_stream_delay_ms(600);
+
+        let near = vec![0.0; FRAME];
+        let far = vec![0.0; FRAME];
+        let mut out = vec![1.0; FRAME];
+        processor.process(&near, &far, &mut out, FRAME as u32);
+
+        let stats = processor.stats();
+        assert_eq!(stats.runtime_error_count, 1);
+        assert!(stats
+            .last_backend_error
+            .as_deref()
+            .is_some_and(|err| err.contains("set_stream_delay_ms: stream parameter was clamped")));
     }
 }
