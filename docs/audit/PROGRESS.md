@@ -14,7 +14,7 @@ Last updated: 2026-06-10
 | TEST-1 | P0 safety net | done | `ee8999a` | CI now includes Tauri backend clippy/build, frontend `tsc --noEmit`, and `pnpm tauri build --debug --no-bundle --ci`; local Tauri build smoke passed |
 | TEST-2 | P0 safety net | done | `ee8999a` | CI now includes first-party Rust fmt checks and root/app/vendor cargo-audit; local scoped fmt and cargo-audit runs passed |
 | CFG-1 | P0 safety net | done | `ee8999a` | CI pins LocalVQE checkout to `de56a174d9662b65f404ec65ae8e4bc9712db0da` |
-| RUNTIME-1 | P1 usable | todo | - | GUI/CLI capability handshake and old-CLI UX |
+| RUNTIME-1 | P1 usable | done | `cdcddb8` | `started` event exposes `cli_version` and `supported_controls`; frontend guards diagnostics/output-level stdin commands; `cargo test -p echoless-cli runtime_control --locked`; `pnpm exec tsc --noEmit` |
 | RUNTIME-2 | P1 usable | todo | - | LocalVQE native library/resource availability in dev/package paths |
 | PKG-1 | P1 usable | todo | - | CLI sidecar, resources, Process Tap helper, LocalVQE native libraries |
 | ARCH-1 | P2 split | todo | - | Mechanical split of `realtime.rs` and `main.rs` |
