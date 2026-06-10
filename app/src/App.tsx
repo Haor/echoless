@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -56,6 +56,13 @@ import { RtxSetupPage } from "./pages/RtxSetupPage";
 import { MicSetupPage } from "./pages/MicSetupPage";
 import { simNvafxDoctor, type RtxState } from "./nvafx";
 import { simMicDoctor, type MicState } from "./mic";
+import {
+  publishRuntimeStatus,
+  resetRuntimeHealth,
+  setDiagnosticsSessionDir,
+  useRuntimeHealth,
+  useRuntimeLive,
+} from "./runtimeTelemetry";
 
 const appWindow = getCurrentWindow();
 const REQUIRED_RUN_CONTROLS = [
@@ -107,42 +114,7 @@ function defaultParams(proc: Processor | undefined): Record<string, unknown> {
   return out;
 }
 
-interface Live {
-  mic: number | null;
-  ref: number | null;
-  out: number | null;
-  lat: number | null;
-  healthy: boolean;
-  seq: number;
-}
-
-export interface Health {
-  input_drops: number;
-  ref_underruns: number;
-  output_underruns: number;
-  stale_drops: number;
-  runtime_errors: number;
-  diverged: boolean;
-  session_dir: string | null;
-  backend_error: string | null;
-  // 诊断录制实时态(后端 status 提供)。
-  recording: boolean;
-  rec_elapsed_s: number;
-  rec_drops: number;
-}
-const ZERO_HEALTH: Health = {
-  input_drops: 0,
-  ref_underruns: 0,
-  output_underruns: 0,
-  stale_drops: 0,
-  runtime_errors: 0,
-  diverged: false,
-  session_dir: null,
-  backend_error: null,
-  recording: false,
-  rec_elapsed_s: 0,
-  rec_drops: 0,
-};
+const dash = (v: number | null, d = 1) => (v === null ? "—" : v.toFixed(d));
 
 export default function App() {
   const [platform, setPlatform] = useState<Platform>("macos");
@@ -174,15 +146,6 @@ export default function App() {
   const [nvafxBusy, setNvafxBusy] = useState(false); // RTX runtime 安装中
   // reference:可用源由 devices.reference_sources 提供;mac system 无 loopback → 默认退 none。
   const [reference, setReference] = useState("system");
-  const [live, setLive] = useState<Live>({
-    mic: null,
-    ref: null,
-    out: null,
-    lat: null,
-    healthy: true,
-    seq: 0,
-  });
-  const [health, setHealth] = useState<Health>(ZERO_HEALTH);
   // 开发态:页面内按 ~ 切换,临时解开 NVAFX 平台/doctor 门槛,用于走通前端流程。
   const [dev, setDev] = useState(false);
   // 开发态下用模拟 doctor 走 RTX 安装流程(mac 上也能逐屏过)。
@@ -293,7 +256,7 @@ export default function App() {
           }
           // 录制已就地启动:拿到 session 目录。
           if (ev.type === "diagnostics_started") {
-            setHealth((h) => ({ ...h, session_dir: ev.session_dir }));
+            setDiagnosticsSessionDir(ev.session_dir);
             return;
           }
           if (ev.type === "diagnostics_stopping") {
@@ -340,29 +303,7 @@ export default function App() {
           tel.micWave = s.mic_wave;
           tel.refWave = s.ref_wave;
           tel.outWave = s.out_wave;
-          setLive({
-            mic: s.mic_dbfs,
-            ref: s.ref_dbfs,
-            out: s.out_dbfs,
-            lat: s.estimated_user_latency_ms,
-            healthy:
-              !s.diverged && s.runtime_errors === 0 && !s.last_backend_error,
-            seq: s.frames,
-          });
-          setHealth((h) => ({
-            input_drops: s.input_drops ?? 0,
-            ref_underruns: s.ref_underruns ?? 0,
-            output_underruns: s.output_underruns ?? 0,
-            stale_drops: s.stale_drops ?? 0,
-            runtime_errors: s.runtime_errors ?? 0,
-            diverged: Boolean(s.diverged),
-            // status 的 session_dir 缺省时保留 started 给的值。
-            session_dir: s.diagnostics_session_dir ?? h.session_dir,
-            backend_error: s.last_backend_error ?? null,
-            recording: Boolean(s.recording),
-            rec_elapsed_s: s.diagnostics_elapsed_s ?? 0,
-            rec_drops: s.diagnostics_drops ?? 0,
-          }));
+          publishRuntimeStatus(s);
         }),
       );
       uns.push(
@@ -564,7 +505,7 @@ export default function App() {
   async function start() {
     setBusy(true);
     setErr(null);
-    setHealth(ZERO_HEALTH);
+    resetRuntimeHealth();
     lastLogRef.current = ""; // 清掉上次的 stderr,避免旧错误误报
     try {
       const toml = currentToml();
@@ -788,17 +729,7 @@ export default function App() {
   // dev 下可把平台模拟成 Windows(按 `),让 mac 也能预览 win 全流程(标题栏/引擎/虚拟麦)。
   const platformView: Platform = dev && devWin ? "windows" : platform;
   const isMac = platformView === "macos";
-  const off = !powerOn;
-  const stopped = off;
-  const unstable = powerOn && !live.healthy;
-  // 诚实状态:没有有效参考(reference=none 或 ref 信号静默)时,AEC 无消回声依据
-  // → 不显示绿色 "REMOVING ECHO",而是琥珀 "NO REFERENCE"。
-  // dev 预览态:跟随下拉展示值(referenceView),且不因 REF 静默判无参考
-  // (预览跑在真实 mac 上无对应音频);真实运行行为不变。
   const refSel = dev ? referenceView : reference;
-  const hasReference =
-    refSel !== "none" && (dev || !(live.ref !== null && live.ref <= -100));
-  const noRef = powerOn && !unstable && !hasReference;
   const ns = Boolean(params.ns);
   // 降噪是 AEC3 管线独有(其它 backend 无 ns 参数)→ 不支持时置灰。
   const nsSupported = Boolean(
@@ -816,21 +747,6 @@ export default function App() {
     pipeline.sample_rate / 1000
   }K · ${pipeline.frame_ms}MS`;
 
-  const statusText = stopped
-    ? t("echoStopped")
-    : unstable
-      ? t("unstable")
-      : noRef
-        ? t("noReference")
-        : t("removingEcho");
-  // 四态语义色:停止=灰 / 不稳定=黄(告警) / 无参考=蓝(待机,非告警) / 工作中=绿。
-  const boxClass = stopped
-    ? "box stopped"
-    : unstable
-      ? "box warn"
-      : noRef
-        ? "box idle"
-        : "box";
   const viewTitle =
     view === "overview"
       ? t("overview")
@@ -859,9 +775,6 @@ export default function App() {
   // mac Process Tap reference 要求全局采样率必须 48k(与引擎无关 —— LocalVQE 的 16k
   // 由 ProcessorChain 内部适配)。不符 → 阻止运行,引导去 Advanced 改采样率。
   const sysRefRateConflict = usingSysRef && pipeline.sample_rate !== 48000;
-
-  const dash = (v: number | null, d = 1) =>
-    v === null ? "—" : v.toFixed(d);
 
   return (
     <div className={`window ${isMac ? "mac" : "win"}`}>
@@ -909,49 +822,18 @@ export default function App() {
           <div className="word">ECHOLESS</div>
           <SlideSwitch on={powerOn} onToggle={togglePower} disabled={busy} />
         </div>
-        <div className="status">
-          <span className={boxClass}>
-            {/* 运行=圆点 ●,停止=方块 ■ */}
-            <span
-              className={`sq ${powerOn ? "dot" : ""} ${noRef ? "tri" : ""}`}
-            />{" "}
-            <ScrambleText text={statusText} />
-          </span>
-          <span className="m">
-            {t("latency")} <b>{dash(live.lat, 0)}</b> {t("ms")}
-          </span>
-          {!activeReady ? (
-            <span
-              className="m setup"
-              onClick={() => setView("engine")}
-              style={{ color: "var(--warn)", cursor: "default" }}
-            >
-              {t("engSetupHint")} <span className="mk">&raquo;</span>
-            </span>
-          ) : sysRefRateConflict ? (
-            <span
-              className="m setup"
-              onClick={() => setView("advanced")}
-              style={{ color: "var(--warn)" }}
-            >
-              {t("sysRefRate")} <span className="mk">&raquo;</span>
-            </span>
-          ) : sysAudioDenied ? (
-            <span
-              className="m setup"
-              onClick={() => openUrl(SYS_AUDIO_PRIVACY_URL)}
-              style={{ color: "var(--warn)" }}
-            >
-              {t("sysAudioGrant")} <span className="mk">&raquo;</span>
-            </span>
-          ) : sysAudioUndet ? (
-            <span className="m setup" onClick={probeSystemAudio}>
-              {t("sysAudioRequest")} <span className="mk">&raquo;</span>
-            </span>
-          ) : (
-            <span className="m">{unstable ? t("checkSetup") : t("stable")}</span>
-          )}
-        </div>
+        <RuntimeStatusStrip
+          powerOn={powerOn}
+          activeReady={activeReady}
+          refSel={refSel}
+          dev={dev}
+          sysRefRateConflict={sysRefRateConflict}
+          sysAudioDenied={sysAudioDenied}
+          sysAudioUndet={sysAudioUndet}
+          onEngineSetup={() => setView("engine")}
+          onAdvanced={() => setView("advanced")}
+          onProbeSystemAudio={probeSystemAudio}
+        />
 
         <hr className="hair" />
 
@@ -1106,59 +988,7 @@ export default function App() {
 
         <hr className="hair" />
 
-        {/* ---- signal:三路示波 ---- */}
-        <div className="sig">
-          <div className="h">
-            <span className="t">// {t("signal")}</span>
-            <span className="v">{t("sigFlow")}</span>
-          </div>
-          <div className="scope">
-            <div className="near">
-              <div className="trace">
-                <span className="lb">MIC</span>
-                <Scope
-                  traceKey="mic"
-                  telRef={telRef}
-                  active={powerOn}
-                  revision={live.seq}
-                  phase={0}
-                />
-                <span className="db">
-                  {dash(live.mic)} <i>dBFS</i>
-                </span>
-              </div>
-              <div className="trace">
-                <span className="lb">REF</span>
-                <Scope
-                  traceKey="ref"
-                  telRef={telRef}
-                  active={powerOn}
-                  revision={live.seq}
-                  phase={2.1}
-                />
-                <span className="db">
-                  {dash(live.ref)} <i>dBFS</i>
-                </span>
-              </div>
-            </div>
-            <div className="gap">&raquo;</div>
-            <div className="far">
-              <div className="trace">
-                <span className="lb">OUT</span>
-                <Scope
-                  traceKey="out"
-                  telRef={telRef}
-                  active={powerOn}
-                  revision={live.seq}
-                  phase={4.2}
-                />
-                <span className="db">
-                  {dash(live.out)} <i>dBFS</i>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RuntimeSignalPanel telRef={telRef} powerOn={powerOn} />
         </>
         )}
         {view === "engine" && (
@@ -1217,12 +1047,11 @@ export default function App() {
           />
         )}
         {view === "diagnostics" && (
-          <DiagnosticsPage
+          <RuntimeDiagnosticsPage
             rec={rec}
             seconds={diagSeconds}
             diagDir={diagDir}
             running={powerOn}
-            health={health}
             doctor={doctorView}
             onMicSetup={() => setView("micsetup")}
             onRec={setRecording}
@@ -1314,11 +1143,217 @@ export default function App() {
             </>
           )}
         </span>
-        <FooterBars telRef={telRef} active={powerOn} revision={live.seq} />
+        <RuntimeFooterBars telRef={telRef} powerOn={powerOn} />
       </footer>
     </div>
   );
 }
+
+const RuntimeStatusStrip = memo(function RuntimeStatusStrip({
+  powerOn,
+  activeReady,
+  refSel,
+  dev,
+  sysRefRateConflict,
+  sysAudioDenied,
+  sysAudioUndet,
+  onEngineSetup,
+  onAdvanced,
+  onProbeSystemAudio,
+}: {
+  powerOn: boolean;
+  activeReady: boolean;
+  refSel: string;
+  dev: boolean;
+  sysRefRateConflict: boolean;
+  sysAudioDenied: boolean;
+  sysAudioUndet: boolean;
+  onEngineSetup: () => void;
+  onAdvanced: () => void;
+  onProbeSystemAudio: () => void;
+}) {
+  const live = useRuntimeLive();
+  const { t } = useI18n();
+  const stopped = !powerOn;
+  const unstable = powerOn && !live.healthy;
+  // 诚实状态:没有有效参考(reference=none 或 ref 信号静默)时,AEC 无消回声依据
+  // → 不显示绿色 "REMOVING ECHO",而是琥珀 "NO REFERENCE"。
+  // dev 预览态:跟随下拉展示值(referenceView),且不因 REF 静默判无参考。
+  const hasReference =
+    refSel !== "none" && (dev || !(live.ref !== null && live.ref <= -100));
+  const noRef = powerOn && !unstable && !hasReference;
+  const statusText = stopped
+    ? t("echoStopped")
+    : unstable
+      ? t("unstable")
+      : noRef
+        ? t("noReference")
+        : t("removingEcho");
+  const boxClass = stopped
+    ? "box stopped"
+    : unstable
+      ? "box warn"
+      : noRef
+        ? "box idle"
+        : "box";
+
+  return (
+    <div className="status">
+      <span className={boxClass}>
+        <span className={`sq ${powerOn ? "dot" : ""} ${noRef ? "tri" : ""}`} />{" "}
+        <ScrambleText text={statusText} />
+      </span>
+      <span className="m">
+        {t("latency")} <b>{dash(live.lat, 0)}</b> {t("ms")}
+      </span>
+      {!activeReady ? (
+        <span
+          className="m setup"
+          onClick={onEngineSetup}
+          style={{ color: "var(--warn)", cursor: "default" }}
+        >
+          {t("engSetupHint")} <span className="mk">&raquo;</span>
+        </span>
+      ) : sysRefRateConflict ? (
+        <span
+          className="m setup"
+          onClick={onAdvanced}
+          style={{ color: "var(--warn)" }}
+        >
+          {t("sysRefRate")} <span className="mk">&raquo;</span>
+        </span>
+      ) : sysAudioDenied ? (
+        <span
+          className="m setup"
+          onClick={() => openUrl(SYS_AUDIO_PRIVACY_URL)}
+          style={{ color: "var(--warn)" }}
+        >
+          {t("sysAudioGrant")} <span className="mk">&raquo;</span>
+        </span>
+      ) : sysAudioUndet ? (
+        <span className="m setup" onClick={onProbeSystemAudio}>
+          {t("sysAudioRequest")} <span className="mk">&raquo;</span>
+        </span>
+      ) : (
+        <span className="m">{unstable ? t("checkSetup") : t("stable")}</span>
+      )}
+    </div>
+  );
+});
+
+const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
+  telRef,
+  powerOn,
+}: {
+  telRef: React.MutableRefObject<Telemetry>;
+  powerOn: boolean;
+}) {
+  const live = useRuntimeLive();
+  const { t } = useI18n();
+  return (
+    <div className="sig">
+      <div className="h">
+        <span className="t">// {t("signal")}</span>
+        <span className="v">{t("sigFlow")}</span>
+      </div>
+      <div className="scope">
+        <div className="near">
+          <div className="trace">
+            <span className="lb">MIC</span>
+            <Scope
+              traceKey="mic"
+              telRef={telRef}
+              active={powerOn}
+              revision={live.seq}
+              phase={0}
+            />
+            <span className="db">
+              {dash(live.mic)} <i>dBFS</i>
+            </span>
+          </div>
+          <div className="trace">
+            <span className="lb">REF</span>
+            <Scope
+              traceKey="ref"
+              telRef={telRef}
+              active={powerOn}
+              revision={live.seq}
+              phase={2.1}
+            />
+            <span className="db">
+              {dash(live.ref)} <i>dBFS</i>
+            </span>
+          </div>
+        </div>
+        <div className="gap">&raquo;</div>
+        <div className="far">
+          <div className="trace">
+            <span className="lb">OUT</span>
+            <Scope
+              traceKey="out"
+              telRef={telRef}
+              active={powerOn}
+              revision={live.seq}
+              phase={4.2}
+            />
+            <span className="db">
+              {dash(live.out)} <i>dBFS</i>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const RuntimeFooterBars = memo(function RuntimeFooterBars({
+  telRef,
+  powerOn,
+}: {
+  telRef: React.MutableRefObject<Telemetry>;
+  powerOn: boolean;
+}) {
+  const live = useRuntimeLive();
+  return <FooterBars telRef={telRef} active={powerOn} revision={live.seq} />;
+});
+
+const RuntimeDiagnosticsPage = memo(function RuntimeDiagnosticsPage({
+  rec,
+  seconds,
+  diagDir,
+  running,
+  doctor,
+  onMicSetup,
+  onRec,
+  onSeconds,
+  onDir,
+}: {
+  rec: boolean;
+  seconds: number | null;
+  diagDir: string;
+  running: boolean;
+  doctor: DoctorAudio | null;
+  onMicSetup: () => void;
+  onRec: (v: boolean) => void;
+  onSeconds: (v: number | null) => void;
+  onDir: (v: string) => void;
+}) {
+  const health = useRuntimeHealth();
+  return (
+    <DiagnosticsPage
+      rec={rec}
+      seconds={seconds}
+      diagDir={diagDir}
+      running={running}
+      health={health}
+      doctor={doctor}
+      onMicSetup={onMicSetup}
+      onRec={onRec}
+      onSeconds={onSeconds}
+      onDir={onDir}
+    />
+  );
+});
 
 const linkStyle: React.CSSProperties = {
   color: "var(--t-soft)",

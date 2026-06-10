@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Health } from "../App";
+import type { Health } from "../runtimeTelemetry";
 import type { DoctorAudio } from "../types";
 import { openPath } from "../api";
 import { useI18n } from "../i18n";
