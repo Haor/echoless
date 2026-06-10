@@ -8,10 +8,10 @@ use std::fs::OpenOptions;
 use std::io::ErrorKind;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -33,6 +33,11 @@ struct RunChild {
 struct RunState(Mutex<Option<RunChild>>);
 
 const TAURI_TARGET_TRIPLE: &str = env!("TAURI_ENV_TARGET_TRIPLE");
+const JSON_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const VALIDATE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const PROBE_DELAY_TIMEOUT: Duration = Duration::from_secs(45);
+const NVAFX_INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MODEL_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 fn exe_suffix() -> &'static str {
     if cfg!(target_os = "windows") {
@@ -320,14 +325,88 @@ fn echoless_command(app: Option<&tauri::AppHandle>) -> Result<Command, String> {
     Ok(command)
 }
 
-/// 跑一次性 JSON 子命令(devices / processors / config validate),返回解析后的 JSON。
-fn run_json(app: Option<&tauri::AppHandle>, args: &[&str]) -> Result<Value, String> {
-    let out = echoless_command(app)?
-        .args(args)
-        .output()
-        .map_err(|e| format!("spawn echoless failed: {e}"))?;
+fn command_output_with_timeout(
+    command: &mut Command,
+    timeout: Duration,
+    label: &str,
+) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("spawn {label} failed: {e}"))?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|e| format!("read {label} output failed: {e}"));
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let output = child
+                    .wait_with_output()
+                    .map_err(|e| format!("wait timed out {label} failed: {e}"))?;
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!(
+                    "{label} timed out after {}s; stderr: {}",
+                    timeout.as_secs(),
+                    stderr.trim()
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(format!("wait {label} failed: {e}")),
+        }
+    }
+}
+
+fn command_status_error(label: &str, out: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let detail = if !stderr.trim().is_empty() {
+        stderr.trim()
+    } else {
+        stdout.trim()
+    };
+    format!(
+        "{label} failed with status {}; output: {detail}",
+        out.status
+    )
+}
+
+fn parse_json_output(label: &str, out: Output) -> Result<Value, String> {
+    if !out.status.success() {
+        return Err(command_status_error(label, &out));
+    }
     let stdout = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(&stdout).map_err(|e| format!("parse json failed: {e}; raw: {stdout}"))
+}
+
+/// 跑一次性 JSON 子命令(devices / processors / config validate),返回解析后的 JSON。
+fn run_json_blocking(
+    app: Option<&tauri::AppHandle>,
+    args: &[&str],
+    timeout: Duration,
+    label: &str,
+) -> Result<Value, String> {
+    let mut command = echoless_command(app)?;
+    command.args(args);
+    let out = command_output_with_timeout(&mut command, timeout, label)?;
+    parse_json_output(label, out)
+}
+
+async fn run_json_async(
+    app: tauri::AppHandle,
+    args: Vec<String>,
+    timeout: Duration,
+    label: &'static str,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_json_blocking(Some(&app), &arg_refs, timeout, label)
+    })
+    .await
+    .map_err(|e| format!("{label} task join failed: {e}"))?
 }
 
 #[tauri::command]
@@ -342,28 +421,54 @@ fn get_platform() -> &'static str {
 }
 
 #[tauri::command]
-fn list_devices(app: tauri::AppHandle) -> Result<Value, String> {
-    run_json(Some(&app), &["devices", "--json"])
+async fn list_devices(app: tauri::AppHandle) -> Result<Value, String> {
+    run_json_async(
+        app,
+        vec!["devices".into(), "--json".into()],
+        JSON_COMMAND_TIMEOUT,
+        "devices",
+    )
+    .await
 }
 
 #[tauri::command]
-fn list_processors(app: tauri::AppHandle) -> Result<Value, String> {
-    run_json(Some(&app), &["processors", "--json"])
+async fn list_processors(app: tauri::AppHandle) -> Result<Value, String> {
+    run_json_async(
+        app,
+        vec!["processors".into(), "--json".into()],
+        JSON_COMMAND_TIMEOUT,
+        "processors",
+    )
+    .await
 }
 
 #[tauri::command]
-fn doctor_audio(app: tauri::AppHandle) -> Result<Value, String> {
-    run_json(Some(&app), &["doctor", "audio", "--json"])
+async fn doctor_audio(app: tauri::AppHandle) -> Result<Value, String> {
+    run_json_async(
+        app,
+        vec!["doctor".into(), "audio".into(), "--json".into()],
+        JSON_COMMAND_TIMEOUT,
+        "doctor audio",
+    )
+    .await
 }
 
 /// 用户点击「请求系统音频权限」时调用:跑一次极短 Process Tap probe 触发 macOS 授权弹窗,
 /// 回传 system_audio_permission + system_audio_permission_probe。普通 doctor 不会触发弹窗。
 #[tauri::command]
-fn request_system_audio(app: tauri::AppHandle) -> Result<Value, String> {
-    run_json(
-        Some(&app),
-        &["doctor", "audio", "--request-system-audio", "--json"],
+async fn request_system_audio(app: tauri::AppHandle) -> Result<Value, String> {
+    run_json_async(
+        app,
+        vec![
+            "doctor".into(),
+            "audio".into(),
+            "--request-system-audio".into(),
+            "--json".into(),
+        ],
+        JSON_COMMAND_TIMEOUT,
+        "request system audio",
     )
+    .await
 }
 
 /// 主动近端延迟侦测 / AEC 链路诊断。shell `echoless probe-delay --json`:播放一串蜂鸣、
@@ -390,17 +495,7 @@ async fn probe_delay(
         opt("--reference", &reference, &mut args);
         opt("--output", &output, &mut args);
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let out = echoless_command(Some(&app))?
-            .args(&arg_refs)
-            .output()
-            .map_err(|e| format!("spawn echoless failed: {e}"))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            return Err(format!("probe-delay 失败: {err}"));
-        }
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        serde_json::from_str::<Value>(&stdout)
-            .map_err(|e| format!("parse json failed: {e}; raw: {stdout}"))
+        run_json_blocking(Some(&app), &arg_refs, PROBE_DELAY_TIMEOUT, "probe-delay")
     })
     .await
     .map_err(|e| format!("probe task join failed: {e}"))?
@@ -584,10 +679,22 @@ fn localvqe_assets(app: tauri::AppHandle) -> Result<Value, String> {
 
 /// 从官方 HF repo 下载指定模型到本地目录,回传完整路径。用 curl(免新增依赖)。
 #[tauri::command]
-fn download_localvqe_model(app: tauri::AppHandle, filename: String) -> Result<String, String> {
+async fn download_localvqe_model(
+    app: tauri::AppHandle,
+    filename: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || download_localvqe_model_blocking(&app, &filename))
+        .await
+        .map_err(|e| format!("download LocalVQE model task join failed: {e}"))?
+}
+
+fn download_localvqe_model_blocking(
+    app: &tauri::AppHandle,
+    filename: &str,
+) -> Result<String, String> {
     let pin =
-        localvqe_model_pin(&filename).ok_or_else(|| "unsupported LocalVQE model".to_string())?;
-    let dir = localvqe_models_dir(&app)?;
+        localvqe_model_pin(filename).ok_or_else(|| "unsupported LocalVQE model".to_string())?;
+    let dir = localvqe_models_dir(app)?;
     let dest = dir.join(pin.filename);
     if dest.exists() {
         match verify_localvqe_model_file(&dest, pin) {
@@ -604,15 +711,16 @@ fn download_localvqe_model(app: tauri::AppHandle, filename: String) -> Result<St
         "https://huggingface.co/LocalAI-io/LocalVQE/resolve/{LOCALVQE_HF_REVISION}/{}",
         pin.filename
     );
-    let status = Command::new("curl")
-        .args(["-fL", "--retry", "2", "-o"])
-        .arg(&tmp)
-        .arg(&url)
-        .status()
-        .map_err(|e| format!("curl 启动失败: {e}"))?;
-    if !status.success() {
+    let mut curl = Command::new("curl");
+    curl.args(["-fL", "--retry", "2", "-o"]).arg(&tmp).arg(&url);
+    let out =
+        command_output_with_timeout(&mut curl, MODEL_DOWNLOAD_TIMEOUT, "LocalVQE model download")?;
+    if !out.status.success() {
         let _ = std::fs::remove_file(&tmp);
-        return Err(format!("下载失败({url})"));
+        return Err(format!(
+            "下载失败({url}): {}",
+            command_status_error("curl", &out)
+        ));
     }
     if let Err(err) = verify_localvqe_model_file(&tmp, pin) {
         let _ = std::fs::remove_file(&tmp);
@@ -626,54 +734,60 @@ fn download_localvqe_model(app: tauri::AppHandle, filename: String) -> Result<St
 /// 返回 { ok, report: { runtime_dir, runtime_dir_source, gpus[], selected_arch, checks[] } }。
 /// macOS/Linux 上后端会返回 ok=false + platform unsupported 检查项(诚实降级)。
 #[tauri::command]
-fn nvafx_doctor(app: tauri::AppHandle, runtime_dir: Option<String>) -> Result<Value, String> {
-    let mut args: Vec<&str> = vec!["nvafx", "doctor", "--json"];
-    if let Some(dir) = runtime_dir.as_deref() {
+async fn nvafx_doctor(app: tauri::AppHandle, runtime_dir: Option<String>) -> Result<Value, String> {
+    let mut args: Vec<String> = vec!["nvafx".into(), "doctor".into(), "--json".into()];
+    if let Some(dir) = runtime_dir {
         if !dir.is_empty() {
-            args.push("--runtime-dir");
+            args.push("--runtime-dir".into());
             args.push(dir);
         }
     }
-    run_json(Some(&app), &args)
+    run_json_async(app, args, JSON_COMMAND_TIMEOUT, "nvafx doctor").await
 }
 
 /// NVAFX runtime 安装:校验+解压 common zip 与按架构选的 model zip,然后回传安装后的 doctor 报告。
 /// 实际只在 Windows 生效(CLI `nvafx install` 在非 Windows 会 bail);mac/Linux 上返回 Err。
 #[tauri::command]
-fn nvafx_install(
+async fn nvafx_install(
     app: tauri::AppHandle,
     common_zip: String,
     model_zip: String,
     runtime_dir: Option<String>,
 ) -> Result<Value, String> {
-    let rdir = runtime_dir.filter(|d| !d.is_empty());
-    let mut args: Vec<&str> = vec![
-        "nvafx",
-        "install",
-        "--common-zip",
-        &common_zip,
-        "--model-zip",
-        &model_zip,
-    ];
-    if let Some(dir) = rdir.as_deref() {
-        args.push("--runtime-dir");
-        args.push(dir);
-    }
-    let out = echoless_command(Some(&app))?
-        .args(&args)
-        .output()
-        .map_err(|e| format!("spawn echoless failed: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("nvafx install 失败: {err}"));
-    }
-    // 安装后用 doctor --json 验证,回传报告供前端重算状态。
-    let mut dargs: Vec<&str> = vec!["nvafx", "doctor", "--json"];
-    if let Some(dir) = rdir.as_deref() {
-        dargs.push("--runtime-dir");
-        dargs.push(dir);
-    }
-    run_json(Some(&app), &dargs)
+    tauri::async_runtime::spawn_blocking(move || {
+        let rdir = runtime_dir.filter(|d| !d.is_empty());
+        let mut args: Vec<String> = vec![
+            "nvafx".into(),
+            "install".into(),
+            "--common-zip".into(),
+            common_zip,
+            "--model-zip".into(),
+            model_zip,
+        ];
+        if let Some(dir) = rdir.as_deref() {
+            args.push("--runtime-dir".into());
+            args.push(dir.to_string());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let mut command = echoless_command(Some(&app))?;
+        command.args(&arg_refs);
+        let out =
+            command_output_with_timeout(&mut command, NVAFX_INSTALL_TIMEOUT, "nvafx install")?;
+        if !out.status.success() {
+            return Err(command_status_error("nvafx install", &out));
+        }
+
+        // 安装后用 doctor --json 验证,回传报告供前端重算状态。
+        let mut dargs: Vec<String> = vec!["nvafx".into(), "doctor".into(), "--json".into()];
+        if let Some(dir) = rdir.as_deref() {
+            dargs.push("--runtime-dir".into());
+            dargs.push(dir.to_string());
+        }
+        let darg_refs: Vec<&str> = dargs.iter().map(String::as_str).collect();
+        run_json_blocking(Some(&app), &darg_refs, JSON_COMMAND_TIMEOUT, "nvafx doctor")
+    })
+    .await
+    .map_err(|e| format!("nvafx install task join failed: {e}"))?
 }
 
 /// 从公共 GitHub release 下载 common+架构 model zip,然后安装并回传 doctor。
@@ -681,26 +795,17 @@ fn nvafx_install(
 /// `{ok, report}` doctor JSON 到 stdout。后端(Codex)实现该子命令后此处即生效;
 /// 未实现前 CLI 会非 0 退出,错误经 stderr 透传给前端。
 #[tauri::command]
-fn nvafx_download_install(
+async fn nvafx_download_install(
     app: tauri::AppHandle,
     runtime_dir: Option<String>,
 ) -> Result<Value, String> {
     let rdir = runtime_dir.filter(|d| !d.is_empty());
-    let mut args: Vec<&str> = vec!["nvafx", "download-install", "--json"];
-    if let Some(dir) = rdir.as_deref() {
-        args.push("--runtime-dir");
+    let mut args: Vec<String> = vec!["nvafx".into(), "download-install".into(), "--json".into()];
+    if let Some(dir) = rdir {
+        args.push("--runtime-dir".into());
         args.push(dir);
     }
-    let out = echoless_command(Some(&app))?
-        .args(&args)
-        .output()
-        .map_err(|e| format!("spawn echoless failed: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("nvafx download-install 失败: {err}"));
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    serde_json::from_str(&stdout).map_err(|e| format!("parse json failed: {e}; raw: {stdout}"))
+    run_json_async(app, args, NVAFX_INSTALL_TIMEOUT, "nvafx download-install").await
 }
 
 /// 在系统默认浏览器打开外部链接(驱动 / VC++ 下载页)。
@@ -787,14 +892,23 @@ fn open_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn validate_config(app: tauri::AppHandle, toml_text: String) -> Result<Value, String> {
+async fn validate_config(app: tauri::AppHandle, toml_text: String) -> Result<Value, String> {
     let dir = transient_config_dir(&app)?;
     let path = write_transient_config_toml(&dir, "validate", &toml_text)?;
     let config_arg = path.to_string_lossy().to_string();
-    let result = run_json(
-        Some(&app),
-        &["config", "validate", "--config", &config_arg, "--json"],
-    );
+    let result = run_json_async(
+        app,
+        vec![
+            "config".into(),
+            "validate".into(),
+            "--config".into(),
+            config_arg,
+            "--json".into(),
+        ],
+        VALIDATE_COMMAND_TIMEOUT,
+        "config validate",
+    )
+    .await;
     cleanup_run_config(&path);
     result
 }
@@ -1021,6 +1135,32 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("{name}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(unix)]
+    fn slow_child_command() -> Command {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 2"]);
+        command
+    }
+
+    #[cfg(windows)]
+    fn slow_child_command() -> Command {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "ping -n 3 127.0.0.1 > nul"]);
+        command
+    }
+
+    #[test]
+    fn command_timeout_kills_hung_child() {
+        let mut command = slow_child_command();
+        let started = Instant::now();
+        let err =
+            command_output_with_timeout(&mut command, Duration::from_millis(80), "slow child test")
+                .unwrap_err();
+
+        assert!(err.contains("timed out"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
