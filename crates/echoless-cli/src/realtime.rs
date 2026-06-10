@@ -324,7 +324,10 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
 
     // 处理线程:只碰 ring(Send),cpal Stream 留在本线程(!Send)。
     let proc_running = running.clone();
-    let chain = chain_from_nodes(&chain_cfg, sample_rate, reference_channels as u16)?;
+    let mut chain = chain_from_nodes(&chain_cfg, sample_rate, reference_channels as u16)?;
+    // 预热边界 SRC:跑一帧静音让 rubato resampler 按 frame_size 建立,
+    // 使 total_latency_ms() 计入节点边界重采样延迟(warm_up 内部会 reset 清除预热影响)。
+    chain.warm_up(frame_size);
     let algorithmic_latency_ms = chain.total_latency_ms();
     let initial_node_stats = chain.stats();
     let stats_interval = options.stats_interval_ms.map(Duration::from_millis);

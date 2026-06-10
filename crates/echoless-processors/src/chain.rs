@@ -49,11 +49,22 @@ impl ProcessorChain {
         self.nodes.iter().map(|n| n.name()).collect()
     }
 
-    /// 算法延迟累计(节点 io_spec;边界 SRC 延迟待 rubato 实现后补)。
+    /// 算法延迟累计:节点自报 io_spec 延迟 + 节点边界 SRC(rubato)在主信号路径
+    /// (near_in 进节点、near_out 回 base)上引入的重采样延迟。far_in 是并行参考
+    /// 路径,其延迟影响 AEC 对齐而非 mouth-to-ear 输出延迟,故不计入此处。
+    ///
+    /// 注意:边界 SRC 的 resampler 在首帧 `process`/`warm_up` 后才建立,在此之前调用
+    /// 本方法只会得到节点自报延迟(SRC 项为 0)。实时路径在启动前调用 `warm_up` 预热,
+    /// 以保证此值已含 SRC 延迟。
     pub fn total_latency_ms(&self) -> f32 {
         self.nodes
             .iter()
-            .map(|n| n.io_spec().algorithmic_latency_ms)
+            .zip(self.adapters.iter())
+            .map(|(node, adapter)| {
+                node.io_spec().algorithmic_latency_ms
+                    + adapter.near_in.latency_ms()
+                    + adapter.near_out.latency_ms()
+            })
             .sum()
     }
 
@@ -68,6 +79,20 @@ impl ProcessorChain {
         for adapter in self.adapters.iter_mut() {
             adapter.reset();
         }
+    }
+
+    /// 用一帧静音预跑整链,促使各节点边界的 rubato resampler 按 `frames` 尺寸建立,
+    /// 之后 `total_latency_ms()` 才能反映边界 SRC 延迟。预热后 `reset()` 清除预热引入
+    /// 的节点/缓冲状态,但保留已建立的 resampler 实例(及其固定延迟)。
+    pub fn warm_up(&mut self, frames: usize) {
+        if self.nodes.is_empty() || frames == 0 {
+            return;
+        }
+        let near = vec![0.0f32; frames];
+        let far = vec![0.0f32; frames * self.base_far_channels as usize];
+        let mut out = vec![0.0f32; frames];
+        self.process(&near, &far, &mut out, frames as u32);
+        self.reset();
     }
 
     pub fn set_stream_delay_ms(&mut self, ms: i32) {
@@ -208,6 +233,17 @@ impl BoundaryAdapter {
             plane.fill(0.0);
         }
         self.output.clear();
+    }
+
+    /// 本边界 SRC 引入的延迟(ms)。rubato `FftFixedIn` 的 `output_delay()` 以输出侧
+    /// 帧数计;同采样率(无 resampler)或 resampler 尚未建立时为 0。
+    fn latency_ms(&self) -> f32 {
+        match self.resampler.as_ref() {
+            Some(resampler) if self.out_rate > 0 => {
+                resampler.output_delay() as f32 / self.out_rate as f32 * 1000.0
+            }
+            _ => 0.0,
+        }
     }
 
     fn adapt(&mut self, input: &[f32]) -> &[f32] {
@@ -511,6 +547,76 @@ mod tests {
 
         assert_eq!(out.len(), 480);
         assert!(out.iter().all(|sample| sample.is_finite()));
+    }
+
+    #[test]
+    fn total_latency_includes_boundary_src_delay_after_warmup() {
+        let mut chain = ProcessorChain::new(48_000, 1);
+        chain.push(Box::new(IdentityNode {
+            spec: IoSpec {
+                sample_rate: 16_000,
+                near_channels: 1,
+                far_channels: 1,
+                algorithmic_latency_ms: 0.0,
+            },
+        }));
+
+        // 预热前:resampler 未建,只有节点自报延迟(此处为 0)。
+        assert_eq!(chain.total_latency_ms(), 0.0);
+
+        chain.warm_up(480);
+
+        // 预热后:near_in(48k→16k)+ near_out(16k→48k)的 rubato 延迟应被计入。
+        let latency = chain.total_latency_ms();
+        assert!(
+            latency > 0.0,
+            "boundary SRC delay was not accounted for: {latency}"
+        );
+    }
+
+    #[test]
+    fn chain_resampler_preserves_block_boundary_continuity() {
+        use std::f32::consts::TAU;
+
+        let mut chain = ProcessorChain::new(48_000, 1);
+        chain.push(Box::new(IdentityNode {
+            spec: IoSpec {
+                sample_rate: 16_000,
+                near_channels: 1,
+                far_channels: 1,
+                algorithmic_latency_ms: 0.0,
+            },
+        }));
+
+        // 把一段连续 440Hz 正弦切成多块逐块送入;有状态 SRC 应让块边界保持相位连续。
+        let frames = 480usize;
+        let blocks = 12usize;
+        let mut full_out = Vec::with_capacity(frames * blocks);
+        let far = vec![0.0; frames];
+        for block in 0..blocks {
+            let near: Vec<f32> = (0..frames)
+                .map(|i| {
+                    let n = (block * frames + i) as f32;
+                    0.2 * (n * 440.0 * TAU / 48_000.0).sin()
+                })
+                .collect();
+            let mut out = vec![0.0; frames];
+            chain.process(&near, &far, &mut out, frames as u32);
+            full_out.extend_from_slice(&out);
+        }
+
+        // 跳过前 4 块暖机,稳态段相邻样本差应无块边界台阶。
+        // 440Hz@48k 正弦单样本最大斜率 ≈ 0.2*2π*440/48000 ≈ 0.0115;边界台阶会远超此值。
+        let steady = &full_out[4 * frames..];
+        let max_step = steady
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_step < 0.05,
+            "block boundary discontinuity detected: max_step={max_step}"
+        );
+        assert!(steady.iter().all(|sample| sample.is_finite()));
     }
 
     #[test]
