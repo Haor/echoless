@@ -43,10 +43,10 @@ From the repository root on Windows:
 ```powershell
 pnpm -C app install
 pnpm -C app prepare:tauri-assets --require-localvqe-assets
-pnpm -C app tauri build --debug --ci
+pnpm -C app tauri build --debug --ci --bundles nsis
 ```
 
-The generated Windows installer is usually under:
+The generated NSIS installer is usually under:
 
 ```text
 app\src-tauri\target\debug\bundle\

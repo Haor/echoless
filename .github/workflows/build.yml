@@ -258,7 +258,7 @@ jobs:
             pnpm tauri build --debug --ci --bundles app
             pnpm smoke:tauri-bundle
           else
-            pnpm tauri build --debug --ci
+            pnpm tauri build --debug --ci --bundles nsis
             pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-windows-installed-app.ps1
           fi
 
