@@ -384,6 +384,12 @@ mod tests {
             OUTPUT_LEVEL_MAX_GAIN,
             0.001,
         );
+        approx_eq(output_level_gain(u32::MAX), OUTPUT_LEVEL_MAX_GAIN, 0.001);
+        approx_eq(
+            output_level_gain_db(u32::MAX).unwrap(),
+            OUTPUT_LEVEL_MAX_BOOST_DB,
+            0.001,
+        );
     }
 
     #[test]
@@ -432,5 +438,9 @@ mod tests {
         assert!(protected[0] > OUTPUT_SOFT_LIMIT_THRESHOLD);
         assert_eq!(protected[1], 0.0);
         assert_eq!(protected[2], 0.0);
+
+        let mut over_range = [0.2];
+        apply_output_level(&mut over_range, u32::MAX);
+        approx_eq(over_range[0], 0.6, 0.001);
     }
 }

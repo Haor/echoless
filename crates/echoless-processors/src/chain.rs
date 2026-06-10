@@ -478,6 +478,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn boundary_adapter_downmixes_stereo_to_mono() {
+        let mut adapter = BoundaryAdapter::new(48_000, 2, 48_000, 1);
+
+        let output = adapter.adapt(&[1.0, 3.0, -1.0, 1.0]);
+
+        assert_eq!(output, &[2.0, 0.0]);
+    }
+
+    #[test]
+    fn boundary_adapter_spreads_mono_to_stereo() {
+        let mut adapter = BoundaryAdapter::new(48_000, 1, 48_000, 2);
+
+        let output = adapter.adapt(&[0.25, -0.5]);
+
+        assert_eq!(output, &[0.25, 0.25, -0.5, -0.5]);
+    }
+
     fn capacity_signature(chain: &ProcessorChain) -> Vec<usize> {
         let mut caps = vec![chain.cur_near_base.capacity()];
         for adapter in &chain.adapters {
