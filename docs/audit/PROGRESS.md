@@ -52,3 +52,15 @@ Last updated: 2026-06-10
 - `cargo fmt --all --check` currently reaches `vendor/sonora`, which is documented as a read-only third-party fork and has pre-existing rustfmt drift. P0.0 used scoped formatting checks for first-party root packages and `app/src-tauri`.
 - Tauri clippy/build still reports the known `block v0.1.6` future-incompatibility note; CODE_AUDIT tracks that under later dependency governance rather than P0.0.
 - P0 was verified locally but the GitHub Actions matrix was not triggered; no push was performed.
+
+### 2026-06-10 验收复核与跟进修复(见 `docs/audit/ACCEPTANCE_REVIEW.md`)
+
+独立验收复核(三个 workspace 的 `clippy -D warnings` + `test` 全绿实测,非仅信本台账)后,对验收中发现的问题做了以下跟进修复:
+
+- **ROB-4 残留**:`crates/echoless-cli/src/probe_delay.rs` 的 `spawn_probe_line_reader` 仍用 `lines().map_while(Result::ok)` 静默吞读取错误(此前 ROB-4 只修了 Tauri 侧,CLI 侧遗漏)。已改为显式 `match`,出错时打印 stderr 警告再停。
+- **QUAL-1 延迟补偿**:节点边界 rubato `FftFixedIn` 的固有延迟此前未计入 `total_latency_ms()`(`chain.rs` 注释自承待补)。已加 `BoundaryAdapter::latency_ms()`(读 `output_delay()`),`total_latency_ms()` 累加主路径(near_in + near_out)的 SRC 延迟;realtime 启动前调 `chain.warm_up()` 预热,使该值在首帧前即准确。补了块边界连续性单测与 SRC 延迟计入单测。
+- **PKG-1 退化包 fail-fast**:`app/scripts/prepare-tauri-assets.mjs` 此前缺 LocalVQE 资产时仅 warn,普通 `pnpm tauri build` 会静默产出退化包。已在非 dev 缺资产时打印醒目 banner(`--require-localvqe-assets` 仍作硬失败开关)。
+
+验收备注(澄清,非代码改动):`library_candidates`(`crates/echoless-processors/src/localvqe.rs`)**未**拓宽至 `app_local_data`/打包资源目录;打包态由 Tauri 端注入 `ECHOLESS_LOCALVQE_LIBRARY` 绝对路径解决,backend 不自行搜 bundle。若未来需 backend 独立自救再拓宽。
+
+仍待办(需 Windows 实机/CI,本地 macOS 无法闭环):Windows NSIS installer 安装后冒烟、Intel-mac sidecar 矩阵验证;`block v0.1.6` future-incompat 依赖治理(TEST-2)。
