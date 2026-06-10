@@ -27,7 +27,7 @@ const D: Record<string, { en: string; zh: string }> = {
     en: "scroll to adjust output volume",
     zh: "滚轮调节输出音量",
   },
-  latency: { en: "Latency", zh: "延迟" },
+  latency: { en: "Pipeline", zh: "管线延迟" },
   ms: { en: "MS", zh: "毫秒" },
   stable: { en: "Stable", zh: "稳定" },
   checkSetup: { en: "Check Setup", zh: "检查设置" },

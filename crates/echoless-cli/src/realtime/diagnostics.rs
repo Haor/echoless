@@ -17,7 +17,7 @@ use super::print_human;
 use super::stats::{
     aggregate_diverged, aggregate_estimated_delay_ms, aggregate_last_error,
     aggregate_process_time_ms, aggregate_runtime_errors, estimate_user_latency_ms,
-    output_queue_latency_ms, rms_dbfs, sum_squares, StatsSample,
+    input_queue_latency_ms, output_queue_latency_ms, rms_dbfs, sum_squares, StatsSample,
 };
 
 const DIAGNOSTIC_QUEUE_FRAMES: usize = 128;
@@ -220,7 +220,7 @@ impl DiagnosticRecorder {
         );
         writeln!(
             stats,
-            "frame_index,frames,near_delay_ms,near_delay_buffered_samples,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,output_queue_latency_ms,estimated_user_latency_ms,aec_estimated_delay_ms,mic_input_drops,ref_input_drops,input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
+            "frame_index,frames,near_delay_ms,near_delay_buffered_samples,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,input_queue_latency_ms,output_queue_latency_ms,estimated_user_latency_ms,aec_estimated_delay_ms,mic_input_drops,ref_input_drops,input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
         )?;
 
         let mic_part_path = dir.join("mic.wav.part");
@@ -410,7 +410,7 @@ impl DiagnosticWriter {
         };
         writeln!(
             stats,
-            "{},{},{},{},{:.2},{:.2},{:.2},{},{},{},{:.2},{:.2},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
+            "{},{},{},{},{:.2},{:.2},{:.2},{},{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
             self.frame_index,
             frame.frame_size,
             frame.near_delay_ms,
@@ -421,11 +421,13 @@ impl DiagnosticWriter {
             frame.mic_q,
             frame.ref_q,
             frame.out_q,
+            input_queue_latency_ms(frame.mic_q, self.sample_rate),
             output_queue_latency_ms(frame.out_q, self.sample_rate),
             estimate_user_latency_ms(
                 self.frame_ms,
                 frame.near_delay_ms,
                 frame.algorithmic_latency_ms,
+                frame.mic_q,
                 frame.out_q,
                 self.sample_rate
             ),
@@ -660,7 +662,7 @@ mod tests {
             near: &near,
             far: &far,
             out: &out,
-            mic_q: 0,
+            mic_q: 480,
             ref_q: 0,
             out_q: 0,
             mic_input_drops: 0,
@@ -683,8 +685,10 @@ mod tests {
         let stats = std::fs::read_to_string(dir.join("stats.csv"))?;
         assert_eq!(stats.lines().count(), 2);
         assert!(stats.contains("node_process_time_ms"));
+        assert!(stats.contains("input_queue_latency_ms"));
         assert!(stats.contains("estimated_user_latency_ms"));
         assert!(stats.contains("near_delay_ms"));
+        assert!(stats.contains(",10.00,0.00,56.00,"));
         assert!(dir.join("out.wav").exists());
         let metadata = std::fs::read_to_string(dir.join("metadata.txt"))?;
         assert!(metadata.contains("near_delay_ms=25"));

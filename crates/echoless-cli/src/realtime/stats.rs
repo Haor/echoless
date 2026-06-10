@@ -58,22 +58,32 @@ pub(super) fn aggregate_last_error(stats: &[ProcessorStats]) -> Option<String> {
 }
 
 pub(super) fn output_queue_latency_ms(out_q_samples: usize, sample_rate: u32) -> f64 {
+    queue_latency_ms(out_q_samples, sample_rate)
+}
+
+pub(super) fn input_queue_latency_ms(mic_q_samples: usize, sample_rate: u32) -> f64 {
+    queue_latency_ms(mic_q_samples, sample_rate)
+}
+
+fn queue_latency_ms(samples: usize, sample_rate: u32) -> f64 {
     if sample_rate == 0 {
         return 0.0;
     }
-    out_q_samples as f64 / sample_rate as f64 * 1000.0
+    samples as f64 / sample_rate as f64 * 1000.0
 }
 
 pub(super) fn estimate_user_latency_ms(
     frame_ms: u32,
     near_delay_ms: u32,
     algorithmic_latency_ms: f32,
+    mic_q_samples: usize,
     out_q_samples: usize,
     sample_rate: u32,
 ) -> f64 {
     frame_ms as f64 / 2.0
         + near_delay_ms as f64
         + algorithmic_latency_ms as f64
+        + input_queue_latency_ms(mic_q_samples, sample_rate)
         + output_queue_latency_ms(out_q_samples, sample_rate)
 }
 
@@ -310,7 +320,7 @@ impl RealtimeStats {
 
     fn print_text(&self, now: Instant) {
         println!(
-            "t={:.1}s frames={} mic={:.1}dB ref={:.1}dB out={:.1}dB mic_q={} ref_q={} out_q={} near_delay_ms={} out_q_ms={:.1} est_user_ms={:.1} aec_delay_ms={} ref_underrun={} out_underrun={} out_overrun={} input_drop={} stale_drop={} node_ms={:.2} runtime_errors={} diverged={}",
+            "t={:.1}s frames={} mic={:.1}dB ref={:.1}dB out={:.1}dB mic_q={} ref_q={} out_q={} near_delay_ms={} in_q_ms={:.1} out_q_ms={:.1} est_user_ms={:.1} aec_delay_ms={} ref_underrun={} out_underrun={} out_overrun={} input_drop={} stale_drop={} node_ms={:.2} runtime_errors={} diverged={}",
             now.duration_since(self.started).as_secs_f64(),
             self.total_frames,
             rms_dbfs(self.near_sq, self.near_samples),
@@ -320,11 +330,13 @@ impl RealtimeStats {
             self.ref_q,
             self.out_q,
             self.near_delay_ms,
+            input_queue_latency_ms(self.mic_q, self.sample_rate),
             output_queue_latency_ms(self.out_q, self.sample_rate),
             estimate_user_latency_ms(
                 self.frame_ms,
                 self.near_delay_ms,
                 self.algorithmic_latency_ms,
+                self.mic_q,
                 self.out_q,
                 self.sample_rate
             ),
@@ -348,10 +360,12 @@ impl RealtimeStats {
 
     fn status_value(&self, now: Instant) -> Value {
         let output_queue_latency_ms = output_queue_latency_ms(self.out_q, self.sample_rate);
+        let input_queue_latency_ms = input_queue_latency_ms(self.mic_q, self.sample_rate);
         let estimated_user_latency_ms = estimate_user_latency_ms(
             self.frame_ms,
             self.near_delay_ms,
             self.algorithmic_latency_ms,
+            self.mic_q,
             self.out_q,
             self.sample_rate,
         );
@@ -387,6 +401,7 @@ impl RealtimeStats {
             "mic_q_samples": self.mic_q,
             "ref_q_samples": self.ref_q,
             "out_q_samples": self.out_q,
+            "input_queue_latency_ms": input_queue_latency_ms,
             "output_queue_latency_ms": output_queue_latency_ms,
             "algorithmic_latency_ms": self.algorithmic_latency_ms,
             "estimated_user_latency_ms": estimated_user_latency_ms,
@@ -434,10 +449,10 @@ mod tests {
     }
 
     #[test]
-    fn user_latency_estimate_includes_half_frame_near_delay_algorithm_and_output_queue() {
-        let latency = estimate_user_latency_ms(10, 25, 16.0, 2400, 48_000);
+    fn user_latency_estimate_includes_half_frame_near_delay_algorithm_and_queues() {
+        let latency = estimate_user_latency_ms(10, 25, 16.0, 480, 2400, 48_000);
 
-        assert_eq!(latency, 96.0);
+        assert_eq!(latency, 106.0);
     }
 
     #[test]
@@ -472,6 +487,7 @@ mod tests {
         stats.near_sq = 120.0;
         stats.far_sq = 30.0;
         stats.out_sq = 100.0;
+        stats.mic_q = 480;
         stats.out_q = 2400;
         stats.mic_input_drops = 1;
         stats.ref_input_drops = 2;
@@ -485,8 +501,9 @@ mod tests {
         assert_eq!(value["near_delay_ms"], 25);
         assert_eq!(value["output_level"], 75);
         assert_eq!(value["output_gain_db"], output_level_gain_db(75).unwrap());
+        assert_eq!(value["input_queue_latency_ms"], 10.0);
         assert_eq!(value["output_queue_latency_ms"], 50.0);
-        assert_eq!(value["estimated_user_latency_ms"], 96.0);
+        assert_eq!(value["estimated_user_latency_ms"], 106.0);
         assert_eq!(value["aec_estimated_delay_ms"], 48);
         assert_eq!(value["diagnostics_session_dir"], "diagnostics/session-1");
         assert_eq!(value["recording"], false);

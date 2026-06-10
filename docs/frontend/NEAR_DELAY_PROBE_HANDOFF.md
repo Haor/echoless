@@ -280,6 +280,7 @@ estimated_user_latency_ms =
   frame_ms / 2
   + near_delay_ms
   + algorithmic_latency_ms
+  + input_queue_latency_ms
   + output_queue_latency_ms
 ```
 

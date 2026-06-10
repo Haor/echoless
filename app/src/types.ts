@@ -101,6 +101,7 @@ export interface RuntimeStatus {
   mic_q_samples: number;
   ref_q_samples: number;
   out_q_samples: number;
+  input_queue_latency_ms: number;
   output_queue_latency_ms: number;
   algorithmic_latency_ms: number;
   estimated_user_latency_ms: number;

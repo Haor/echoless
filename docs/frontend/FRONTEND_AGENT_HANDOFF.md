@@ -303,6 +303,7 @@ export interface RuntimeStatus {
   mic_q_samples: number;
   ref_q_samples: number;
   out_q_samples: number;
+  input_queue_latency_ms: number;
   output_queue_latency_ms: number;
   algorithmic_latency_ms: number;
   estimated_user_latency_ms: number;
@@ -343,12 +344,14 @@ estimated_user_latency_ms =
   frame_ms / 2
   + near_delay_ms
   + algorithmic_latency_ms
+  + mic_q_samples / sample_rate * 1000
   + out_q_samples / sample_rate * 1000
 ```
 
-- `estimated_user_latency_ms`: 用户说话进入麦克风到送入虚拟输出设备的估算延迟。
+- `estimated_user_latency_ms`: Echoless 软件管线内的用户说话到送入虚拟输出设备估算延迟;不含设备硬件缓冲、通话软件缓冲或网络延迟。首页建议标为 `Pipeline` / `管线延迟`。
 - `near_delay_ms`: Echoless 在处理器前主动延后 near/mic 的固定对齐延迟。它不是 AEC3 动态估计值。
 - `aec_estimated_delay_ms`: AEC3 估计的回声路径对齐延迟。
+- `input_queue_latency_ms`: 麦克风输入队列积压贡献的可见软件管线延迟。
 - `output_queue_latency_ms`: 输出队列贡献的可见延迟。
 
 ## Active Near Delay Probe

@@ -302,6 +302,7 @@ stdout 为 JSONL events,stderr 为人类日志。音频流启动后先输出 `st
   "mic_wave": [0.0, 0.4, 0.2],
   "ref_wave": [0.0, 0.1, 0.1],
   "out_wave": [0.0, 0.3, 0.2],
+  "input_queue_latency_ms": 0.0,
   "output_queue_latency_ms": 62.5,
   "algorithmic_latency_ms": 0.0,
   "estimated_user_latency_ms": 92.5,
@@ -338,14 +339,16 @@ estimated_user_latency_ms =
   frame_ms / 2
   + near_delay_ms
   + algorithmic_latency_ms
+  + mic_q_samples / sample_rate * 1000
   + out_q_samples / sample_rate * 1000
 ```
 
 字段语义:
 
-- `estimated_user_latency_ms`: 用户说话到进入虚拟输出设备前的估算延迟。
+- `estimated_user_latency_ms`: Echoless 软件管线内的用户说话到进入虚拟输出设备前估算延迟;不含设备硬件缓冲、通话软件缓冲或网络延迟。首页建议标为 `Pipeline` / `管线延迟`。
 - `near_delay_ms`: Echoless 在处理器前主动延后 near/mic 的固定对齐延迟。
 - `aec_estimated_delay_ms`: AEC3 对回声路径的动态对齐估计。
+- `input_queue_latency_ms`: 麦克风输入队列积压贡献的延迟。
 - `output_queue_latency_ms`: 输出队列贡献的延迟。
 
 ### 4. Config Validate

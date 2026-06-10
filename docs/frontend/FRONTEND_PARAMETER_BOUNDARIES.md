@@ -165,7 +165,8 @@ macOS/Linux 上前端可以展示为 unsupported,但不应生成可运行的 `nv
 - 每次保存或应用配置前,运行 `echoless config validate --config <file> --json`。
 - 切换 backend、设备、采样率、frame、模型或 RTX runtime 后,重启 runtime。
 - 运行时展示 `estimated_user_latency_ms` 和 `aec_estimated_delay_ms` 时要区分语义:
-  - `estimated_user_latency_ms`: 用户说话到虚拟输出前的估算延迟。
+  - `estimated_user_latency_ms`: Echoless 软件管线内的用户说话到虚拟输出前估算延迟;不含设备硬件缓冲、通话软件缓冲或网络延迟。首页建议标为 `Pipeline` / `管线延迟`。
   - `aec_estimated_delay_ms`: AEC3 估计的回声路径对齐延迟。
   - `near_delay_ms`: 我们主动加入的 near/mic 对齐延迟,会计入 `estimated_user_latency_ms`。
+  - `input_queue_latency_ms` / `output_queue_latency_ms`: 输入/输出队列积压贡献的软件管线延迟。
 - diagnostics 录制应保存 `mic.wav`、`ref.wav`、`out.wav`、`stats.csv` 和 metadata,用于用户反馈和回归分析。
