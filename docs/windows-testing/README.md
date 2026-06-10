@@ -7,14 +7,16 @@ This directory is the network-fetchable entry point for the Windows-side agent.
 Start here:
 
 1. `WINDOWS_AEC3_LOCALVQE_TEST_HANDOFF.md`
-2. `WINDOWS_RTX_AEC_TEST_HANDOFF.md`
+2. `WINDOWS_INSTALLED_APP_SMOKE_HANDOFF.md`
+3. `WINDOWS_RTX_AEC_TEST_HANDOFF.md`
 
 The correct order is:
 
 1. Test Echoless AEC3 quality.
 2. Test LocalVQE v1.3 standalone quality.
-3. Preserve diagnostic recordings.
-4. Research or compare RTX / NVIDIA AFX AEC with those recordings.
+3. Prove the Windows installed Tauri app can find the sidecar CLI and bundled LocalVQE runtime/model.
+4. Preserve diagnostic recordings.
+5. Research or compare RTX / NVIDIA AFX AEC with those recordings.
 
 Do not start from RTX AEC. RTX AEC is a later candidate/backend investigation, not the current product baseline.
 
@@ -32,6 +34,7 @@ The required research files are copied into:
 If the agent has GitHub access, it can fetch raw files from:
 
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/windows-testing/WINDOWS_AEC3_LOCALVQE_TEST_HANDOFF.md>
+- <https://raw.githubusercontent.com/Haor/echoless/main/docs/windows-testing/WINDOWS_INSTALLED_APP_SMOKE_HANDOFF.md>
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/windows-testing/WINDOWS_RTX_AEC_TEST_HANDOFF.md>
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/research/windows_aec_research.md>
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/research/sonora_aec3_internal_map.md>

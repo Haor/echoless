@@ -16,6 +16,8 @@ const valueOf = (flag) => {
   return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
 };
 
+const LOCALVQE_MODEL_NAME = "localvqe-v1.3-4.8M-f32.gguf";
+
 function existsFile(p) {
   return Boolean(p) && fs.existsSync(p) && fs.statSync(p).isFile();
 }
@@ -37,6 +39,16 @@ function assertExecutable(p, label) {
   return p;
 }
 
+function isWalkableFile(p, entry) {
+  if (entry.isFile()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function* walkFiles(root) {
   if (!root || !fs.existsSync(root)) return;
   const entries = fs.readdirSync(root, { withFileTypes: true });
@@ -44,7 +56,7 @@ function* walkFiles(root) {
     const p = path.join(root, entry.name);
     if (entry.isDirectory()) {
       yield* walkFiles(p);
-    } else if (entry.isFile()) {
+    } else if (isWalkableFile(p, entry)) {
       yield p;
     }
   }
@@ -59,9 +71,15 @@ function firstFile(root, predicate) {
   return matches[0] ?? null;
 }
 
+function basenameLower(file) {
+  return path.basename(file).toLowerCase();
+}
+
 function discoverLayout() {
+  const explicitInstalledApp = valueOf("--installed-app");
   const explicitApp = valueOf("--app");
   const explicitTargetDir = valueOf("--target-dir");
+  if (explicitInstalledApp) return installedAppLayout(path.resolve(explicitInstalledApp));
   if (explicitApp) return macAppLayout(path.resolve(explicitApp));
   if (explicitTargetDir) return targetDirLayout(path.resolve(explicitTargetDir));
 
@@ -112,6 +130,57 @@ function targetDirLayout(targetDir) {
     infoPlist: null,
     helper: path.join(targetDir, "resources", "helpers", helperName),
   };
+}
+
+function installedAppLayout(installDir) {
+  const appExecutable =
+    firstFile(
+      installDir,
+      (file) => ["echoless-app.exe", "echoless app.exe", "echoless_gui.exe"].includes(basenameLower(file)),
+    ) ??
+    firstFile(
+      installDir,
+      (file) =>
+        basenameLower(file).endsWith(".exe") &&
+        basenameLower(file).includes("echoless") &&
+        basenameLower(file) !== "echoless.exe",
+    );
+  const cli =
+    firstFile(
+      installDir,
+      (file) =>
+        basenameLower(file) === "echoless.exe" &&
+        (!appExecutable || path.resolve(file) !== path.resolve(appExecutable)),
+    ) ??
+    firstFile(
+      installDir,
+      (file) =>
+        basenameLower(file).startsWith("echoless-") &&
+        basenameLower(file).endsWith(".exe") &&
+        (!appExecutable || path.resolve(file) !== path.resolve(appExecutable)),
+    );
+  const resources = discoverResourcesDir(installDir);
+  return {
+    kind: "windows-installed-app",
+    root: installDir,
+    appExecutable,
+    cli,
+    resources,
+    infoPlist: null,
+    helper: null,
+  };
+}
+
+function discoverResourcesDir(root) {
+  const direct = path.join(root, "resources");
+  if (existsDir(direct)) return direct;
+  const model = firstFile(root, (file) => path.basename(file) === LOCALVQE_MODEL_NAME);
+  if (!model) return direct;
+  const modelsDir = path.dirname(model);
+  const localvqeDir = path.dirname(modelsDir);
+  return path.basename(localvqeDir).toLowerCase() === "localvqe"
+    ? path.dirname(localvqeDir)
+    : direct;
 }
 
 function localvqeLibraryName(file) {
@@ -195,18 +264,18 @@ function smoke() {
   assertExecutable(layout.cli, "Echoless sidecar CLI");
   if (!existsDir(layout.resources)) throw new Error(`resources directory missing: ${layout.resources}`);
 
-  if (process.platform === "darwin") {
+  if (layout.helper) {
     assertExecutable(layout.helper, "Process Tap helper");
-    if (layout.infoPlist) {
-      const plist = fs.readFileSync(layout.infoPlist, "utf8");
-      for (const key of ["NSMicrophoneUsageDescription", "NSAudioCaptureUsageDescription"]) {
-        if (!plist.includes(key)) throw new Error(`Info.plist missing ${key}`);
-      }
+  }
+  if (layout.infoPlist) {
+    const plist = fs.readFileSync(layout.infoPlist, "utf8");
+    for (const key of ["NSMicrophoneUsageDescription", "NSAudioCaptureUsageDescription"]) {
+      if (!plist.includes(key)) throw new Error(`Info.plist missing ${key}`);
     }
   }
 
   const localvqeRoot = path.join(layout.resources, "localvqe");
-  const model = path.join(localvqeRoot, "models", "localvqe-v1.3-4.8M-f32.gguf");
+  const model = path.join(localvqeRoot, "models", LOCALVQE_MODEL_NAME);
   const nativeDir = path.join(localvqeRoot, "native");
   const library = firstFile(nativeDir, localvqeLibraryName);
   assertFile(model, "LocalVQE bundled model");
