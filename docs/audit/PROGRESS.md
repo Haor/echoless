@@ -15,8 +15,8 @@ Last updated: 2026-06-10
 | TEST-2 | P0 safety net | done | `ee8999a` | CI now includes first-party Rust fmt checks and root/app/vendor cargo-audit; local scoped fmt and cargo-audit runs passed |
 | CFG-1 | P0 safety net | done | `ee8999a` | CI pins LocalVQE checkout to `de56a174d9662b65f404ec65ae8e4bc9712db0da` |
 | RUNTIME-1 | P1 usable | done | `cdcddb8` | `started` event exposes `cli_version` and `supported_controls`; frontend guards diagnostics/output-level stdin commands; `cargo test -p echoless-cli runtime_control --locked`; `pnpm exec tsc --noEmit` |
-| RUNTIME-2 | P1 usable | todo | - | LocalVQE native library/resource availability in dev/package paths |
-| PKG-1 | P1 usable | todo | - | CLI sidecar, resources, Process Tap helper, LocalVQE native libraries |
+| RUNTIME-2 | P1 usable | doing | `0d5e8cc` | Tauri `localvqe_assets` now reports native readiness/library path; `echoless_command` injects `ECHOLESS_LOCALVQE_LIBRARY` and native library search env; frontend gates LocalVQE READY on model + native runtime. Remaining: prove with real LocalVQE native assets inside macOS/Windows Tauri bundles |
+| PKG-1 | P1 usable | doing | `0d5e8cc` | `bundle.externalBin`/`resources` configured; `pnpm prepare:tauri-assets` generates CLI sidecar, Process Tap helper resource, and LocalVQE resource copies when assets exist; `pnpm tauri build --debug --no-bundle --ci` passed locally. Remaining: full macOS/Windows installed-app bundle smoke |
 | ARCH-1 | P2 split | todo | - | Mechanical split of `realtime.rs` and `main.rs` |
 | PERF-1 | P3 realtime | todo | - | Zero-allocation processor-chain steady state |
 | QUAL-1 | P3 realtime | todo | - | Stateful node-boundary resampling and stereo preservation |
