@@ -22,6 +22,37 @@ const DEFAULT_NVAFX_RELEASE_TAG: &str = "rtx-aec-runtime-win64-2.1.0-aec48-previ
 const NVAFX_RELEASE_DOWNLOAD_BASE: &str = "https://github.com/Haor/echoless/releases/download";
 const NVAFX_COMMON_RUNTIME_ASSET: &str = "echoless-rtx-aec-common-runtime-win64-2.1.0.zip";
 
+#[derive(Clone, Copy)]
+struct NvafxReleasePin {
+    asset: &'static str,
+    sha256: &'static str,
+}
+
+// Trust anchor for DEFAULT_NVAFX_RELEASE_TAG. Release SHA256SUMS.txt is only a cross-check
+// for these assets; custom tags may still use release-provided sums.
+const NVAFX_DEFAULT_RELEASE_PINS: &[NvafxReleasePin] = &[
+    NvafxReleasePin {
+        asset: NVAFX_COMMON_RUNTIME_ASSET,
+        sha256: "dcacac954b7973ae18369b252d13f24b973b10114d00e5293eab0713601c7bcb",
+    },
+    NvafxReleasePin {
+        asset: "echoless-rtx-aec-model-win64-2.1.0-turing-aec48.zip",
+        sha256: "951e03bb144156f4b27cbf2caa6930f9dabc3f1cb26a0afd9d9523f4d286dae9",
+    },
+    NvafxReleasePin {
+        asset: "echoless-rtx-aec-model-win64-2.1.0-ampere-aec48.zip",
+        sha256: "066e06ec18a7d4509675411a1e050e11b0cfc4fee30d69d783871333018c9ab9",
+    },
+    NvafxReleasePin {
+        asset: "echoless-rtx-aec-model-win64-2.1.0-ada-aec48.zip",
+        sha256: "92170e6a259f9093397b93cf4385759c36697ecb9e308322405bce1abcb8e3df",
+    },
+    NvafxReleasePin {
+        asset: "echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip",
+        sha256: "0e75bb7442d317990ef0d5a6477105f86b9bbae1c2c5e4a6bdfb8d4e9f42df5b",
+    },
+];
+
 #[derive(Args)]
 pub(crate) struct NvafxArgs {
     #[command(subcommand)]
@@ -713,24 +744,11 @@ fn print_nvafx_doctor_report(report: &echoless_processors::nvafx::DoctorReport) 
 }
 
 fn expected_sha256_for_asset(path: &Path) -> Option<&'static str> {
-    match path.file_name()?.to_str()? {
-        "echoless-rtx-aec-common-runtime-win64-2.1.0.zip" => {
-            Some("dcacac954b7973ae18369b252d13f24b973b10114d00e5293eab0713601c7bcb")
-        }
-        "echoless-rtx-aec-model-win64-2.1.0-turing-aec48.zip" => {
-            Some("951e03bb144156f4b27cbf2caa6930f9dabc3f1cb26a0afd9d9523f4d286dae9")
-        }
-        "echoless-rtx-aec-model-win64-2.1.0-ampere-aec48.zip" => {
-            Some("066e06ec18a7d4509675411a1e050e11b0cfc4fee30d69d783871333018c9ab9")
-        }
-        "echoless-rtx-aec-model-win64-2.1.0-ada-aec48.zip" => {
-            Some("92170e6a259f9093397b93cf4385759c36697ecb9e308322405bce1abcb8e3df")
-        }
-        "echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip" => {
-            Some("0e75bb7442d317990ef0d5a6477105f86b9bbae1c2c5e4a6bdfb8d4e9f42df5b")
-        }
-        _ => None,
-    }
+    let asset = path.file_name()?.to_str()?;
+    NVAFX_DEFAULT_RELEASE_PINS
+        .iter()
+        .find(|pin| pin.asset == asset)
+        .map(|pin| pin.sha256)
 }
 
 fn verify_zip_sha256(
@@ -880,6 +898,29 @@ mod tests {
             sums["echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip"],
             "0e75bb7442d317990ef0d5a6477105f86b9bbae1c2c5e4a6bdfb8d4e9f42df5b"
         );
+    }
+
+    #[test]
+    fn embedded_nvafx_release_pins_are_well_formed() {
+        let mut assets = std::collections::HashSet::new();
+        for pin in NVAFX_DEFAULT_RELEASE_PINS {
+            assert!(
+                assets.insert(pin.asset),
+                "duplicate asset pin: {}",
+                pin.asset
+            );
+            assert_eq!(pin.sha256.len(), 64, "bad hash length: {}", pin.asset);
+            assert!(
+                pin.sha256.chars().all(|ch| ch.is_ascii_hexdigit()),
+                "bad hash characters: {}",
+                pin.asset
+            );
+            assert_eq!(
+                expected_sha256_for_asset(Path::new(pin.asset)),
+                Some(pin.sha256)
+            );
+        }
+        assert!(assets.contains(NVAFX_COMMON_RUNTIME_ASSET));
     }
 
     #[test]

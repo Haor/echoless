@@ -81,8 +81,8 @@ echoless nvafx download-install [--runtime-dir <DIR>] [--tag <RELEASE_TAG>] --js
    - `echoless-rtx-aec-common-runtime-win64-2.1.0.zip`
    - `echoless-rtx-aec-model-win64-2.1.0-<arch>-aec48.zip`
    - 下载源默认上面的 release base;`--tag` 可覆盖。
-3. 优先读取 release 的 `SHA256SUMS.txt` 校验 SHA256;若读取失败且 tag 是默认 preview release,
-   使用 CLI 内置官方 SHA256 兜底。
+3. 默认 preview release 使用 CLI 内置 SHA256 pin 作为信任锚;release 的 `SHA256SUMS.txt`
+   只做交叉校验,不一致则失败。非默认 `--tag` 才使用 release sums。
 4. 复用现有 install 逻辑解压到 `runtime_dir`(缺省 `%LOCALAPPDATA%\Echoless\nvafx\2.1.0`),
    写 `echoless-runtime-install-manifest.json`,其中包含 `install_source.kind = "github-release"`。
 5. 跑 `nvafx doctor --json` 并打印到 stdout(JSON)。
