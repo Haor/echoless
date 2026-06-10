@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 
 use echoless_core::{output_level_gain_db, DiagnosticsConfig, MAX_OUTPUT_LEVEL};
 
-use super::{DiagnosticDoneReason, DiagnosticRecorder, DiagnosticRecorderConfig, RealtimeStats};
+use super::diagnostics::{DiagnosticDoneReason, DiagnosticRecorder, DiagnosticRecorderConfig};
+use super::stats::RealtimeStats;
 use echoless_processors::ProcessorChain;
 
 #[derive(Debug)]

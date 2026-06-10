@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use echoless_core::output_level_gain_db;
 use echoless_processors::ProcessorStats;
 
-use super::DiagnosticsStatusHandle;
+use super::diagnostics::DiagnosticsStatusHandle;
 
 pub(super) struct StatsSample<'a> {
     pub(super) algorithmic_latency_ms: f32,
