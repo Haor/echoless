@@ -3,12 +3,11 @@ name = "echoless-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "管线编排 + 配置 + ControlApi(CLI 现在用、Electron 后期用同一套);不依赖任何平台 crate"
+description = "管线配置 + 离线编排 + 共享 DSP 边界工具;不依赖任何平台 crate"
 
 [dependencies]
 anyhow.workspace = true
 toml.workspace = true
 serde.workspace = true
-crossbeam-channel.workspace = true
 echoless-audio-io = { path = "../echoless-audio-io" }
 echoless-processors = { path = "../echoless-processors" }

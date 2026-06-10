@@ -1,13 +1,13 @@
-//! echoless-core — 管线编排 + 配置 + 控制面。**不依赖任何平台 crate**(蓝本 §1)。
+//! echoless-core — 管线配置 + 离线编排 + 共享 DSP 边界工具。**不依赖任何平台 crate**。
 //!
-//! 前端(CLI 现在、Tauri/GUI 后期)只透过 `ControlApi` 访问;配置类型 serde 可序列化,
-//! CLI 用 TOML、GUI 用 JSON,映射到同一套(蓝本 §14)。
+//! 实时主路径当前由 `echoless-cli` 的 cpal sidecar runtime 提供;本 crate 不暴露未实现的
+//! realtime 控制面,只保留 CLI/GUI 共用的配置、离线路径与输出电平/声道策略。
 
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use echoless_audio_io::{AudioFormat, AudioSink, AudioSource, DeviceInfo};
+use echoless_audio_io::{AudioFormat, AudioSink, AudioSource};
 use echoless_processors::{chain_from_nodes, NodeConfig, ProcessorStats};
 
 pub use echoless_processors::{
@@ -153,15 +153,6 @@ pub struct RunReport {
     pub node_stats: Vec<ProcessorStats>,
 }
 
-/// 控制面:CLI 现在直接内嵌调用;Tauri/GUI 后期经 echoless-daemon 映射成 JSON-RPC(蓝本 §14)。
-pub trait ControlApi: Send + Sync {
-    fn list_devices(&self) -> Vec<DeviceInfo>;
-    fn start(&self, cfg: &PipelineConfig) -> anyhow::Result<()>;
-    fn stop(&self);
-    fn set_chain(&self, nodes: &[NodeConfig]) -> anyhow::Result<()>;
-    fn subscribe_stats(&self) -> crossbeam_channel::Receiver<Vec<ProcessorStats>>;
-}
-
 /// 离线跑通整条链:mic 源 + ref 源 → 处理链 → sink。当前可用(P1 离线评测)。
 pub fn run_offline<M, R, S>(
     cfg: &PipelineConfig,
@@ -278,27 +269,6 @@ pub fn soft_limit_output_sample(sample: f32) -> f32 {
     let excess = abs - OUTPUT_SOFT_LIMIT_THRESHOLD;
     let limited = OUTPUT_SOFT_LIMIT_THRESHOLD + headroom * (1.0 - (-excess / headroom).exp());
     sample.signum() * limited.min(1.0)
-}
-
-/// 实时管线(基于泛型 AudioSource/Sink 的版本)。
-///
-/// 注:当前实时管线已落在 `echoless-cli` 的 cpal 实现(`realtime.rs`)——cpal 的回调
-/// 是 push 模型且 Stream !Send,直接套 pull 式 AudioSource 代价大,故 I/O 与处理分离、
-/// 处理仍走同一个 `ProcessorChain`。此泛型版保留供未来把实时编排抽回 core(经 daemon
-/// 复用)时使用;当前主路径用 cpal,见 cli。
-pub fn run_realtime<M, R, S>(
-    _cfg: &PipelineConfig,
-    mut mic: M,
-    _reference: R,
-    _sink: S,
-) -> anyhow::Result<()>
-where
-    M: AudioSource,
-    R: AudioSource,
-    S: AudioSink,
-{
-    let _ = mic.start()?;
-    anyhow::bail!("请用 echoless-cli 的 cpal 实时管线(`echoless run`);core 泛型版待重构")
 }
 
 fn downmix_to_mono(data: &[f32], channels: u16, frames: u32) -> Vec<f32> {

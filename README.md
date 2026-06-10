@@ -26,10 +26,10 @@
 |---|---|---|
 | `echoless-audio-io` | 平台无关音频 I/O trait + 类型 + 文件/null 后端 | ✅ |
 | `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + `sonora_aec3` / `localvqe` / `nvidia_afx_aec` 节点 | ✅ AEC3 可用;LocalVQE 可加载 DLL/dylib + GGUF 推理;RTX AEC Windows 可动态加载 AFX runtime |
-| `echoless-core` | 管线编排 + `PipelineConfig` + `ControlApi` + `run_offline` | ✅ 离线可用;实时 cpal 路径在 CLI |
+| `echoless-core` | `PipelineConfig` + 离线编排 + 输出电平/声道策略等共享工具 | ✅ 离线可用;实时 cpal sidecar runtime 在 CLI |
 | `echoless-cli` | CLI 前端:`processors` / `devices` / `offline` / `run` | ✅ |
 
-依赖单向:`echoless-cli → echoless-core → echoless-processors`。**核心不依赖平台专用 crate;前端只经 CLI JSON 接口或 `ControlApi`。**
+依赖单向:`echoless-cli → echoless-core → echoless-processors`。**核心不依赖平台专用 crate;GUI/安装器只经 CLI sidecar 的 JSON/status/control 合约接入实时能力。**
 
 ## 核心设计:统一处理器
 
@@ -143,6 +143,6 @@ cargo run -p echoless-cli --bin echoless --release -- run --config configs/examp
 1. 确认 NVIDIA AFX runtime/model 再分发许可后,再开放远程下载/公开 release asset。
 2. 增加 `eval` 子命令,用 output/input energy ratio 做离线效果量化。
 3. `echoless-processors/chain.rs` 占位线性 SRC 换成 rubato 有状态 SRC。
-4. 按 `docs/frontend/FRONTEND_ADAPTATION_PLAN.md` 把实时 runtime 适配成 GUI/daemon 可复用控制面,同时保留 CLI 一等入口。
+4. 按 `docs/frontend/FRONTEND_ADAPTATION_PLAN.md` 把 CLI sidecar runtime 的 JSON/status/control 合约补齐,同时保留 CLI 一等入口。
 5. 前端实现交接见 `docs/frontend/FRONTEND_AGENT_HANDOFF.md`。
 6. 产品自更新只预留抽象,不在当前 CLI 后端实现;Velopack / Tauri updater 调研见 `docs/productization/update_strategy.md`。
