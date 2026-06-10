@@ -1,0 +1,58 @@
+# Handoff — LocalVQE 模型选择 / 下载(前端已做,剩打包 + 原生库)
+
+**From:** 前端(GUI)
+**To:** Codex(后端 / 打包)
+**状态:** 前端模型列表 + 下载已实现;**默认模型打包 + 原生库打包/注入 仍需后端**
+
+---
+
+## 1. 前端已实现(2026-06-08)
+
+引擎页选中 LocalVQE 时,内嵌一个模型列表(替代原来的单一 .gguf 选择器):
+
+- 列出官方 repo `LocalAI-io/LocalVQE` 的 4 个 `.gguf` 模型:
+  `v1.3-4.8M`(**默认**)/ `v1.2-1.3M` / `v1.1-1.3M` / `v1-1.3M`,带参数量 + 大小。
+- 列表内置在 **LocalVQE 卡片内**(NVAFX checklist 盒子风格):每行一个状态盒子 ——
+  绿 `OK`=已下载可用、黄 `下载/GET`=未下载(点整行即下载)、`✓`=当前选中(整行高亮)。
+- 已存在的(下载目录 / 打包资源)点一下即设 `params.model`;未下载点一下即从 HF 拉取后自动选中。
+- 卡片底部:「打开模型目录 ↗」(`open_path(models_dir)`)+「官方 repo ↗」。
+  ~~原「选本地 .gguf…」文件选择器已移除~~,改为打开目录 —— 用户把 `.gguf` 丢进该目录即被检测。
+- `localvqe_models_dir` 首次创建目录时会写一个 `README.txt`,说明「把 LocalVQE .gguf 放这里;
+  应用内下载也落这里;任何 .gguf 会被自动检测并可在引擎页选用」。
+- 无选中模型时不再显示突兀的红/黄「需要模型」文案;由卡片右上角状态(`待配置`/SET UP,amber)体现。
+
+### 新增 Tauri 命令(`app/src-tauri/src/lib.rs`)
+- `localvqe_assets() -> { models_dir, models: [{filename, path, source: "downloaded"|"bundled"}] }`
+  - `models_dir` = `<app_local_data>/localvqe/models`(自动创建)。
+  - 扫描下载目录 + **打包资源 `resources/localvqe/models`** 里的 `.gguf`。
+- `download_localvqe_model(filename) -> path`
+  - 从 `https://huggingface.co/LocalAI-io/LocalVQE/resolve/main/<filename>` 用 `curl -fL` 下载到
+    `models_dir`(先写 `.part` 再 rename);限定 `.gguf` 文件名、防路径穿越。
+- 前端 `api.ts`:`localvqeAssets()` / `downloadLocalvqeModel()`;`EnginePage` 内消费。
+
+## 2. 仍需 Codex 做
+
+### 2.1 打包默认模型(用户确认:**v1.3-4.8M**)
+- 把 `localvqe-v1.3-4.8M-f32.gguf`(~18MB)放进打包资源 **`resources/localvqe/models/`**,
+  使 `localvqe_assets` 的资源扫描能发现它(`source: "bundled"`)→ 用户开箱即有默认模型,无需下载。
+- `tauri.conf.json` 的 `bundle.resources` 需包含 `resources/localvqe/**`。
+
+### 2.2 ⚠️ 原生库打包 + env 注入(LocalVQE 能跑的**前提**,当前缺)
+后端 `crates/echoless-processors/src/localvqe.rs` 启动需要原生库
+(`liblocalvqe.dylib` / `.so` / `localvqe.dll`),查找顺序:`library` 参数 →
+`ECHOLESS_LOCALVQE_LIBRARY` env → **模型同目录 / cwd / 各自 localvqe 子目录**。
+- 现在模型下载到 `<app_local_data>/localvqe/models`,**库不在那旁边** → 运行会
+  `bail: localvqe library not found`。
+- 需要:① 把原生库随 app 打包(`resources/localvqe/`);② 在 `echoless_command()` 里
+  **注入 `ECHOLESS_LOCALVQE_LIBRARY`**(指向打包的库,类似现在注入 `ECHOLESS_PROCESS_TAP_HELPER`),
+  使任意位置的模型都能加载库。
+- 前端无法注入这个(不知道打包库的路径);属后端/打包。
+
+## 3. 验收
+- 打包后:LocalVQE 默认就有 v1.3 模型可直接「使用」+ 开 ON 能跑(库被找到)。
+- 下载其它版本(v1/v1.1/v1.2)→ 落到 models 目录 → 选中 → 开 ON 也能跑(库经 env 找到)。
+- 无库时报错清晰(已有 bail 文案;前端崩溃退出会在底栏显示该 stderr)。
+
+## 4. 关联
+- 模型加载 / 库查找:`crates/echoless-processors/src/localvqe.rs`(line ~85-110, 196-198, 500-509)。
+- LocalVQE 16k 原生 / ProcessorChain 适配:见 `DEVICE_SAMPLE_RATE_RESAMPLING_HANDOFF.md`。

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Echoless needs microphone access to capture your near-end voice for local echo cancellation.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Echoless needs system audio recording access to capture playback audio as the echo reference.</string>
+</dict>
+</plist>

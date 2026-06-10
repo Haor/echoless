@@ -5,14 +5,15 @@
 
 mic = "default"          # 麦克风:default / 设备名片段 / 索引
 reference = "system"     # far-end 参考:
-                         #   system = 默认输出做 loopback(Windows 原生有效)
+                         #   system = 平台系统音频参考(Windows loopback;macOS Process Tap)
                          #   none   = 无参考(仅 NS 等单端处理)
                          #   output:<名> / input:<名> / 设备名 / 索引
-                         #   macOS 取系统声音需 BlackHole 之类:reference = "input:BlackHole"
 output = "default"       # 输出:虚拟音频设备名(Win=VB-Cable / mac=BlackHole),或 default 试听
 sample_rate = 48000      # 必须能整除 100(10ms 帧);mic/ref/out 共用此率
 frame_ms = 10
 reference_channels = "mono" # mono=当前稳定基线;stereo=保留 L/R far reference 供外放对比测试
+# near_delay_ms = 25      # 可选覆盖;macOS 默认 25,Windows/Linux 默认 0
+output_level = 50         # 最终输出电平:0=静音,50=原声,100=3x;gain=(level/50)^log2(3)
 
 # 诊断录制:打开后会在目录下创建 session-*，保存 mic.wav / ref.wav / out.wav / stats.csv。
 # 也可以运行时用 --diagnostic-dir / --diagnostic-seconds 覆盖。

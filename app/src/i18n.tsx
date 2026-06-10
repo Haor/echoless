@@ -23,6 +23,10 @@ const D: Record<string, { en: string; zh: string }> = {
   echoStopped: { en: "Echo Stopped", zh: "已停止" },
   unstable: { en: "Unstable", zh: "不稳定" },
   noReference: { en: "No Reference", zh: "无参考信号" },
+  volWheel: {
+    en: "scroll to adjust output volume",
+    zh: "滚轮调节输出音量",
+  },
   latency: { en: "Latency", zh: "延迟" },
   ms: { en: "MS", zh: "毫秒" },
   stable: { en: "Stable", zh: "稳定" },
@@ -210,6 +214,37 @@ const D: Record<string, { en: string; zh: string }> = {
     zh: "改动会重启运行时",
   },
   needsRestart: { en: "needs restart", zh: "需重启" },
+
+  // Advanced · 延迟侦测 / AEC 链路诊断
+  secProbe: { en: "Delay Probe", zh: "延迟侦测" },
+  nearDelay: { en: "Near Delay", zh: "近端延迟" },
+  probeRun: { en: "RUN PROBE", zh: "运行侦测" },
+  probing: { en: "PROBING…", zh: "侦测中…" },
+  probeQuiet: {
+    en: "keep quiet · plays a beep train (~15s)",
+    zh: "请保持安静 · 会外放一串蜂鸣(约 15 秒)",
+  },
+  probeStopFirst: {
+    en: "stop the runtime first",
+    zh: "请先停机再侦测",
+  },
+  probeAutoPause: {
+    en: "running → engine auto-pauses, then restores",
+    zh: "运行中 · 会自动暂停引擎并在完成后恢复",
+  },
+  probePausing: { en: "pausing engine…", zh: "暂停引擎中…" },
+  probeRestoring: { en: "restoring engine…", zh: "恢复引擎中…" },
+  probeRef: { en: "Ref", zh: "Ref" },
+  probeMic: { en: "Mic", zh: "Mic" },
+  probeEcho: { en: "echo", zh: "echo" },
+  probeOk: { en: "OK", zh: "OK" },
+  probeNoSig: { en: "no signal", zh: "无信号" },
+  probeStable: { en: "stable", zh: "稳定" },
+  probeUnstable: { en: "unstable", zh: "不稳定" },
+  probeRec: { en: "set", zh: "建议" },
+  probeNoFix: { en: "no fix needed · 0ms", zh: "无需修正 · 0ms" },
+  probeFilled: { en: "filled into Near Delay", zh: "已填入近端延迟" },
+  probeInit: { en: "init", zh: "初始延迟" },
 
   // Diagnostics
   diagNote: {

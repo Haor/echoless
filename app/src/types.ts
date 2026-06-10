@@ -157,6 +157,12 @@ export interface ControlErrorEvent {
   cmd: string;
   message: string;
 }
+// set_output_level 实时生效后的回执(值由前端驱动,UI 仅忽略)。
+export interface OutputLevelChangedEvent {
+  type: "output_level_changed";
+  output_level: number;
+  output_gain_db: number | null;
+}
 
 // run --status-json 在音频流启动后先发的一条事件。
 export interface StartedEvent {
@@ -184,7 +190,8 @@ export type RunEvent =
   | DiagnosticsDoneEvent
   | DiagnosticsStartedEvent
   | DiagnosticsStoppingEvent
-  | ControlErrorEvent;
+  | ControlErrorEvent
+  | OutputLevelChangedEvent;
 
 // ---- doctor audio --json(虚拟声卡检测) ----
 export interface DoctorCandidate {

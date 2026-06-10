@@ -16,7 +16,11 @@ pub struct ProcessorChain {
 
 impl ProcessorChain {
     pub fn new(base_rate: u32, base_far_channels: u16) -> Self {
-        Self { base_rate, base_far_channels: base_far_channels.max(1), nodes: Vec::new() }
+        Self {
+            base_rate,
+            base_far_channels: base_far_channels.max(1),
+            nodes: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, p: Box<dyn EchoProcessor>) {
@@ -37,7 +41,10 @@ impl ProcessorChain {
 
     /// 算法延迟累计(节点 io_spec;边界 SRC 延迟待 rubato 实现后补)。
     pub fn total_latency_ms(&self) -> f32 {
-        self.nodes.iter().map(|n| n.io_spec().algorithmic_latency_ms).sum()
+        self.nodes
+            .iter()
+            .map(|n| n.io_spec().algorithmic_latency_ms)
+            .sum()
     }
 
     pub fn stats(&self) -> Vec<ProcessorStats> {
@@ -52,7 +59,13 @@ impl ProcessorChain {
 
     /// near = 原始 mic(base_rate,mono);far = 真实 ref(base_rate,base_far_channels);
     /// out = 链尾(base_rate,mono),长度应 = frames。
-    pub fn process(&mut self, near_base_mono: &[f32], far_base: &[f32], out_base_mono: &mut [f32], _frames: u32) {
+    pub fn process(
+        &mut self,
+        near_base_mono: &[f32],
+        far_base: &[f32],
+        out_base_mono: &mut [f32],
+        _frames: u32,
+    ) {
         if self.nodes.is_empty() {
             copy_into(near_base_mono, out_base_mono);
             return;
@@ -60,14 +73,32 @@ impl ProcessorChain {
         let mut cur_near = near_base_mono.to_vec(); // base_rate, mono
         for node in self.nodes.iter_mut() {
             let spec = node.io_spec();
-            let near_n = adapt(&cur_near, self.base_rate, 1, spec.sample_rate, spec.near_channels);
-            let far_n = adapt(far_base, self.base_rate, self.base_far_channels, spec.sample_rate, spec.far_channels);
+            let near_n = adapt(
+                &cur_near,
+                self.base_rate,
+                1,
+                spec.sample_rate,
+                spec.near_channels,
+            );
+            let far_n = adapt(
+                far_base,
+                self.base_rate,
+                self.base_far_channels,
+                spec.sample_rate,
+                spec.far_channels,
+            );
             let nc = spec.near_channels.max(1) as usize;
             let node_frames = (near_n.len() / nc) as u32;
             let mut out_n = vec![0f32; near_n.len()];
             node.process(&near_n, &far_n, &mut out_n, node_frames);
             // 回到 base 域(mono),作为下一级 near
-            cur_near = adapt(&out_n, spec.sample_rate, spec.near_channels, self.base_rate, 1);
+            cur_near = adapt(
+                &out_n,
+                spec.sample_rate,
+                spec.near_channels,
+                self.base_rate,
+                1,
+            );
         }
         copy_into(&cur_near, out_base_mono);
     }
@@ -112,7 +143,10 @@ fn adapt(input: &[f32], in_rate: u32, in_ch: u16, out_rate: u32, out_ch: u16) ->
             planes[c].push(remapped[f * chs + c]);
         }
     }
-    let resampled: Vec<Vec<f32>> = planes.iter().map(|p| resample_linear(p, in_rate, out_rate)).collect();
+    let resampled: Vec<Vec<f32>> = planes
+        .iter()
+        .map(|p| resample_linear(p, in_rate, out_rate))
+        .collect();
     let out_frames = resampled.first().map(|p| p.len()).unwrap_or(0);
     out.reserve(out_frames * chs);
     for f in 0..out_frames {

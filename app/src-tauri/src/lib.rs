@@ -124,6 +124,45 @@ fn request_system_audio() -> Result<Value, String> {
     run_json(&["doctor", "audio", "--request-system-audio", "--json"])
 }
 
+/// 主动近端延迟侦测 / AEC 链路诊断。shell `echoless probe-delay --json`:播放一串蜂鸣、
+/// 同时录 ref/mic、分析两路相对到达时差,返回 NearDelayProbeResult(含 recommended_near_delay_ms)。
+/// 约 15 秒、会外放蜂鸣 —— 故必须先停掉主 run(probe 内部自起子进程占用设备),由前端 gating。
+/// 当前后端只支持 macOS Process Tap;其它平台 CLI 会非 0 退出,错误经 stderr 透传给前端。
+#[tauri::command]
+async fn probe_delay(
+    mic: String,
+    reference: String,
+    output: String,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut args: Vec<String> = vec!["probe-delay".into(), "--json".into()];
+        // selector 透传(含 "default",与 run 同一套解析);仅空串时省略走 CLI 内置默认。
+        let opt = |flag: &str, v: &str, args: &mut Vec<String>| {
+            if !v.is_empty() {
+                args.push(flag.into());
+                args.push(v.into());
+            }
+        };
+        opt("--mic", &mic, &mut args);
+        opt("--reference", &reference, &mut args);
+        opt("--output", &output, &mut args);
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = echoless_command()
+            .args(&arg_refs)
+            .output()
+            .map_err(|e| format!("spawn echoless failed: {e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            return Err(format!("probe-delay 失败: {err}"));
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        serde_json::from_str::<Value>(&stdout)
+            .map_err(|e| format!("parse json failed: {e}; raw: {stdout}"))
+    })
+    .await
+    .map_err(|e| format!("probe task join failed: {e}"))?
+}
+
 // ---- LocalVQE 模型管理(打包默认模型 + 从官方 HF repo 下载选择) ----
 const LOCALVQE_HF_BASE: &str = "https://huggingface.co/LocalAI-io/LocalVQE/resolve/main/";
 
@@ -460,6 +499,7 @@ pub fn run() {
             list_processors,
             doctor_audio,
             request_system_audio,
+            probe_delay,
             localvqe_assets,
             download_localvqe_model,
             nvafx_doctor,

@@ -88,7 +88,9 @@ pub struct StdClock {
 }
 impl StdClock {
     pub fn new() -> Self {
-        Self { base: std::time::Instant::now() }
+        Self {
+            base: std::time::Instant::now(),
+        }
     }
 }
 impl Default for StdClock {

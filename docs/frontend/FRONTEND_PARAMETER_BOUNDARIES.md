@@ -50,6 +50,7 @@ Open Design / HTML prototype 只能作为视觉原型,不能作为配置 contrac
 | `output` | `default` | 推荐选择虚拟音频 output;只能列出实际枚举到的 output。 |
 | backend select | `sonora_aec3` | 只展示 `processors --json` 返回且当前平台可用的 kind。 |
 | `reference_channels` | `mono` | 可选 `mono`/`stereo`;默认 mono;RTX AEC 只能 mono。 |
+| `output_level` | `50` | 全局最终输出电平,不是处理器参数。范围 `0..100`;`0` 静音,`50` 原声,`100` 约 `3x` 增益。曲线为 `gain = (output_level / 50)^log2(3)`,后端在所有处理器之后统一应用并做软限幅保护。 |
 | `ns` | `false` | AEC3 内置降噪;用户需要时可开启。 |
 | `diagnostics.record_dir` | null | 可让用户选择保存目录。 |
 | `diagnostics.max_seconds` | null | 可提供 30s/45s 等录制时长。 |
@@ -59,8 +60,9 @@ Open Design / HTML prototype 只能作为视觉原型,不能作为配置 contrac
 | 参数 | 默认 | 暴露规则 |
 |---|---:|---|
 | `ns_level` | `low` | 仅在 `ns=true` 时有效;可选值只能是 `low`、`moderate`、`high`、`veryhigh`。UI 可显示 "very high",但提交值必须是 `veryhigh`。 |
-| `sample_rate` | `48000` | 首版建议锁定或放高级设置。RTX AEC 必须是 `48000`;AEC3 推荐 `48000`;不要把 `44.1k`/`96k` 作为普通推荐项。 |
+| `sample_rate` | `48000` | 这是管线采样率,首版建议锁定或放高级设置。RTX AEC 必须是 `48000`;AEC3 推荐 `48000`;不要把 `44.1k`/`96k` 作为普通推荐项。真实设备不是 48k 时由后端 I/O 重采样处理。 |
 | `frame_ms` | `10` | 首版建议锁定或放高级设置。RTX AEC 必须是 `10`;AEC3 推荐 `10`;不要把 `20ms` 作为普通推荐项。 |
+| `near_delay_ms` | macOS `25`,其他平台 `0` | 高级/校准项。范围 `0..500`;主动延迟侦测只有在推荐值大于 0 时才写入。 |
 
 ### 高级设置
 
@@ -73,6 +75,30 @@ Open Design / HTML prototype 只能作为视觉原型,不能作为配置 contrac
 | `tail_ms` | null | AEC3 echo tail 长度;最小值 4。 |
 | `delay_num_filters` | null | AEC3 延迟搜索窗;最小值 1。 |
 | `linear_stable_echo_path` | `false` | AEC3 高级调参项。 |
+
+### 主动延迟侦测可写入的参数
+
+`echoless probe-delay --json` 会测量 macOS Process Tap 或 Windows WASAPI loopback
+reference 与 mic 的相对到达时间。完整调用、
+字段解释和判读规则见 `docs/frontend/NEAR_DELAY_PROBE_HANDOFF.md`。
+
+它的结果只应直接写入:
+
+- 顶层 `near_delay_ms`: 仅当 `recommended_near_delay_ms > 0` 且测量稳定时使用该值。
+  `recommended_near_delay_ms = 0` 表示不需要主动 near 延迟,只展示诊断信息。macOS 默认是
+  `25ms`;Windows/Linux 默认是 `0ms`。
+
+可以显示但不要默认自动改:
+
+- AEC3 `initial_delay_ms`: 可把 `max(0, event_lag_mean_ms + recommended_near_delay_ms)`
+  作为高级 hint,但 AEC3 本身会动态估计,默认不需要写。
+- AEC3 `delay_num_filters`: 只有多次 probe 都显示延迟非常稳定、且后续实测需要降低 CPU/收敛范围时才考虑。
+
+不能由这次侦测推导:
+
+- `tail_ms`: 取决于房间反射和扬声器/麦克风环境。
+- `sample_rate` / `frame_ms` / `reference_channels`: 由处理器约束和设备能力决定。
+- LocalVQE / RTX AEC 的内部参数:当前没有可暴露的 delay hint;只使用顶层 `near_delay_ms`。
 
 ### LocalVQE 仅在选择该 backend 后暴露
 
@@ -141,4 +167,5 @@ macOS/Linux 上前端可以展示为 unsupported,但不应生成可运行的 `nv
 - 运行时展示 `estimated_user_latency_ms` 和 `aec_estimated_delay_ms` 时要区分语义:
   - `estimated_user_latency_ms`: 用户说话到虚拟输出前的估算延迟。
   - `aec_estimated_delay_ms`: AEC3 估计的回声路径对齐延迟。
+  - `near_delay_ms`: 我们主动加入的 near/mic 对齐延迟,会计入 `estimated_user_latency_ms`。
 - diagnostics 录制应保存 `mic.wav`、`ref.wav`、`out.wav`、`stats.csv` 和 metadata,用于用户反馈和回归分析。

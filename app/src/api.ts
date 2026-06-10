@@ -50,6 +50,36 @@ export function downloadLocalvqeModel(filename: string): Promise<string> {
   return invoke<string>("download_localvqe_model", { filename });
 }
 
+// 主动近端延迟侦测 / AEC 链路诊断。后端 shell `echoless probe-delay --json`,约 15 秒,
+// 会外放一串蜂鸣 —— 调用前必须先停掉主 run。结果字段见 docs/frontend/NEAR_DELAY_PROBE_HANDOFF.md。
+export interface NearDelayProbeResult {
+  session_dir: string;
+  session_retained: boolean;
+  ref_dbfs: number;
+  mic_dbfs: number;
+  global_lag_ms: number;
+  global_corr: number;
+  event_count: number;
+  event_detected: number;
+  event_lag_mean_ms: number;
+  event_lag_stddev_ms: number;
+  event_lag_drift_ms: number;
+  recommended_near_delay_ms: number;
+  per_beep_lags: Array<{ index: number; time_s: number; lag_ms: number; corr: number }>;
+  warnings: string[];
+}
+export function probeDelay(p: {
+  mic: string;
+  reference: string;
+  output: string;
+}): Promise<NearDelayProbeResult> {
+  return invoke<NearDelayProbeResult>("probe_delay", {
+    mic: p.mic,
+    reference: p.reference,
+    output: p.output,
+  });
+}
+
 export function nvafxDoctor(runtimeDir?: string): Promise<NvafxDoctor> {
   return invoke<NvafxDoctor>("nvafx_doctor", { runtimeDir: runtimeDir ?? null });
 }
@@ -122,6 +152,10 @@ export function startDiagnostics(
 export function stopDiagnostics(): Promise<void> {
   return sendRunControl(JSON.stringify({ cmd: "stop_diagnostics" }));
 }
+// 运行中实时改输出电平(0-100),逐 buffer 生效、零掉音。仅在 run 存活时调用。
+export function setOutputLevel(level: number): Promise<void> {
+  return sendRunControl(JSON.stringify({ cmd: "set_output_level", level }));
+}
 
 // 订阅 run 的事件流(started + status 都走这个通道)。返回取消订阅函数。
 export function onRunEvent(cb: (e: RunEvent) => void): Promise<UnlistenFn> {
@@ -143,6 +177,18 @@ export interface PipelineCfg {
   sample_rate: number;
   frame_ms: number;
   reference_channels: "mono" | "stereo";
+  // 顶层近端对齐延迟(ms)。undefined = 用后端默认(macOS 25 / 其它 0);侦测后写入实测推荐值。
+  near_delay_ms?: number;
+  // 最终输出电平 0-100(50=原声)。后端契约键名 output_level,曲线/软限幅都在后端;undefined = 50。
+  output_level?: number;
+}
+
+export const OUTPUT_LEVEL_UNITY = 50;
+// 仅用于前端 tooltip 显示当前 dB;曲线与后端 output_level_gain 完全一致(gain=(v/50)^log2(3))。
+const OUTPUT_LEVEL_EXP = Math.log2(3); // ≈1.58496
+export function outputLevelToGain(level: number): number {
+  const v = Math.max(0, Math.min(100, level));
+  return Math.pow(v / OUTPUT_LEVEL_UNITY, OUTPUT_LEVEL_EXP);
 }
 export interface DiagnosticsCfg {
   record_dir: string;
@@ -177,8 +223,13 @@ export function buildConfigToml(c: ConfigChoice): string {
     `sample_rate = ${c.pipeline.sample_rate}`,
     `frame_ms = ${c.pipeline.frame_ms}`,
     `reference_channels = ${tomlString(c.pipeline.reference_channels)}`,
-    ``,
   ];
+  // 仅在显式设过(含 0)时 emit;不设则交由后端平台默认。
+  if (c.pipeline.near_delay_ms != null)
+    lines.push(`near_delay_ms = ${c.pipeline.near_delay_ms}`);
+  // 输出电平:发原始 0-100 整数,曲线/软限幅由后端做(单一真理源,不在前端算 gain)。
+  lines.push(`output_level = ${c.pipeline.output_level ?? OUTPUT_LEVEL_UNITY}`);
+  lines.push(``);
   if (c.diagnostics) {
     lines.push(`[diagnostics]`);
     lines.push(`record_dir = ${tomlString(c.diagnostics.record_dir)}`);

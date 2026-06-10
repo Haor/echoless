@@ -17,6 +17,7 @@ import {
   openPath,
   openUrl,
   requestSystemAudio,
+  setOutputLevel,
   startDiagnostics,
   startRun,
   stopDiagnostics,
@@ -47,6 +48,7 @@ import { FooterBars, Scope, type Telemetry } from "./components/Scope";
 import { Dropdown } from "./components/Dropdown";
 import { ScrambleText } from "./components/ScrambleText";
 import { SlideSwitch } from "./components/SlideSwitch";
+import { VolumeWheel } from "./components/VolumeWheel";
 import { AdvancedPage } from "./pages/AdvancedPage";
 import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { EnginePage } from "./pages/EnginePage";
@@ -264,6 +266,11 @@ export default function App() {
           }
           if (ev.type === "control_error") {
             setErr(`${ev.cmd}: ${ev.message}`);
+            return;
+          }
+          // 实时音量变更回执:值由前端驱动,无需处理(否则会被当成 status 读到一堆 undefined,
+          // 让 MIC/REF/OUT 表瞬间跳成「—」)。
+          if (ev.type === "output_level_changed") {
             return;
           }
           // 诊断录制收尾:writer 已 finalize 文件。仅「录满 max_seconds」时
@@ -555,6 +562,13 @@ export default function App() {
     }
   }
 
+  // 延迟侦测专用:probe 需独占麦克风/输出 → AdvancedPage 在探测前后调这个停/起引擎。
+  // 恢复时走 start(),会用上探测刚写入的 near_delay/initial_delay(refs 已同步)。
+  async function setRunForProbe(on: boolean) {
+    if (on) await start();
+    else await stop();
+  }
+
   async function togglePower() {
     if (busy) return;
     if (powerOn) {
@@ -617,6 +631,7 @@ export default function App() {
   // 改单个 chain 参数(NOISE / Advanced)。
   function setParam(key: string, val: unknown) {
     const np = { ...paramsRef.current, [key]: val };
+    paramsRef.current = np; // 同步更新 ref:探测后自动恢复引擎时能立刻读到新 initial_delay_ms
     paramsByKind.current[kind] = np;
     setParams(np);
     applyChange({ params: np });
@@ -636,8 +651,19 @@ export default function App() {
   // 改管线项(Advanced:sample_rate / frame_ms / reference_channels)。
   function changePipeline(patch: Partial<PipelineCfg>) {
     const npl = { ...pipelineRef.current, ...patch };
+    pipelineRef.current = npl; // 同步更新 ref:探测后自动恢复引擎时能立刻读到新 near_delay
     setPipeline(npl);
     applyChange({ pipeline: npl });
+  }
+  // 输出音量(滚轮 0-100):落进 pipeline(下次 start 用);运行中走 stdin 实时控制,
+  // 逐 buffer 生效、零掉音(不 applyChange —— 那会 stop+start 抖音频)。
+  function changeOutVolume(v: number) {
+    const npl = { ...pipelineRef.current, output_level: v };
+    pipelineRef.current = npl;
+    setPipeline(npl);
+    if (powerOnRef.current) {
+      setOutputLevel(v).catch((e) => setErr(String(e)));
+    }
   }
   // 诊断录制开关:运行中 → 经 stdin 就地起停(不重启 run);未运行 → 仅置位,
   // 等 run 启动后由 started 处理。
@@ -1116,6 +1142,12 @@ export default function App() {
             params={params}
             onPipeline={changePipeline}
             onParam={setParam}
+            platform={platformView}
+            mic={selInput}
+            reference={reference}
+            output={selOutput}
+            running={powerOn}
+            onSetRun={setRunForProbe}
           />
         )}
         {view === "diagnostics" && (
@@ -1194,19 +1226,28 @@ export default function App() {
           </button>
         )}
         <span className="sp" />
-        {err ? (
-          <span
-            className="stamp err"
-            style={{ color: "var(--warn)", cursor: "pointer" }}
-            title={`${err} · 点击关闭`}
-            onClick={() => setErr(null)}
-          >
-            {err.length > 44 ? err.slice(0, 44) + "…" : err}{" "}
-            <span className="mk">✕</span>
-          </span>
-        ) : (
-          <span className="stamp">{stamp}</span>
-        )}
+        <span className="fright">
+          <VolumeWheel
+            volume={pipeline.output_level ?? 50}
+            onChange={changeOutVolume}
+          />
+          {err ? (
+            <span
+              className="stamp err"
+              style={{ color: "var(--warn)", cursor: "pointer" }}
+              title={`${err} · 点击关闭`}
+              onClick={() => setErr(null)}
+            >
+              {err.length > 44 ? err.slice(0, 44) + "…" : err}{" "}
+              <span className="mk">✕</span>
+            </span>
+          ) : (
+            <>
+              <span className="fdot">·</span>
+              <span className="stamp">{stamp}</span>
+            </>
+          )}
+        </span>
         <FooterBars telRef={telRef} />
       </footer>
     </div>

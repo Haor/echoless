@@ -25,6 +25,8 @@
   - `sample_rate`
   - `frame_ms`
   - `reference_channels`
+  - `near_delay_ms`
+  - `output_level`
   - `diagnostics`
   - `chain`
 - `DiagnosticsConfig`
@@ -51,6 +53,8 @@
 sample_rate = 48000
 frame_ms = 10
 reference_channels = "mono"
+near_delay_ms = 25
+output_level = 50
 
 [[chain]]
 kind = "sonora_aec3"
@@ -117,12 +121,16 @@ echoless devices --json
   "inputs": [
     {
       "id": "1",
+      "stable_id": "AppleHDAEngineInput:1B,0,1,0:1",
       "index": 1,
       "name": "MacBook Pro麦克风",
       "kind": "input",
       "is_default": true,
       "selector": "1",
       "default_sample_rate": 48000,
+      "supported_sample_rates": [
+        { "min": 48000, "max": 48000, "channels": 1, "sample_format": "f32" }
+      ],
       "channels": 1,
       "sample_format": "f32",
       "config_error": null
@@ -131,31 +139,68 @@ echoless devices --json
   "outputs": [
     {
       "id": "0",
+      "stable_id": "AppleHDAEngineOutput:1B,0,1,0:0",
       "index": 0,
       "name": "MacBook Pro扬声器",
       "kind": "output",
       "is_default": true,
       "selector": "0",
       "default_sample_rate": 48000,
+      "supported_sample_rates": [
+        { "min": 48000, "max": 48000, "channels": 2, "sample_format": "f32" }
+      ],
       "channels": 2,
       "sample_format": "f32",
       "config_error": null
     }
   ],
   "reference_sources": [
-    { "id": "system", "label": "System audio", "kind": "system" },
-    { "id": "none", "label": "No reference", "kind": "none" },
-    { "id": "input:1", "label": "MacBook Pro麦克风", "kind": "input", "device_index": 1 },
-    { "id": "output:0", "label": "MacBook Pro扬声器", "kind": "output", "device_index": 0 }
+    { "id": "system", "stable_id": "system", "label": "System audio", "kind": "system", "available": false, "hint": "macOS needs routed reference audio" },
+    { "id": "none", "stable_id": "none", "label": "No reference", "kind": "none", "available": true },
+    { "id": "input:1", "stable_id": "input:AppleHDAEngineInput:1B,0,1,0:1", "label": "MacBook Pro麦克风", "kind": "input", "device_index": 1, "available": true },
+    { "id": "output:0", "stable_id": "output:AppleHDAEngineOutput:1B,0,1,0:0", "label": "MacBook Pro扬声器", "kind": "output", "device_index": 0, "available": true }
   ]
 }
 ```
 
 注意:
 
-- 当前设备 selector 使用设备索引,跨重启不保证稳定。
-- 前端可以保存用户可识别名称作为辅助匹配。
+- `selector` 仍兼容设备索引,但前端应优先保存 `stable_id` 和用户可识别名称。
+- `supported_sample_rates` 正常为范围数组,每项含 `min`、`max`、`channels`、`sample_format`;
+  枚举失败时为 `{ "error": "..." }`。
+- 设备不原生支持管线采样率时,后端会在设备 I/O 边界重采样;前端不应因此禁止运行。
+- 当前 `stable_id` 优先来自 CPAL `DeviceId` 或设备地址,否则由设备名派生;不是最终 WASAPI endpoint id / CoreAudio UID 原生实现。
 - 某些 macOS 会话可能返回空设备数组,需要支持刷新。
+
+### 1.1 Audio Doctor
+
+已实现:
+
+```bash
+echoless doctor audio --json
+```
+
+目标语义:
+
+```json
+{
+  "ok": true,
+  "platform": "macos",
+  "virtual_output_detected": true,
+  "candidate_outputs": [{ "name": "BlackHole 2ch", "selector": "1", "stable_id": "..." }],
+  "candidate_inputs": [{ "name": "BlackHole 2ch", "selector": "4", "stable_id": "..." }],
+  "recommended_driver": "blackhole-2ch",
+  "install_status": "installed",
+  "needs_reboot": false,
+  "permission_state": "granted",
+  "system_audio_permission": "undetermined",
+  "reference_sources": []
+}
+```
+
+`install_status` 取值为 `installed` / `missing` / `unknown`。当前 macOS `permission_state` 只能基于 input 枚举做轻量估计。
+`system_audio_permission` 是 Process Tap / 系统音频录制权限态;regular doctor 不主动触发系统弹窗,
+因此 mac helper 可发现时返回 `undetermined`,helper 缺失或非 macOS 返回 `unknown`。
 
 ### 2. Processor Manifest
 
@@ -218,9 +263,26 @@ Manifest 只表达后端能力,不规定控件形态。
 echoless run --config config.toml --status-json
 ```
 
-stdout 为 JSONL status events,stderr 为人类日志。默认 1000ms 一条,可用 `--stats-interval-ms` 覆盖。
+stdout 为 JSONL events,stderr 为人类日志。音频流启动后先输出 `started`,默认 1000ms 一条
+`status`,可用 `--stats-interval-ms` 覆盖。启用 diagnostics 时,录制文件 finalize 完成后还会输出
+`diagnostics_done`。
 
 核心字段:
+
+```json
+{
+  "type": "started",
+  "backend": "sonora_aec3",
+  "sample_rate": 48000,
+  "frame_ms": 10,
+  "near_delay_ms": 25,
+  "near_delay_samples": 1200,
+  "output_level": 50,
+  "output_gain_db": 0.0,
+  "reference_source": "macos_process_tap",
+  "diagnostics_session_dir": "diagnostics/session-1765000000"
+}
+```
 
 ```json
 {
@@ -230,19 +292,42 @@ stdout 为 JSONL status events,stderr 为人类日志。默认 1000ms 一条,可
   "sample_rate": 48000,
   "frame_ms": 10,
   "backend": "sonora_aec3",
+  "near_delay_ms": 25,
+  "near_delay_buffered_samples": 1200,
+  "output_level": 50,
+  "output_gain_db": 0.0,
   "mic_dbfs": -18.2,
   "ref_dbfs": -31.0,
   "out_dbfs": -20.5,
+  "mic_wave": [0.0, 0.4, 0.2],
+  "ref_wave": [0.0, 0.1, 0.1],
+  "out_wave": [0.0, 0.3, 0.2],
   "output_queue_latency_ms": 62.5,
   "algorithmic_latency_ms": 0.0,
-  "estimated_user_latency_ms": 67.5,
+  "estimated_user_latency_ms": 92.5,
   "aec_estimated_delay_ms": 48,
   "input_drops": 0,
   "ref_underruns": 0,
   "output_underruns": 0,
   "runtime_errors": 0,
   "diverged": false,
-  "diagnostics_session_dir": "diagnostics/session-1765000000"
+  "diagnostics_session_dir": "diagnostics/session-1765000000",
+  "recording": true,
+  "diagnostics_frames": 48000,
+  "diagnostics_elapsed_s": 1.0,
+  "diagnostics_drops": 0
+}
+```
+
+```json
+{
+  "type": "diagnostics_done",
+  "session_dir": "diagnostics/session-1765000000",
+  "frames": 480000,
+  "seconds": 10.0,
+  "reason": "max_seconds",
+  "drops": 0,
+  "ok": true
 }
 ```
 
@@ -251,6 +336,7 @@ stdout 为 JSONL status events,stderr 为人类日志。默认 1000ms 一条,可
 ```text
 estimated_user_latency_ms =
   frame_ms / 2
+  + near_delay_ms
   + algorithmic_latency_ms
   + out_q_samples / sample_rate * 1000
 ```
@@ -258,6 +344,7 @@ estimated_user_latency_ms =
 字段语义:
 
 - `estimated_user_latency_ms`: 用户说话到进入虚拟输出设备前的估算延迟。
+- `near_delay_ms`: Echoless 在处理器前主动延后 near/mic 的固定对齐延迟。
 - `aec_estimated_delay_ms`: AEC3 对回声路径的动态对齐估计。
 - `output_queue_latency_ms`: 输出队列贡献的延迟。
 
@@ -356,6 +443,7 @@ echoless config validate --config config.toml --json
 - `reference`
 - `output`
 - `reference_channels`
+- `output_level`
 - `diagnostics.record_dir`
 - `diagnostics.max_seconds`
 - `ns`
@@ -365,6 +453,7 @@ echoless config validate --config config.toml --json
 
 - `sample_rate`
 - `frame_ms`
+- `near_delay_ms`
 - `agc`
 - `initial_delay_ms`
 - `tail_ms`
@@ -418,15 +507,15 @@ UpdateService
 | 模块 | 完成度 | 前端可接入程度 | 说明 |
 |---|---:|---|---|
 | CLI text commands | 90% | 可用 | `devices/processors/run/offline/nvafx` 保留 |
-| JSON devices | 75% | 可接 | schema 可用;设备为空态需处理 |
+| JSON devices | 85% | 可接 | schema 可用;含 `stable_id` 与 reference availability;设备为空态需处理 |
 | JSON processor manifest | 85% | 可接 | 参数 manifest 可用;已去掉 UI 指令字段 |
-| Config validate JSON | 75% | 可接 | 结构校验可用 |
+| Config validate JSON | 80% | 可接 | 结构校验可用;常见字段错误有 path |
 | Realtime AEC3 | 80% | 可接 | 主路径可用;真实设备仍要继续调参 |
-| Runtime JSONL status | 80% | 可接 | 电平、延迟、drop、runtime error 已输出 |
+| Runtime JSONL status | 85% | 可接 | started event、电平、波形、延迟、drop、runtime error 已输出 |
 | Diagnostics recording | 85% | 可接 | WAV/stats/metadata 可用 |
 | LocalVQE backend | 60% | 实验可接 | 真实推理已接入,音质仍需测试 |
 | RTX AEC backend | 70% | Windows 可接 | doctor/install/offline/realtime 已有 |
-| External audio device doctor | 20% | 暂由前端设备名识别 | 后续可加 `doctor audio --json` |
+| External audio device doctor | 70% | 可接 | `doctor audio --json` 可用;权限状态仍是轻量估计 |
 | Config save/load | 60% | 前端自行实现 | 后端有 schema 和 validate |
 | Process lifecycle API | 60% | sidecar 可实现 | 首版 spawn/stop;后续抽 runtime |
 | Product auto update | 10% | 预留接口 | 见 update strategy |
@@ -446,8 +535,9 @@ UpdateService
 
 - `echoless devices --json` 可被前端直接消费。
 - `echoless processors --json` 提供 backend/参数 manifest。
-- `echoless run --status-json` 持续输出 status event。
-- status event 包含电平、延迟、drop/underrun、runtime error。
+- `echoless doctor audio --json` 可被前端直接消费。
+- `echoless run --status-json` 先输出 started event,随后持续输出 status event。
+- status event 包含电平、波形、延迟、drop/underrun、runtime error。
 - `echoless config validate --config <file> --json` 可用。
 - `echoless run --config configs/example.toml` 继续可用。
 - `echoless offline` 继续可用。

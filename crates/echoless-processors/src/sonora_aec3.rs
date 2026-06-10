@@ -42,7 +42,7 @@ impl Default for Aec3Tuning {
             delay_num_filters: None,
             linear_stable_echo_path: false,
             ns: false,
-            ns_level: "moderate".into(),
+            ns_level: "low".into(),
             agc: false,
             far_channels: 1,
         }
@@ -54,6 +54,17 @@ impl Aec3Tuning {
     /// 注:ns/agc 属高层 APM 配置,不影响 aec3_config 注入,故不计入。
     fn aec3_is_default(&self) -> bool {
         self.tail_ms.is_none() && self.delay_num_filters.is_none() && !self.linear_stable_echo_path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aec3_default_ns_level_matches_frontend_contract() {
+        let tuning = Aec3Tuning::default();
+        assert_eq!(tuning.ns_level, "low");
     }
 }
 

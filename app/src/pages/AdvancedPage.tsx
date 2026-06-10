@@ -1,5 +1,6 @@
-import type { ParamSpec, Processor } from "../types";
-import type { PipelineCfg } from "../api";
+import { useEffect, useRef, useState } from "react";
+import type { ParamSpec, Platform, Processor } from "../types";
+import { probeDelay, type NearDelayProbeResult, type PipelineCfg } from "../api";
 import { useI18n, type Lang } from "../i18n";
 import { Hint } from "../components/Hint";
 import { Field, SegButtons } from "../components/Controls";
@@ -11,7 +12,24 @@ interface Props {
   params: Record<string, unknown>;
   onPipeline: (patch: Partial<PipelineCfg>) => void;
   onParam: (key: string, val: unknown) => void;
+  platform: Platform;
+  // 延迟侦测用:当前设备 selector(透传给 probe-delay)+ 是否在跑 + 停/起引擎回调。
+  mic: string;
+  reference: string;
+  output: string;
+  running: boolean;
+  onSetRun: (on: boolean) => Promise<void>;
 }
+
+// 蜂鸣节奏(对齐 CLI:startup 4s + pre-roll 0.5s,每声 70ms / 间隔 650ms ≈ 720ms,共 12 声)。
+const PROBE_BEEPS = 12;
+const PROBE_FIRST_MS = 4500;
+const PROBE_STEP_MS = 720;
+// 信号判定阈值:dBFS 低于此视为没收到。
+const PROBE_SIG_DBFS = -55;
+// mac 上 near_delay 被侦测设非零时,顺带给 AEC3 一个 8ms 初始延迟 hint,
+// 减少初始 echo-path 搜索(实测有效)。仅 AEC3、仅 macOS、仅 recommended>0 时写。
+const PROBE_INIT_DELAY_MS = 8;
 
 // 参数说明(悬浮 label 时提示)。缺省键无提示。
 const DESC: Record<string, { en: string; zh: string }> = {
@@ -32,9 +50,13 @@ const DESC: Record<string, { en: string; zh: string }> = {
     en: "Off by default; avoids volume pumping (loud/quiet swings).",
     zh: "默认关闭,避免音量泵动(忽大忽小)。",
   },
+  near_delay_ms: {
+    en: "Top-level near/mic alignment delay. Empty = backend default (macOS 25, others 0). Probe fills the measured value (incl. 8ms AEC safety).",
+    zh: "顶层近端对齐延迟。留空走后端默认(macOS 25 / 其它 0)。侦测会填入实测值(含 8ms AEC 安全余量)。",
+  },
   initial_delay_ms: {
-    en: "Initial stream delay hint; runtime still estimates dynamically.",
-    zh: "初始延迟提示;运行时仍会动态估计。",
+    en: "Initial stream delay hint; runtime still estimates dynamically. On macOS the probe writes it: 8ms when a near delay is applied, else the measured echo delay.",
+    zh: "初始延迟提示;运行时仍会动态估计。macOS 上侦测会写入:设了近端延迟时写 8ms,否则写实测 echo 延迟。",
   },
   tail_ms: {
     en: "Echo tail length. Auto ≈ AEC3 default (~52ms).",
@@ -74,10 +96,105 @@ export function AdvancedPage({
   params,
   onPipeline,
   onParam,
+  platform,
+  mic,
+  reference,
+  output,
+  running,
+  onSetRun,
 }: Props) {
   const { t, lang, setLang } = useI18n();
   const proc = processors.find((p) => p.kind === kind);
   const desc = (k: string) => DESC[k]?.[lang];
+
+  // ---- 延迟侦测 / AEC 链路诊断 ----
+  const [probing, setProbing] = useState(false);
+  // 探测阶段:暂停引擎 → 侦测中 → 恢复引擎(给出明确反馈,不闷声)。
+  const [phase, setPhase] = useState<"" | "pausing" | "probing" | "restoring">("");
+  const [lit, setLit] = useState(0); // 已点亮的进度点(定时驱动,贴合蜂鸣节奏)
+  const [probe, setProbe] = useState<NearDelayProbeResult | null>(null);
+  const [probeErr, setProbeErr] = useState<string | null>(null);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (timer.current != null) window.clearInterval(timer.current);
+  }, []);
+
+  // mac + AEC3 下,侦测要写入的 AEC3 initial_delay_ms(减少初始 echo-path 搜索):
+  //   负 lag(recommended>0)→ 固定 8ms 安全值;
+  //   正常正 lag(recommended==0)→ 实测 echo delay 取整(需稳定,避免写进抖动值)。
+  // 不满足条件返回 null(不写)。
+  const initFor = (r: NearDelayProbeResult): number | null => {
+    if (platform !== "macos" || kind !== "sonora_aec3") return null;
+    if (r.recommended_near_delay_ms > 0) return PROBE_INIT_DELAY_MS;
+    const stable =
+      r.warnings.length === 0 &&
+      Math.abs(r.event_lag_stddev_ms) < 5 &&
+      Math.abs(r.event_lag_drift_ms) < 10;
+    const measured = Math.round(r.event_lag_mean_ms);
+    return stable && measured >= 1 ? measured : null;
+  };
+
+  async function runProbe() {
+    if (probing) return;
+    setProbing(true);
+    setProbe(null);
+    setProbeErr(null);
+    setLit(0);
+    // 引擎在跑 → probe 要独占设备:先自动停机,跑完在 finally 自动恢复。
+    const wasRunning = running;
+    try {
+      if (wasRunning) {
+        setPhase("pausing");
+        await onSetRun(false);
+      }
+      setPhase("probing");
+      const t0 = Date.now();
+      if (timer.current != null) window.clearInterval(timer.current);
+      timer.current = window.setInterval(() => {
+        const el = Date.now() - t0;
+        const n = Math.max(
+          0,
+          Math.min(PROBE_BEEPS, Math.floor((el - PROBE_FIRST_MS) / PROBE_STEP_MS) + 1),
+        );
+        setLit(n);
+      }, 100);
+      const r = await probeDelay({ mic, reference, output });
+      setProbe(r);
+      // 自动把实测推荐值填进 near_delay_ms(含 8ms AEC 安全余量,后端已算好)。
+      onPipeline({ near_delay_ms: r.recommended_near_delay_ms });
+      // mac + AEC3 → 顺带写 AEC3 initial_delay_ms(负 lag 写 8ms 安全值,正常正 lag 写实测延迟)。
+      const init = initFor(r);
+      if (init != null) onParam("initial_delay_ms", init);
+    } catch (e) {
+      setProbeErr(String(e));
+    } finally {
+      if (timer.current != null) {
+        window.clearInterval(timer.current);
+        timer.current = null;
+      }
+      setLit(PROBE_BEEPS);
+      // 恢复引擎(用上刚写入的 near_delay/initial_delay);失败不阻塞 UI。
+      if (wasRunning) {
+        setPhase("restoring");
+        try {
+          await onSetRun(true);
+        } catch {
+          /* 恢复失败时用户可手动开机 */
+        }
+      }
+      setPhase("");
+      setProbing(false);
+    }
+  }
+
+  // 简短诊断读数(诊断为主):Ref/Mic 是否收到、echo 方向、稳定性、推荐。
+  const probeStable =
+    !!probe &&
+    probe.warnings.length === 0 &&
+    Math.abs(probe.event_lag_stddev_ms) < 5 &&
+    Math.abs(probe.event_lag_drift_ms) < 10;
+  // 同时自动写入的 AEC3 initial_delay_ms 值(读数里透明显示,不静默改);未写则 null。
+  const initWritten = probe ? initFor(probe) : null;
 
   const reqMet = (spec: ParamSpec) =>
     !spec.requires ||
@@ -199,6 +316,97 @@ export function AdvancedPage({
           <div className="pnote">no parameters</div>
         )}
         {backendParams.map(([key, spec]) => arow(key, key, spec))}
+      </div>
+
+      <div className="asec">// {t("secProbe")}</div>
+      <div className="aprobe">
+        <div className="arow">
+          <Hint text={desc("near_delay_ms")}>
+            <span className="alabel">{t("nearDelay")}</span>
+          </Hint>
+          <span className="aval">
+            <Field
+              value={pipeline.near_delay_ms}
+              numeric
+              placeholder={t("auto")}
+              onCommit={(v) =>
+                onPipeline({
+                  near_delay_ms: v == null ? undefined : Number(v),
+                })
+              }
+            />
+          </span>
+        </div>
+        <div className="apright">
+        <div className="prow">
+          <button className="dopen pbtn" disabled={probing} onClick={runProbe}>
+            {probing ? t("probing") : t("probeRun")}{" "}
+            <span className="mk">{probing ? "•••" : "↻"}</span>
+          </button>
+          <span className="pnote">
+            {phase === "pausing"
+              ? t("probePausing")
+              : phase === "restoring"
+                ? t("probeRestoring")
+                : probing
+                  ? t("probeQuiet")
+                  : running
+                    ? t("probeAutoPause")
+                    : t("probeQuiet")}
+          </span>
+        </div>
+
+        {(probing || lit > 0) && !probeErr && (
+          <div className="pdots">
+            {Array.from({ length: PROBE_BEEPS }, (_, i) => (
+              <i key={i} className={`pdot ${i < lit ? "on" : ""}`} />
+            ))}
+          </div>
+        )}
+
+        {probe && !probeErr && (
+          <div className="presult">
+            <span className="pline">
+              <b className={probe.ref_dbfs >= PROBE_SIG_DBFS ? "ok" : "miss"}>
+                {t("probeRef")} {probe.ref_dbfs >= PROBE_SIG_DBFS ? t("probeOk") : t("probeNoSig")}
+              </b>
+              <span className="psep">·</span>
+              <b className={probe.mic_dbfs >= PROBE_SIG_DBFS ? "ok" : "miss"}>
+                {t("probeMic")} {probe.mic_dbfs >= PROBE_SIG_DBFS ? t("probeOk") : t("probeNoSig")}
+              </b>
+              <span className="psep">·</span>
+              <span>
+                {t("probeEcho")}{" "}
+                <b>{`${probe.event_lag_mean_ms >= 0 ? "+" : ""}${probe.event_lag_mean_ms.toFixed(1)}ms`}</b>
+              </span>
+              <span className="psep">·</span>
+              <span className={probeStable ? "ok" : "miss"}>
+                {probeStable ? t("probeStable") : t("probeUnstable")}
+              </span>
+            </span>
+            <span className="pline sub">
+              {probe.recommended_near_delay_ms > 0 ? (
+                <span className="ok">
+                  {t("probeRec")} {probe.recommended_near_delay_ms}ms · {t("probeFilled")}
+                  {initWritten != null && ` · ${t("probeInit")} ${initWritten}ms`}
+                </span>
+              ) : (
+                <span>
+                  {t("probeNoFix")}
+                  {initWritten != null && (
+                    <span className="ok"> · {t("probeInit")} {initWritten}ms</span>
+                  )}
+                </span>
+              )}
+              {probe.warnings.length > 0 && (
+                <span className="miss"> · {probe.warnings.join("; ")}</span>
+              )}
+            </span>
+          </div>
+        )}
+
+        {probeErr && <div className="perr">{probeErr}</div>}
+        </div>
       </div>
 
       <div className="asec">// {t("secSession")}</div>

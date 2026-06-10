@@ -20,7 +20,12 @@ impl EchoProcessor for Passthrough {
         "passthrough"
     }
     fn io_spec(&self) -> IoSpec {
-        IoSpec { sample_rate: 48000, near_channels: 1, far_channels: 1, algorithmic_latency_ms: 0.0 }
+        IoSpec {
+            sample_rate: 48000,
+            near_channels: 1,
+            far_channels: 1,
+            algorithmic_latency_ms: 0.0,
+        }
     }
     fn configure(&mut self, _params: &toml::Table) -> anyhow::Result<()> {
         Ok(())

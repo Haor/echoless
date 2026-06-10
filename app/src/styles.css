@@ -319,6 +319,106 @@ body {
   width: 340px;
 }
 
+/* Advanced · 延迟侦测 / AEC 链路诊断:左列 near_delay,右列 run probe + 进度 + 结果 */
+.aprobe {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 40px;
+  align-items: start;
+}
+.aprobe .arow {
+  height: 42px;
+}
+/* 右列:把侦测按钮、进度点、诊断读数纵向堆在空出来的右半区 */
+.apright {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  /* 预留结果区高度:诊断信息出现时不再把 SESSION/Language 往下挤 */
+  min-height: 92px;
+}
+.prow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.pbtn {
+  flex: none;
+  white-space: nowrap;
+  padding: 0; /* 去掉 <button> 默认内边距,左缘对齐下方进度点与读数 */
+}
+.pnote {
+  color: var(--t-faint);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 12 点进度:蜂鸣一声亮一个 */
+.pdots {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  height: 12px;
+}
+.pdot {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  transition:
+    background-color 0.12s,
+    border-color 0.12s;
+}
+.pdot.on {
+  background: var(--t);
+  border-color: var(--t);
+}
+/* 简短诊断读数 */
+.presult {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.pline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--t-soft);
+}
+.pline.sub {
+  font-size: 11px;
+  color: var(--t-faint);
+}
+.pline b {
+  font-weight: 600;
+}
+.pline .ok,
+.presult .ok {
+  color: var(--live);
+}
+.pline .miss,
+.presult .miss {
+  color: var(--warn);
+}
+.psep {
+  color: var(--t-faint);
+}
+.perr {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--warn);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 100%;
+}
+
 /* Diagnostics:路径行 / 健康计数 */
 .drow {
   display: flex;
@@ -1654,6 +1754,31 @@ hr.hair {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 右侧状态组:音量 · 规格戳 紧凑成行(用 fdot 分隔,不吃 fbar 的 18px 大间隔) */
+.fbar .fright {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.fbar .fdot {
+  color: var(--t-faint);
+}
+/* 输出音量:悬停 + 滚轮调节,贴合规格戳风格 */
+.fbar .vol {
+  flex: none;
+  color: var(--t-faint);
+  white-space: nowrap;
+  user-select: none;
+}
+.fbar .vol:hover {
+  color: var(--t-soft);
+}
+/* 悬停浮现的 dB(字符动画):同 stamp 的点分隔视觉;保留 "dB" 小写单位 */
+.fbar .vol .voldb {
+  color: var(--t-soft);
+  text-transform: none;
 }
 .fbar .bg {
   display: flex;

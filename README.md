@@ -8,7 +8,9 @@
 
 - 真实 WebRTC AEC3 路径:vendored `sonora` fork + `sonora_aec3` 处理器。
 - 实时主路径:`echoless run --config configs/example.toml` 走 `cpal` + ringbuf。
+- 设备 I/O 边界已支持固定比率线性重采样:非 48k/16k 原生采样率的 mic/reference/output 可打开后适配到管线采样率。
 - far reference 可用 `reference_channels = "mono" | "stereo"` 切换;默认 mono,stereo 用于外放 L/R 对比试听。
+- 最终输出电平可用顶层 `output_level = 0..100` 调整:0 静音,50 原声,100 约 3x 增益;曲线为 `gain = (output_level / 50)^log2(3)`,后端在所有处理器之后统一应用并做软限幅保护。
 - 离线评测:`echoless offline` 仍可用。
 - LocalVQE 已通过动态 C ABI 接入 `localvqe` 处理器;CI 会构建上游 shared library、跑 regression,再跑 Echoless FFI smoke。
 - NVIDIA AFX / RTX AEC 已作为 Windows-only 可选 backend 接入:`doctor` / 本地 runtime install / 离线 WAV / 实时 `nvidia_afx_aec`。
@@ -39,6 +41,7 @@ sonora 经典 AEC3、LocalVQE、RTX AEC 都是平级 `EchoProcessor` 节点。
 
 `ProcessorChain` 自动处理处理器边界的采样率/声道适配与 far ref 分发。
 当前边界 SRC 仍是占位线性重采样;LocalVQE 已可真实推理,但最终音质版仍应把边界 SRC 换成有状态实现。
+设备 I/O 边界也使用固定比率线性 SRC;这能解锁 24k/44.1k 等真实设备,但还不是 drift 自适应高质量 SRC。
 
 LocalVQE 推理约束见 `docs/localvqe_inference.md`:上游 C API 是 16 kHz mono
 mic + mono far reference,streaming hop 为 256 samples/16 ms。
@@ -79,6 +82,11 @@ cargo run -- nvafx doctor --json
 cargo run -- devices --json
 cargo run -- processors --json
 cargo run -- config validate --config configs/example.toml --json
+
+# macOS/Windows:主动侦测 reference 与 mic 的对齐延迟
+cargo run -- probe-delay --json
+# 保留本次校准的 mic/ref/out WAV 与 stats.csv
+cargo run -- probe-delay --json --keep-session
 
 # 从本地 zip 安装 RTX AEC runtime 与当前 GPU 架构模型
 cargo run -- nvafx install \

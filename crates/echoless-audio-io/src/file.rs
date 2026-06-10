@@ -23,14 +23,23 @@ impl WavFileSource {
         let reader = WavReader::open(path).with_context(|| format!("打开 WAV 失败: {path}"))?;
         let spec = reader.spec();
         let samples: Vec<f32> = match spec.sample_format {
-            SampleFormat::Float => reader.into_samples::<f32>().map(|s| s.unwrap_or(0.0)).collect(),
+            SampleFormat::Float => reader
+                .into_samples::<f32>()
+                .map(|s| s.unwrap_or(0.0))
+                .collect(),
             SampleFormat::Int => {
                 let max = (1i64 << (spec.bits_per_sample - 1)) as f32;
-                reader.into_samples::<i32>().map(|s| s.unwrap_or(0) as f32 / max).collect()
+                reader
+                    .into_samples::<i32>()
+                    .map(|s| s.unwrap_or(0) as f32 / max)
+                    .collect()
             }
         };
         Ok(Self {
-            format: AudioFormat { sample_rate: spec.sample_rate, channels: spec.channels },
+            format: AudioFormat {
+                sample_rate: spec.sample_rate,
+                channels: spec.channels,
+            },
             samples,
             pos_frames: 0,
             frames_per_read: frames_per_read.max(1),
@@ -53,8 +62,8 @@ impl AudioSource for WavFileSource {
         let start = self.pos_frames * ch;
         let end = start + take * ch;
         let data = self.samples[start..end].to_vec();
-        let timestamp_ns = (self.pos_frames as u128 * 1_000_000_000u128
-            / self.format.sample_rate as u128) as u64;
+        let timestamp_ns =
+            (self.pos_frames as u128 * 1_000_000_000u128 / self.format.sample_rate as u128) as u64;
         let device_pos = self.pos_frames as u64;
         self.pos_frames += take;
         Ok(Some(OwnedPacket {
@@ -78,7 +87,10 @@ pub struct WavFileSink {
 
 impl WavFileSink {
     pub fn new(path: &str) -> Self {
-        Self { path: path.to_string(), writer: None }
+        Self {
+            path: path.to_string(),
+            writer: None,
+        }
     }
 }
 

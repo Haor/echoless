@@ -66,7 +66,11 @@ fn run(delay: usize, far_stereo: bool, set_delay_ms: Option<i32>) -> (f32, f32, 
             let r = refsig(n);
             far_l[j] = r;
             far_r[j] = r;
-            near[j] = if n >= delay { 0.5 * refsig(n - delay) } else { 0.0 };
+            near[j] = if n >= delay {
+                0.5 * refsig(n - delay)
+            } else {
+                0.0
+            };
         }
         if far_stereo {
             let _ = apm.process_render_f32(&[&far_l, &far_r], &mut [&mut fo_l, &mut fo_r]);

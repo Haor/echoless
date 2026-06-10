@@ -9,7 +9,9 @@ pub struct NullSource {
 }
 impl NullSource {
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into() }
+        Self {
+            label: label.into(),
+        }
     }
 }
 impl AudioSource for NullSource {
@@ -27,7 +29,9 @@ pub struct NullSink {
 }
 impl NullSink {
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into() }
+        Self {
+            label: label.into(),
+        }
     }
 }
 impl AudioSink for NullSink {
