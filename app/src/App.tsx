@@ -58,6 +58,11 @@ import { simNvafxDoctor, type RtxState } from "./nvafx";
 import { simMicDoctor, type MicState } from "./mic";
 
 const appWindow = getCurrentWindow();
+const REQUIRED_RUN_CONTROLS = [
+  "start_diagnostics",
+  "stop_diagnostics",
+  "set_output_level",
+];
 
 // 系统设置 › 隐私与安全性(系统音频录制权限在此开启;具体面板随 macOS 版本)。
 const SYS_AUDIO_PRIVACY_URL =
@@ -197,6 +202,8 @@ export default function App() {
   const telRef = useRef<Telemetry>({ mic: -120, ref: -120, out: -120, on: false });
   // 当前 run 实际生效的参考源(由 started 给出),供 status 判断是否 Process Tap。
   const refSourceRef = useRef<string | null>(null);
+  const cliVersionRef = useRef<string | null>(null);
+  const runControlsRef = useRef<Set<string> | null>(null);
   // 子进程最近一条 stderr 日志(用于在非预期退出时报错)。
   const lastLogRef = useRef<string>("");
   const runningRef = useRef(running);
@@ -217,8 +224,22 @@ export default function App() {
   diagDirRef.current = diagDir;
   const { t } = useI18n();
 
+  function hasRunControl(cmd: string): boolean {
+    return runControlsRef.current?.has(cmd) ?? false;
+  }
+
+  function reportMissingRunControl(cmd: string) {
+    setErr(
+      `CLI ${cliVersionRef.current ?? "unknown"} does not support runtime control "${cmd}". Rebuild or replace the bundled echoless CLI.`,
+    );
+  }
+
   // 录制就地起停命令(运行中改录制态用 stdin,不重启 run)。
   function startDiag() {
+    if (!hasRunControl("start_diagnostics")) {
+      reportMissingRunControl("start_diagnostics");
+      return;
+    }
     if (diagDirRef.current) {
       startDiagnostics(diagDirRef.current, diagSecondsRef.current).catch((e) =>
         setErr(String(e)),
@@ -246,6 +267,18 @@ export default function App() {
           if (ev.type === "started") {
             telRef.current.on = true;
             setRunning(true);
+            cliVersionRef.current = ev.cli_version ?? null;
+            runControlsRef.current = Array.isArray(ev.supported_controls)
+              ? new Set(ev.supported_controls)
+              : null;
+            const missingControls = REQUIRED_RUN_CONTROLS.filter(
+              (cmd) => !hasRunControl(cmd),
+            );
+            if (missingControls.length > 0) {
+              setErr(
+                `CLI ${cliVersionRef.current ?? "unknown"} is missing runtime controls: ${missingControls.join(", ")}. Rebuild or replace the bundled echoless CLI.`,
+              );
+            }
             refSourceRef.current = ev.reference_source ?? null;
             setIo({
               mic: Boolean(ev.io_resampling?.mic),
@@ -335,6 +368,8 @@ export default function App() {
           setRunning(false);
           setIo(null);
           refSourceRef.current = null;
+          cliVersionRef.current = null;
+          runControlsRef.current = null;
           // 后端按子进程标记:intentional=主动停/重启 → 正常,不报错。
           if (ev.intentional) return;
           // 非预期退出(子进程自己挂了,如设备不支持采样率)→ 如实反映失败 + 报错。
@@ -662,6 +697,10 @@ export default function App() {
     pipelineRef.current = npl;
     setPipeline(npl);
     if (powerOnRef.current) {
+      if (!hasRunControl("set_output_level")) {
+        reportMissingRunControl("set_output_level");
+        return;
+      }
       setOutputLevel(v).catch((e) => setErr(String(e)));
     }
   }
@@ -672,7 +711,13 @@ export default function App() {
     recRef.current = on;
     if (!powerOnRef.current) return;
     if (on) startDiag();
-    else stopDiagnostics().catch((e) => setErr(String(e)));
+    else {
+      if (!hasRunControl("stop_diagnostics")) {
+        reportMissingRunControl("stop_diagnostics");
+        return;
+      }
+      stopDiagnostics().catch((e) => setErr(String(e)));
+    }
   }
   // 时长 / 目录:仅更新状态。录制中改动 → 重发 start_diagnostics 让新参数立即生效
   // (后端先收尾旧 session 再开新的)。

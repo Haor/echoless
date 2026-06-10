@@ -199,6 +199,9 @@ enum RuntimeControlCommand {
     SetOutputLevel(u32),
 }
 
+const SUPPORTED_RUNTIME_CONTROLS: &[&str] =
+    &["start_diagnostics", "stop_diagnostics", "set_output_level"];
+
 #[derive(Debug)]
 enum RuntimeControlEvent {
     Command(RuntimeControlCommand),
@@ -425,6 +428,8 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
     let control = options.status_json.then(spawn_control_reader);
     let started_event = json!({
         "type": "started",
+        "cli_version": env!("CARGO_PKG_VERSION"),
+        "supported_controls": SUPPORTED_RUNTIME_CONTROLS,
         "backend": backend.as_str(),
         "sample_rate": sample_rate,
         "frame_ms": cfg.frame_ms,
@@ -3301,6 +3306,13 @@ mod tests {
         let err =
             parse_runtime_control_command(r#"{"cmd":"set_output_level","level":101}"#).unwrap_err();
         assert!(err.to_string().contains("<= 100"));
+    }
+
+    #[test]
+    fn runtime_control_capabilities_match_frontend_commands() {
+        assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"start_diagnostics"));
+        assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"stop_diagnostics"));
+        assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_output_level"));
     }
 
     #[test]

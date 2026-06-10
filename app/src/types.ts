@@ -167,6 +167,8 @@ export interface OutputLevelChangedEvent {
 // run --status-json 在音频流启动后先发的一条事件。
 export interface StartedEvent {
   type: "started";
+  cli_version?: string;
+  supported_controls?: string[];
   backend: string;
   sample_rate: number;
   frame_ms: number;
