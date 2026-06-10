@@ -23,7 +23,7 @@ Last updated: 2026-06-10
 | QUAL-3 | P3 realtime | todo | - | LocalVQE streaming buffer allocation/drain fix |
 | QUAL-4 | P3 realtime | todo | - | Online waveform bucket aggregation |
 | ROB-2 | P3 realtime | done | `e937bdf` | `request_finish` now preserves the diagnostic writer `JoinHandle` so `Drop` can join and finalize WAV/stats files; regression test covers stop-triggered finalize without leftover `.part` files. Verified with `cargo test -p echoless-cli diagnostic_recorder --locked`; `cargo fmt -p echoless-cli --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo test --workspace --locked` |
-| SON-1 | P3 realtime | todo | - | Surface sonora process errors |
+| SON-1 | P3 realtime | done | `da2c04a` | Sonora backend `Result` errors now update `runtime_error_count` and `last_backend_error` through `ProcessorStats`, with capture-error bypass fallback and regression coverage for a reachable backend error. Verified with `cargo test -p echoless-processors sonora_backend_errors_are_reported_in_stats --locked`; `cargo test -p echoless-processors --locked`; `cargo fmt -p echoless-processors --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo test --workspace --locked` |
 | SEC-1 | P4 hardening | todo | - | Validate `open_url` scheme or use opener plugin |
 | SEC-2 | P4 hardening | todo | - | Prefer embedded nvafx pin hashes for default release |
 | SEC-3 | P4 hardening | todo | - | Replace fixed temp TOML paths |
