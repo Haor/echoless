@@ -541,17 +541,55 @@ fn nvafx_download_install(
 /// 在系统默认浏览器打开外部链接(驱动 / VC++ 下载页)。
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    let (prog, args): (&str, Vec<&str>) = ("open", vec![&url]);
-    #[cfg(target_os = "windows")]
-    let (prog, args): (&str, Vec<&str>) = ("cmd", vec!["/C", "start", "", &url]);
-    #[cfg(target_os = "linux")]
-    let (prog, args): (&str, Vec<&str>) = ("xdg-open", vec![&url]);
+    let url = validate_browser_url(&url)?;
+    let (prog, args) = browser_open_command(&url);
     Command::new(prog)
         .args(&args)
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn validate_browser_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("URL 不能为空".to_string());
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err("URL 不能包含空白或控制字符".to_string());
+    }
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err("仅允许打开 http(s) URL".to_string());
+    }
+
+    let host_start = trimmed
+        .find("://")
+        .map(|idx| idx + 3)
+        .unwrap_or(trimmed.len());
+    let host_end = trimmed[host_start..]
+        .find(['/', '?', '#'])
+        .map(|idx| host_start + idx)
+        .unwrap_or(trimmed.len());
+    if host_start == host_end {
+        return Err("URL 缺少主机名".to_string());
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn browser_open_command(url: &str) -> (&'static str, Vec<String>) {
+    #[cfg(target_os = "macos")]
+    return ("open", vec![url.to_string()]);
+    #[cfg(target_os = "windows")]
+    return (
+        "rundll32.exe",
+        vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
+    );
+    #[cfg(target_os = "linux")]
+    return ("xdg-open", vec![url.to_string()]);
 }
 
 /// 诊断录制默认目录(绝对路径,session-* 会写在其下)。
@@ -811,5 +849,50 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn validates_only_plain_http_browser_urls() {
+        assert_eq!(
+            validate_browser_url(" https://example.com/download?x=1 ").unwrap(),
+            "https://example.com/download?x=1"
+        );
+        assert_eq!(
+            validate_browser_url("http://example.com/#drivers").unwrap(),
+            "http://example.com/#drivers"
+        );
+
+        for bad in [
+            "",
+            "https://",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "mailto:test@example.com",
+            "/Applications/Echoless.app",
+            "https://example.com/a b",
+            "https://example.com/\ncmd",
+        ] {
+            assert!(validate_browser_url(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn browser_open_command_avoids_windows_cmd_shell() {
+        let (prog, args) = browser_open_command("https://example.com");
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(prog, "rundll32.exe");
+            assert!(!args.iter().any(|arg| arg == "cmd" || arg == "/C"));
+        }
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            (prog, args),
+            ("open", vec!["https://example.com".to_string()])
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            (prog, args),
+            ("xdg-open", vec!["https://example.com".to_string()])
+        );
     }
 }
