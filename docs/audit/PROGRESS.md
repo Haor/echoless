@@ -44,7 +44,7 @@ Last updated: 2026-06-10
 | ARCH-2 | P6 architecture | todo | - | Decide and resolve dead `echoless-core` realtime abstraction |
 | ARCH-3 | P6 architecture | todo | - | Decide subprocess hot-control vs in-process core path |
 | FE-3 | P6 architecture | todo | - | Stop treating every config change as a full run restart |
-| TEST-3 | P7 cleanup | todo | - | Add chain resampling/channel/output-level boundary tests |
+| TEST-3 | P7 cleanup | done | `b074fd9` | Chain tests now cover 48k -> 16k processor-boundary resampling, warmed adapter reuse, stereo far reference preservation, and direct BoundaryAdapter stereo->mono / mono->stereo channel adaptation; core tests cover frame-size overflow and output-level mute/unity/boost/soft-limit plus out-of-contract `u32::MAX` clamping. Verified with `cargo test -p echoless-processors chain::tests --locked`; `cargo test -p echoless-core --locked`; `cargo fmt -p echoless-processors -p echoless-core --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo test --workspace --locked`; `git diff --check`; `graphify update echoless` |
 
 ## Notes
 
