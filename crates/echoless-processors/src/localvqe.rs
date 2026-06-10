@@ -8,6 +8,8 @@ use anyhow::{bail, Context, Result};
 use libloading::Library;
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
+#[cfg(target_os = "windows")]
+use std::os::raw::c_void;
 use std::os::raw::{c_char, c_float, c_int};
 use std::path::{Path, PathBuf};
 
@@ -401,6 +403,7 @@ struct LocalVqeApi {
 
 impl LocalVqeApi {
     fn load(path: &Path) -> Result<Self> {
+        let _dll_dir_guard = localvqe_dll_directory_guard(path)?;
         let lib = unsafe { Library::new(path) }
             .with_context(|| format!("failed to open localvqe library {}", path.display()))?;
         unsafe {
@@ -443,6 +446,89 @@ unsafe fn symbol<T: Copy>(lib: &Library, name: &[u8]) -> Result<T> {
             String::from_utf8_lossy(name).trim_end_matches('\0')
         )
     })?)
+}
+
+#[cfg(target_os = "windows")]
+fn localvqe_dll_directory_guard(path: &Path) -> Result<Option<LocalVqeDllDirectoryGuard>> {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(None);
+    };
+    let dir = if parent.is_absolute() {
+        parent.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .with_context(|| format!("failed to resolve current directory for {}", path.display()))?
+            .join(parent)
+    };
+    LocalVqeDllDirectoryGuard::new(&[dir]).map(Some)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn localvqe_dll_directory_guard(_path: &Path) -> Result<Option<()>> {
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+struct LocalVqeDllDirectoryGuard {
+    cookies: Vec<*mut c_void>,
+    _paths: Vec<Vec<u16>>,
+}
+
+#[cfg(target_os = "windows")]
+impl LocalVqeDllDirectoryGuard {
+    fn new(paths: &[PathBuf]) -> Result<Self> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::System::LibraryLoader::{
+            AddDllDirectory, SetDefaultDllDirectories, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+            LOAD_LIBRARY_SEARCH_USER_DIRS,
+        };
+
+        let ok = unsafe {
+            SetDefaultDllDirectories(
+                LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS,
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("failed to set Windows DLL default search paths for LocalVQE");
+        }
+
+        let mut cookies = Vec::new();
+        let mut wide_paths = Vec::new();
+        for path in paths {
+            let wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let cookie = unsafe { AddDllDirectory(wide.as_ptr()) };
+            if cookie.is_null() {
+                return Err(std::io::Error::last_os_error())
+                    .with_context(|| format!("failed to add DLL directory {}", path.display()));
+            }
+            cookies.push(cookie);
+            wide_paths.push(wide);
+        }
+        Ok(Self {
+            cookies,
+            _paths: wide_paths,
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for LocalVqeDllDirectoryGuard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::LibraryLoader::RemoveDllDirectory;
+        for cookie in self.cookies.drain(..) {
+            unsafe {
+                RemoveDllDirectory(cookie);
+            }
+        }
+    }
 }
 
 fn required_path(params: &toml::Table, key: &str) -> Result<Option<PathBuf>> {
@@ -516,10 +602,6 @@ fn library_candidates(configured: Option<&Path>) -> Vec<PathBuf> {
             push_default_library_candidates(&mut candidates, dir);
             push_default_library_candidates(&mut candidates, &dir.join("localvqe"));
         }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        push_default_library_candidates(&mut candidates, &cwd);
-        push_default_library_candidates(&mut candidates, &cwd.join("localvqe"));
     }
     candidates
 }
@@ -615,6 +697,33 @@ mod tests {
         assert!(processor.far_buffer.is_empty());
         assert!(processor.out_queue.is_empty());
         assert_eq!(processor.frame_out.len(), 160);
+    }
+
+    #[test]
+    fn default_library_candidates_exclude_current_directory() {
+        let cwd = std::env::current_dir().unwrap();
+        let candidates = library_candidates(None);
+
+        for name in DEFAULT_LIBRARY_NAMES {
+            assert!(
+                !candidates.contains(&cwd.join(name)),
+                "default candidates should not include CWD library {name}: {candidates:?}"
+            );
+            assert!(
+                !candidates.contains(&cwd.join("localvqe").join(name)),
+                "default candidates should not include CWD/localvqe library {name}: {candidates:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_relative_library_keeps_cwd_candidate() {
+        let relative = Path::new(DEFAULT_LIBRARY_NAMES[0]);
+        let cwd = std::env::current_dir().unwrap();
+        let candidates = library_candidates(Some(relative));
+
+        assert!(candidates.contains(&relative.to_path_buf()));
+        assert!(candidates.contains(&cwd.join(relative)));
     }
 
     #[test]
