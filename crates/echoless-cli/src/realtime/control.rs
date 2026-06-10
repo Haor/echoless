@@ -30,6 +30,10 @@ pub(super) enum RuntimeControlCommand {
         level: String,
     },
     SetAec3Agc(bool),
+    SetLocalvqeNoiseGate {
+        enabled: bool,
+        threshold_dbfs: f32,
+    },
 }
 
 pub(super) const SUPPORTED_RUNTIME_CONTROLS: &[&str] = &[
@@ -40,6 +44,7 @@ pub(super) const SUPPORTED_RUNTIME_CONTROLS: &[&str] = &[
     "set_initial_delay_ms",
     "set_aec3_ns",
     "set_aec3_agc",
+    "set_localvqe_noise_gate",
 ];
 
 #[derive(Debug)]
@@ -162,6 +167,25 @@ fn parse_runtime_control_command(line: &str) -> Result<RuntimeControlCommand> {
                 .and_then(Value::as_bool)
                 .context("set_aec3_agc requires boolean field `agc`")?;
             Ok(RuntimeControlCommand::SetAec3Agc(enabled))
+        }
+        "set_localvqe_noise_gate" => {
+            let enabled = value
+                .get("noise_gate")
+                .and_then(Value::as_bool)
+                .context("set_localvqe_noise_gate requires boolean field `noise_gate`")?;
+            let threshold_dbfs = value
+                .get("noise_gate_threshold_dbfs")
+                .and_then(Value::as_f64)
+                .context(
+                    "set_localvqe_noise_gate requires number field `noise_gate_threshold_dbfs`",
+                )?;
+            if !threshold_dbfs.is_finite() {
+                bail!("set_localvqe_noise_gate `noise_gate_threshold_dbfs` must be finite");
+            }
+            Ok(RuntimeControlCommand::SetLocalvqeNoiseGate {
+                enabled,
+                threshold_dbfs: threshold_dbfs as f32,
+            })
         }
         other => bail!("unknown runtime control command `{other}`"),
     }
@@ -439,6 +463,45 @@ fn handle_runtime_control_command(
                 ),
             }
         }
+        RuntimeControlCommand::SetLocalvqeNoiseGate {
+            enabled,
+            threshold_dbfs,
+        } => {
+            let gate_value = toml::Value::Boolean(enabled);
+            let threshold_value = toml::Value::Float(f64::from(threshold_dbfs));
+            let result = ctx
+                .chain
+                .set_runtime_param("localvqe", "noise_gate", &gate_value)
+                .and_then(|gate_applied| {
+                    ctx.chain
+                        .set_runtime_param(
+                            "localvqe",
+                            "noise_gate_threshold_dbfs",
+                            &threshold_value,
+                        )
+                        .map(|threshold_applied| gate_applied + threshold_applied)
+                });
+            match result {
+                Ok(applied) if applied > 0 => emit_runtime_json(
+                    ctx.status_json,
+                    json!({
+                        "type": "localvqe_noise_gate_changed",
+                        "noise_gate": enabled,
+                        "noise_gate_threshold_dbfs": threshold_dbfs,
+                    }),
+                ),
+                Ok(_) => emit_control_error(
+                    ctx.status_json,
+                    Some("set_localvqe_noise_gate"),
+                    "localvqe is not present in the active chain",
+                ),
+                Err(err) => emit_control_error(
+                    ctx.status_json,
+                    Some("set_localvqe_noise_gate"),
+                    format!("failed to update LocalVQE noise gate: {err:#}"),
+                ),
+            }
+        }
     }
 }
 
@@ -578,6 +641,18 @@ mod tests {
         let set_agc =
             parse_runtime_control_command(r#"{"cmd":"set_aec3_agc","agc":false}"#).unwrap();
         assert!(matches!(set_agc, RuntimeControlCommand::SetAec3Agc(false)));
+
+        let set_localvqe_noise_gate = parse_runtime_control_command(
+            r#"{"cmd":"set_localvqe_noise_gate","noise_gate":true,"noise_gate_threshold_dbfs":-42.5}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            set_localvqe_noise_gate,
+            RuntimeControlCommand::SetLocalvqeNoiseGate {
+                enabled: true,
+                threshold_dbfs
+            } if (threshold_dbfs - -42.5).abs() < f32::EPSILON
+        ));
     }
 
     #[test]
@@ -589,6 +664,7 @@ mod tests {
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_initial_delay_ms"));
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_aec3_ns"));
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_aec3_agc"));
+        assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_localvqe_noise_gate"));
     }
 
     #[test]

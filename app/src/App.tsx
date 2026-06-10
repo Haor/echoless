@@ -20,6 +20,7 @@ import {
   setAec3Agc,
   setAec3Ns,
   setInitialDelayMs,
+  setLocalvqeNoiseGate,
   setNearDelayMs,
   setOutputLevel,
   startDiagnostics,
@@ -287,6 +288,9 @@ export default function App() {
             return;
           }
           if (ev.type === "aec3_ns_changed" || ev.type === "aec3_agc_changed") {
+            return;
+          }
+          if (ev.type === "localvqe_noise_gate_changed") {
             return;
           }
           // 诊断录制收尾:writer 已 finalize 文件。仅「录满 max_seconds」时
@@ -668,6 +672,26 @@ export default function App() {
       }
       return;
     }
+    if (
+      kind === "localvqe" &&
+      (key === "noise_gate" || key === "noise_gate_threshold_dbfs")
+    ) {
+      if (powerOnRef.current) {
+        if (!hasRunControl("set_localvqe_noise_gate")) {
+          reportMissingRunControl("set_localvqe_noise_gate");
+          return;
+        }
+        const gate = hotLocalvqeNoiseGateValue(np);
+        if (gate == null) {
+          setErr("noise_gate_threshold_dbfs must be a finite number");
+          return;
+        }
+        setLocalvqeNoiseGate(gate.enabled, gate.thresholdDbfs).catch((e) =>
+          setErr(String(e)),
+        );
+      }
+      return;
+    }
     applyChange({ params: np });
   }
   // 选 LocalVQE 模型(清单常驻):原子地切到 localvqe 引擎并设 model,避免把 model 写到当前引擎上。
@@ -694,6 +718,17 @@ export default function App() {
     const delayMs = Number(value);
     if (!Number.isFinite(delayMs)) return null;
     return Math.round(delayMs);
+  }
+  function hotLocalvqeNoiseGateValue(next: Record<string, unknown>): {
+    enabled: boolean;
+    thresholdDbfs: number;
+  } | null {
+    const threshold =
+      next.noise_gate_threshold_dbfs == null || next.noise_gate_threshold_dbfs === ""
+        ? -45
+        : Number(next.noise_gate_threshold_dbfs);
+    if (!Number.isFinite(threshold)) return null;
+    return { enabled: Boolean(next.noise_gate), thresholdDbfs: threshold };
   }
   // 改管线项。near_delay_ms 可运行中热控;采样率/帧长/参考声道仍需重启。
   function changePipeline(patch: Partial<PipelineCfg>) {

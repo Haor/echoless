@@ -236,6 +236,25 @@ impl EchoProcessor for LocalVqe {
         }
     }
 
+    fn set_runtime_param(&mut self, key: &str, value: &toml::Value) -> Result<bool> {
+        match key {
+            "noise_gate" => {
+                self.noise_gate = value
+                    .as_bool()
+                    .ok_or_else(|| anyhow::anyhow!("noise_gate must be a boolean"))?;
+                self.apply_runtime_noise_gate()?;
+                Ok(true)
+            }
+            "noise_gate_threshold_dbfs" => {
+                self.noise_gate_threshold_dbfs =
+                    toml_value_to_f32(value, "noise_gate_threshold_dbfs")?;
+                self.apply_runtime_noise_gate()?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     fn stats(&self) -> ProcessorStats {
         ProcessorStats::empty("localvqe")
     }
@@ -245,6 +264,15 @@ impl EchoProcessor for LocalVqe {
             runtime.reset();
         }
         self.reset_stream_state();
+    }
+}
+
+impl LocalVqe {
+    fn apply_runtime_noise_gate(&mut self) -> Result<()> {
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.set_noise_gate(self.noise_gate, self.noise_gate_threshold_dbfs)?;
+        }
+        Ok(())
     }
 }
 
@@ -362,6 +390,17 @@ impl LocalVqeRuntime {
 
     fn reset(&mut self) {
         unsafe { (self.api.reset)(self.ctx) };
+    }
+
+    fn set_noise_gate(&mut self, enabled: bool, threshold_dbfs: f32) -> Result<()> {
+        check_runtime(
+            &self.api,
+            self.ctx,
+            unsafe {
+                (self.api.set_noise_gate)(self.ctx, if enabled { 1 } else { 0 }, threshold_dbfs)
+            },
+            "set_noise_gate",
+        )
     }
 }
 
@@ -572,11 +611,24 @@ fn optional_i32(params: &toml::Table, key: &str) -> Result<Option<i32>> {
 
 fn optional_f32(params: &toml::Table, key: &str) -> Result<Option<f32>> {
     match params.get(key) {
-        Some(toml::Value::Float(v)) => Ok(Some(*v as f32)),
-        Some(toml::Value::Integer(v)) => Ok(Some(*v as f32)),
+        Some(v @ (toml::Value::Float(_) | toml::Value::Integer(_))) => {
+            Ok(Some(toml_value_to_f32(v, key)?))
+        }
         Some(_) => bail!("localvqe {key} must be a number"),
         None => Ok(None),
     }
+}
+
+fn toml_value_to_f32(value: &toml::Value, key: &str) -> Result<f32> {
+    let f = match value {
+        toml::Value::Float(v) => *v,
+        toml::Value::Integer(v) => *v as f64,
+        _ => bail!("localvqe {key} must be a number"),
+    };
+    if !f.is_finite() {
+        bail!("localvqe {key} must be finite");
+    }
+    Ok(f as f32)
 }
 
 fn library_candidates(configured: Option<&Path>) -> Vec<PathBuf> {
@@ -691,6 +743,43 @@ mod tests {
         assert!(processor.far_buffer.is_empty());
         assert!(processor.out_queue.is_empty());
         assert_eq!(processor.frame_out.len(), 160);
+    }
+
+    #[test]
+    fn runtime_params_update_localvqe_noise_gate_tuning() {
+        let mut processor = LocalVqe::new();
+
+        assert!(processor
+            .set_runtime_param("noise_gate", &toml::Value::Boolean(true))
+            .unwrap());
+        assert!(processor
+            .set_runtime_param("noise_gate_threshold_dbfs", &toml::Value::Float(-40.5))
+            .unwrap());
+        assert!(!processor
+            .set_runtime_param("threads", &toml::Value::Integer(2))
+            .unwrap());
+
+        assert!(processor.noise_gate);
+        assert_eq!(processor.noise_gate_threshold_dbfs, -40.5);
+    }
+
+    #[test]
+    fn runtime_params_validate_localvqe_noise_gate_types() {
+        let mut processor = LocalVqe::new();
+
+        assert!(processor
+            .set_runtime_param("noise_gate", &toml::Value::String("true".into()))
+            .unwrap_err()
+            .to_string()
+            .contains("boolean"));
+        assert!(processor
+            .set_runtime_param(
+                "noise_gate_threshold_dbfs",
+                &toml::Value::String("-40".into()),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("number"));
     }
 
     #[test]

@@ -110,8 +110,8 @@ reference 与 mic 的相对到达时间。完整调用、
 | `threads` | auto | 数字,最小值 1;不填表示上游 auto。 |
 | `backend` | auto | 字符串 hint,例如上游 runtime 支持的 backend 名。 |
 | `device` | auto | 数字 device index;不要把 `auto/cpu/gpu` 写入 `device`。 |
-| `noise_gate` | `false` | 默认关闭;开启可能吃掉轻声和尾音。 |
-| `noise_gate_threshold_dbfs` | `-45.0` | 数字阈值;建议作为高级项。 |
+| `noise_gate` | `false` | 默认关闭;开启可能吃掉轻声和尾音;运行中可热控。 |
+| `noise_gate_threshold_dbfs` | `-45.0` | 数字阈值;建议作为高级项;运行中可热控。 |
 
 LocalVQE 的 native 处理边界是 16 kHz mono,但 GUI 不应因此把全局 `sample_rate` 改成 16 kHz。当前链路会在 processor 边界做适配。
 
@@ -166,9 +166,9 @@ macOS/Linux 上前端可以展示为 unsupported,但不应生成可运行的 `nv
 - 每次保存或应用配置前,运行 `echoless config validate --config <file> --json`。
 - 切换 backend、设备、采样率、frame、模型或 RTX runtime 后,重启 runtime。
 - 运行中可热控参数以 `started.supported_controls` 为准。当前后端支持
-  `output_level`、`near_delay_ms`、AEC3 `initial_delay_ms`、AEC3 `ns/ns_level`、AEC3 `agc`
-  的 stdin runtime control;如果 `supported_controls` 缺少对应命令,前端应提示 CLI 过旧,
-  不要静默降级为重启。
+  `output_level`、`near_delay_ms`、AEC3 `initial_delay_ms`、AEC3 `ns/ns_level`、AEC3 `agc`、
+  LocalVQE `noise_gate/noise_gate_threshold_dbfs` 的 stdin runtime control;如果
+  `supported_controls` 缺少对应命令,前端应提示 CLI 过旧,不要静默降级为重启。
 - 运行时展示 `estimated_user_latency_ms` 和 `aec_estimated_delay_ms` 时要区分语义:
   - `estimated_user_latency_ms`: Echoless 软件管线内的用户说话到虚拟输出前估算延迟;不含设备硬件缓冲、通话软件缓冲或网络延迟。首页建议标为 `Pipeline` / `管线延迟`。
   - `aec_estimated_delay_ms`: AEC3 估计的回声路径对齐延迟。

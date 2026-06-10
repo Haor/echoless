@@ -181,6 +181,18 @@ export function setAec3Ns(ns: boolean, nsLevel: string): Promise<void> {
 export function setAec3Agc(agc: boolean): Promise<void> {
   return sendRunControl(JSON.stringify({ cmd: "set_aec3_agc", agc }));
 }
+export function setLocalvqeNoiseGate(
+  noiseGate: boolean,
+  noiseGateThresholdDbfs: number,
+): Promise<void> {
+  return sendRunControl(
+    JSON.stringify({
+      cmd: "set_localvqe_noise_gate",
+      noise_gate: noiseGate,
+      noise_gate_threshold_dbfs: noiseGateThresholdDbfs,
+    }),
+  );
+}
 
 // 订阅 run 的事件流(started + status 都走这个通道)。返回取消订阅函数。
 export function onRunEvent(cb: (e: RunEvent) => void): Promise<UnlistenFn> {

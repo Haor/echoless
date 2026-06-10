@@ -32,6 +32,12 @@ Implemented proof points:
 - They do not reopen devices, change frame geometry, or rebuild the processor chain.
 - `tail_ms`, `delay_num_filters`, and `linear_stable_echo_path` remain restart-required because they are injected into the AEC3 builder-level config.
 
+4. LocalVQE `noise_gate` / `noise_gate_threshold_dbfs`:
+
+- They map to the LocalVQE runtime's `localvqe_set_noise_gate` function.
+- They do not change the model, library, backend, device, or thread selection.
+- LocalVQE model/runtime selection remains restart-required.
+
 ## Non-Goals
 
 - Do not hot-switch mic/reference/output devices in this pass. Device changes still require stream rebuilds.
@@ -48,10 +54,12 @@ Implemented proof points:
    - Forward the initial-delay hint to processor nodes through `ProcessorChain::set_stream_delay_ms`.
    - Add `{ "cmd": "set_aec3_ns", "ns": true|false, "ns_level": "low"|"moderate"|"high"|"veryhigh" }`.
    - Add `{ "cmd": "set_aec3_agc", "agc": true|false }`.
+   - Add `{ "cmd": "set_localvqe_noise_gate", "noise_gate": true|false, "noise_gate_threshold_dbfs": number }`.
    - Forward safe processor-level runtime params through `ProcessorChain::set_runtime_param`.
    - Emit `near_delay_changed` status JSON.
    - Emit `initial_delay_changed` status JSON.
    - Emit `aec3_ns_changed` and `aec3_agc_changed` status JSON.
+   - Emit `localvqe_noise_gate_changed` status JSON.
    - Expose the control in `SUPPORTED_RUNTIME_CONTROLS`.
 
 2. Frontend:
@@ -61,6 +69,8 @@ Implemented proof points:
    - Treat AEC3 `initial_delay_ms` as hot-applicable while running.
    - Add `setAec3Ns()` and `setAec3Agc()` API helpers.
    - Treat AEC3 `ns`, `ns_level`, and `agc` as hot-applicable while running.
+   - Add `setLocalvqeNoiseGate()` API helper.
+   - Treat LocalVQE `noise_gate` and `noise_gate_threshold_dbfs` as hot-applicable while running.
    - Keep all other pipeline patches on the existing validate + restart path.
 
 3. Documentation/ledger:

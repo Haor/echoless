@@ -183,6 +183,11 @@ export interface Aec3AgcChangedEvent {
   type: "aec3_agc_changed";
   agc: boolean;
 }
+export interface LocalvqeNoiseGateChangedEvent {
+  type: "localvqe_noise_gate_changed";
+  noise_gate: boolean;
+  noise_gate_threshold_dbfs: number;
+}
 
 // run --status-json 在音频流启动后先发的一条事件。
 export interface StartedEvent {
@@ -219,7 +224,8 @@ export type RunEvent =
   | NearDelayChangedEvent
   | InitialDelayChangedEvent
   | Aec3NsChangedEvent
-  | Aec3AgcChangedEvent;
+  | Aec3AgcChangedEvent
+  | LocalvqeNoiseGateChangedEvent;
 
 // ---- doctor audio --json(虚拟声卡检测) ----
 export interface DoctorCandidate {

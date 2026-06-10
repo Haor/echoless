@@ -482,7 +482,8 @@ echoless config validate --config config.toml --json
 产品自更新和运行时参数变更是两件事:
 
 - 运行时参数变更:设备、backend、模型和多数 AEC 结构参数变化时重启 runtime;`output_level`、
-  `near_delay_ms`、AEC3 `initial_delay_ms`、AEC3 `ns/ns_level/agc` 走 runtime hot control。
+  `near_delay_ms`、AEC3 `initial_delay_ms`、AEC3 `ns/ns_level/agc`、LocalVQE
+  `noise_gate/noise_gate_threshold_dbfs` 走 runtime hot control。
 - 产品自更新:GUI app、`echoless` sidecar、模型/runtime assets、配置 schema 升级。
 
 前端可预留的后端抽象:
