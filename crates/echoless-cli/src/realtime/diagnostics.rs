@@ -306,7 +306,6 @@ impl DiagnosticRecorder {
                 let _ = sender.send(DiagnosticCommand::Finish(reason));
             });
         }
-        let _ = self.writer.take();
     }
 
     fn finish(&mut self, reason: DiagnosticDoneReason) {
@@ -819,6 +818,41 @@ mod tests {
         assert!(dir.join("ref.wav").exists());
         assert!(dir.join("out.wav").exists());
         assert!(dir.join("stats.csv").exists());
+
+        let _ = std::fs::remove_dir_all(base);
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_recorder_stop_keeps_writer_joinable() -> Result<()> {
+        let base = temp_diagnostic_dir("echoless-diagnostic-join-test");
+        let cfg = DiagnosticsConfig {
+            record_dir: Some(base.to_string_lossy().to_string()),
+            max_seconds: None,
+        };
+        let node_stats = [ProcessorStats::empty("test")];
+        let mut recorder = DiagnosticRecorder::new(DiagnosticRecorderConfig {
+            cfg: &cfg,
+            sample_rate: 48_000,
+            reference_channels: 1,
+            frame_ms: 10,
+            near_delay_ms: 0,
+            output_level: 50,
+            node_stats: &node_stats,
+            status_json: false,
+        })?
+        .unwrap();
+
+        recorder.request_finish(DiagnosticDoneReason::Stopped);
+
+        let dir = recorder.dir.clone();
+        assert!(recorder.writer.is_some());
+
+        drop(recorder);
+        assert!(dir.join("mic.wav").exists());
+        assert!(dir.join("stats.csv").exists());
+        assert!(!dir.join("mic.wav.part").exists());
+        assert!(!dir.join("stats.csv.part").exists());
 
         let _ = std::fs::remove_dir_all(base);
         Ok(())
