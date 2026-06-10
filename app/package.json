@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "prepare:tauri-assets": "node scripts/prepare-tauri-assets.mjs",
+    "smoke:tauri-bundle": "node scripts/smoke-tauri-bundle.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

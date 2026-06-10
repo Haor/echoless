@@ -241,6 +241,18 @@ jobs:
           ECHOLESS_LOCALVQE_MODEL="${model}" \
             pnpm prepare:tauri-assets --skip-cli-build --require-localvqe-assets
 
+      - name: Tauri bundle smoke
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            pnpm tauri build --debug --ci --bundles app
+          else
+            pnpm tauri build --debug --no-bundle --ci
+          fi
+          pnpm smoke:tauri-bundle
+
       - name: Package
         shell: bash
         run: |
