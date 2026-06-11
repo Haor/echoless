@@ -371,4 +371,6 @@ jobs:
           path: |
             echoless-${{ matrix.package }}-${{ runner.arch }}.zip
             echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz
+            app/src-tauri/target/debug/bundle/nsis/*.exe
+            app/src-tauri/target/debug/bundle/msi/*.msi
           if-no-files-found: error
