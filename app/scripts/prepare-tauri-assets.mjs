@@ -3,8 +3,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(appDir, "..");
 const srcTauriDir = path.join(appDir, "src-tauri");
@@ -53,7 +54,13 @@ function tryOutput(cmd, cmdArgs, options = {}) {
 function toolCandidates(name) {
   const ext = process.platform === "win32" ? ".exe" : "";
   const command = process.platform === "win32" && !name.endsWith(".exe") ? `${name}${ext}` : name;
-  const candidates = [name, command];
+  const envOverride =
+    name === "cargo" ? process.env.CARGO : name === "rustc" ? process.env.RUSTC : null;
+  const candidates = [envOverride, name, command];
+  const pathEnv = process.env.PATH ?? process.env.Path ?? "";
+  for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
+    candidates.push(path.join(dir, command));
+  }
   const cargoHomes = [
     process.env.CARGO_HOME,
     process.env.USERPROFILE ? path.join(process.env.USERPROFILE, ".cargo") : null,
@@ -62,7 +69,7 @@ function toolCandidates(name) {
   for (const home of cargoHomes) {
     candidates.push(path.join(home, "bin", command));
   }
-  return [...new Set(candidates)];
+  return [...new Set(candidates.filter(Boolean))];
 }
 
 function resolveTool(name, probeArgs = ["--version"]) {
@@ -155,7 +162,8 @@ function firstFile(root, predicate) {
 
 function prepareCliSidecar(targetTriple) {
   if (!skipCliBuild) {
-    const cargo = resolveTool("cargo") ?? "cargo";
+    const cargo = resolveTool("cargo");
+    if (!cargo) throw new Error("Could not find cargo; ensure Rust is installed and PATH is exported");
     const buildArgs = ["build", "-p", "echoless-cli"];
     if (!dev) buildArgs.push("--release");
     run(cargo, buildArgs);
