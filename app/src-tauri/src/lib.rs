@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tauri::{
-    Emitter, Manager, State, TitleBarStyle, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 #[cfg(target_os = "macos")]
 use tauri_plugin_decorum::WebviewWindowExt;
@@ -1115,7 +1115,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 builder = builder
-                    .title_bar_style(TitleBarStyle::Overlay)
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
                     .hidden_title(true);
             }
             #[cfg(not(target_os = "macos"))]
