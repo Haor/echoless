@@ -5,14 +5,19 @@
 ## 当前安装包
 
 - 分支:`phase-1/usable`
-- GitHub Actions run:`27346144311`
-- 构建页面:https://github.com/Haor/echoless/actions/runs/27346144311
+- Commit:`c89862896bb04223fc8ad7ff7c36dd5e39df3442`
+- GitHub Actions run:`27352043191`
+- 构建页面:https://github.com/Haor/echoless/actions/runs/27352043191
 - Artifact 名称:优先下载 `echoless-windows-X64`
-- 安装器文件:下载 artifact 后,找到其中的 `.exe` 安装器运行
+- Artifact ID:`7567107638`
+- Artifact 大小:`44,475,376` bytes
+- GitHub artifact digest:`sha256:de498550311a9b130efdf3f240687cf2fc99ac4b218aa7db9749f58ff7327d7b`
+- 安装器文件:下载 artifact 后,找到其中的 `.exe` 安装器运行。artifact 里也会包含 CLI zip,普通试用优先用 `.exe` 安装器。
 
 注意:
 
 - 这是测试包,Windows 可能提示未知发布者或 SmartScreen 警告。
+- 仓库是私有的,没有仓库权限的人不能直接下载 GitHub Actions artifact。给朋友试用时,由有权限的人下载 `echoless-windows-X64` 后转发整个 artifact zip 或解压后的 `.exe` 安装器。
 - Echoless 目前不自带虚拟麦克风驱动。Windows 上需要先安装 VB-CABLE 或等价虚拟音频设备。
 - 默认测试路径是 `AEC3`,这是当前主线。`LocalVQE` 和 `NVIDIA RTX AEC` 是可选后端,不要混在同一次主观测试里判断。
 
@@ -29,10 +34,10 @@
 
 ## 安装步骤
 
-1. 打开 GitHub Actions run 页面。
+1. 有仓库权限的人打开 GitHub Actions run 页面。
 2. 下载 `echoless-windows-X64` artifact。
-3. 解压 artifact。
-4. 运行里面的 Echoless `.exe` 安装器。
+3. 如果要发给朋友,可以直接转发整个 artifact zip;也可以自己解压后只转发里面的 Echoless `.exe` 安装器。
+4. 在 Windows 电脑上运行 Echoless `.exe` 安装器。
 5. 如果 Windows 提示未知发布者,选择继续运行。
 6. 启动 Echoless。
 
