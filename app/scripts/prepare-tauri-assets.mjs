@@ -42,6 +42,36 @@ function output(cmd, cmdArgs, options = {}) {
   }).trim();
 }
 
+function tryOutput(cmd, cmdArgs, options = {}) {
+  try {
+    return output(cmd, cmdArgs, options);
+  } catch {
+    return null;
+  }
+}
+
+function toolCandidates(name) {
+  const ext = process.platform === "win32" ? ".exe" : "";
+  const command = process.platform === "win32" && !name.endsWith(".exe") ? `${name}${ext}` : name;
+  const candidates = [name];
+  const cargoHomes = [
+    process.env.CARGO_HOME,
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, ".cargo") : null,
+    process.env.HOME ? path.join(process.env.HOME, ".cargo") : null,
+  ].filter(Boolean);
+  for (const home of cargoHomes) {
+    candidates.push(path.join(home, "bin", command));
+  }
+  return [...new Set(candidates)];
+}
+
+function resolveTool(name, probeArgs = ["--version"]) {
+  for (const candidate of toolCandidates(name)) {
+    if (tryOutput(candidate, probeArgs) !== null) return candidate;
+  }
+  return null;
+}
+
 function rustTargetTriple() {
   const explicit =
     valueOf("--target") ??
@@ -49,7 +79,11 @@ function rustTargetTriple() {
     process.env.CARGO_BUILD_TARGET ??
     process.env.TARGET;
   if (explicit) return explicit;
-  const verbose = output("rustc", ["-vV"]);
+  const rustc = resolveTool("rustc", ["-vV"]);
+  if (!rustc) {
+    throw new Error("Could not find rustc; pass --target or set TAURI_TARGET_TRIPLE");
+  }
+  const verbose = output(rustc, ["-vV"]);
   const host = verbose.match(/^host: (.+)$/m)?.[1]?.trim();
   if (!host) throw new Error("Could not determine rust host target triple");
   return host;
@@ -101,9 +135,10 @@ function firstFile(root, predicate) {
 
 function prepareCliSidecar(targetTriple) {
   if (!skipCliBuild) {
+    const cargo = resolveTool("cargo") ?? "cargo";
     const buildArgs = ["build", "-p", "echoless-cli"];
     if (!dev) buildArgs.push("--release");
-    run("cargo", buildArgs);
+    run(cargo, buildArgs);
   }
 
   const ext = process.platform === "win32" ? ".exe" : "";
