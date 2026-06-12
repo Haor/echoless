@@ -130,7 +130,7 @@ cargo run -p echoless-cli --bin echoless --release -- run --config configs/examp
 3. 运行 `cargo clippy --workspace --all-targets --locked -- -D warnings`。
 4. 临时 clone LocalVQE,构建 C API shared library,下载官方 GGUF 跑 regression。
 5. 用上一步的 shared library + GGUF 跑 Echoless `localvqe_ffi_smoke`。
-6. 生成 release artifact:`echoless-windows-*` / `echoless-macos-*`,并打包 LocalVQE runtime 与当前 v1.3 模型。
+6. 生成 release artifact:`echoless-windows-*` / `echoless-macos-*`,并打包 LocalVQE runtime 与当前 v1.3 模型;macOS artifact 同时包含可拖拽安装的 `.dmg`。
 
 已核对的 RTX AEC 集成构建基线:
 

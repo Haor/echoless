@@ -261,7 +261,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${RUNNER_OS}" == "macOS" ]]; then
-            pnpm tauri build --debug --ci --bundles app
+            pnpm tauri build --debug --ci --bundles app,dmg
             pnpm smoke:tauri-bundle
           else
             pnpm tauri build --debug --ci --bundles nsis
@@ -377,6 +377,7 @@ jobs:
           path: |
             echoless-${{ matrix.package }}-${{ runner.arch }}.zip
             echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz
+            app/src-tauri/target/debug/bundle/dmg/*.dmg
             app/src-tauri/target/debug/bundle/nsis/*.exe
             app/src-tauri/target/debug/bundle/msi/*.msi
           if-no-files-found: error
