@@ -19,6 +19,7 @@ export function SlideSwitch({
 }) {
   return (
     <button
+      type="button"
       className={`power ${on ? "on" : "off"} ${small ? "sm" : ""}`}
       disabled={disabled}
       onClick={onToggle}

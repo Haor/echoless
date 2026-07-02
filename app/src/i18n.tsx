@@ -1,6 +1,8 @@
 import {
   createContext,
+  useCallback,
   useContext,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -293,20 +295,17 @@ export function LangProvider({ children }: { children: ReactNode }) {
       return "en";
     }
   });
-  const setLang = (l: Lang) => {
+  const setLang = useCallback((l: Lang) => {
     setLangState(l);
     try {
       localStorage.setItem("echoless.lang", l);
     } catch {
       /* ignore */
     }
-  };
-  const t = (k: string) => D[k]?.[lang] ?? k;
-  return (
-    <LangCtx.Provider value={{ lang, setLang, t }}>
-      {children}
-    </LangCtx.Provider>
-  );
+  }, []);
+  const t = useCallback((k: string) => D[k]?.[lang] ?? k, [lang]);
+  const value = useMemo(() => ({ lang, setLang, t }), [lang, setLang, t]);
+  return <LangCtx.Provider value={value}>{children}</LangCtx.Provider>;
 }
 
 export const useI18n = () => useContext(LangCtx);

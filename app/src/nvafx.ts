@@ -3,7 +3,7 @@
 // 依据 docs/frontend/ENGINE_RUNTIME_WIZARD_GUIDANCE.md + NVAFX_RUNTIME_INSTALLER_HANDOFF.md。
 import type { GpuArch, NvafxDoctor } from "./types";
 
-export const NVAFX_SDK_VERSION = "2.1.0";
+const NVAFX_SDK_VERSION = "2.1.0";
 export const NVAFX_COMMON_ASSET = `echoless-rtx-aec-common-runtime-win64-${NVAFX_SDK_VERSION}.zip`;
 export function nvafxModelAsset(arch: GpuArch): string {
   return `echoless-rtx-aec-model-win64-${NVAFX_SDK_VERSION}-${arch}-aec48.zip`;
@@ -26,18 +26,6 @@ export const RTX_HARD_BLOCK: RtxState[] = [
   "unsupported_platform",
   "unsupported_gpu",
 ];
-// 外部修复:需去装/更新驱动或 VC++,然后 recheck(不进安装流程)。
-export const RTX_EXTERNAL_FIX: RtxState[] = [
-  "missing_driver",
-  "driver_too_old",
-  "missing_vc_redist",
-];
-// 安装:本向导的主路径。
-export const RTX_INSTALL: RtxState[] = [
-  "runtime_not_installed",
-  "model_not_installed",
-];
-
 const miss = (s: string) => s === "missing" || s === "unsupported";
 
 export function deriveRtxState(d: NvafxDoctor | null): RtxState {

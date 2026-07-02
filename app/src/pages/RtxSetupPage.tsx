@@ -21,6 +21,28 @@ const VC_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
 
 const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
+const LADDER_LABEL: Record<LadderKey, string> = {
+  platform: "platform",
+  driver: "driver",
+  gpu: "gpu",
+  "vc++": "vc++",
+  runtime: "runtime",
+  model: "model",
+  ready: "ready",
+};
+
+async function pickZip(set: (v: string) => void) {
+  try {
+    const sel = await open({
+      directory: false,
+      filters: [{ name: "zip", extensions: ["zip"] }],
+    });
+    if (typeof sel === "string") set(sel);
+  } catch {
+    /* cancelled */
+  }
+}
+
 interface Props {
   doctor: NvafxDoctor | null;
   busy: boolean;
@@ -62,28 +84,6 @@ export function RtxSetupPage({
   // dev 模拟可不选 zip 直接走安装。
   const canInstall = (dev || (!!commonZip && !!modelZip)) && !busy;
 
-  async function pickZip(set: (v: string) => void) {
-    try {
-      const sel = await open({
-        directory: false,
-        filters: [{ name: "zip", extensions: ["zip"] }],
-      });
-      if (typeof sel === "string") set(sel);
-    } catch {
-      /* cancelled */
-    }
-  }
-
-  const LADDER_LABEL: Record<LadderKey, string> = {
-    platform: "platform",
-    driver: "driver",
-    gpu: "gpu",
-    "vc++": "vc++",
-    runtime: "runtime",
-    model: "model",
-    ready: "ready",
-  };
-
   function fixCheckDetail(): string {
     // 取该状态对应 check 的 detail 作为说明(诚实显示后端原因)。
     const c = rep?.checks ?? [];
@@ -120,10 +120,10 @@ export function RtxSetupPage({
           </div>
           {fixCheckDetail() && <div className="wznote">{fixCheckDetail()}</div>}
           <div className="wzgo">
-            <button className="wzbtn" onClick={() => openUrl(DRIVER_URL)}>
+            <button type="button" className="wzbtn" onClick={() => openUrl(DRIVER_URL)}>
               {t("wzOpenDriver")} <span className="mk">↗</span>
             </button>
-            <button className="dopen" onClick={() => onRecheck(runtimeDir)}>
+            <button type="button" className="dopen" onClick={() => onRecheck(runtimeDir)}>
               {t("recheck")} <span className="mk">↻</span>
             </button>
           </div>
@@ -136,10 +136,10 @@ export function RtxSetupPage({
           <div className="wzh warn">{t("stMissingVc")}</div>
           {fixCheckDetail() && <div className="wznote">{fixCheckDetail()}</div>}
           <div className="wzgo">
-            <button className="wzbtn" onClick={() => openUrl(VC_URL)}>
+            <button type="button" className="wzbtn" onClick={() => openUrl(VC_URL)}>
               {t("wzOpenVc")} <span className="mk">↗</span>
             </button>
-            <button className="dopen" onClick={() => onRecheck(runtimeDir)}>
+            <button type="button" className="dopen" onClick={() => onRecheck(runtimeDir)}>
               {t("recheck")} <span className="mk">↻</span>
             </button>
           </div>
@@ -151,7 +151,7 @@ export function RtxSetupPage({
         <div className="wzcard">
           <div className="wzh ok">✓ {t("stReady")}</div>
           <div className="wzgo">
-            <button className="wzbtn ok" onClick={onUse}>
+            <button type="button" className="wzbtn ok" onClick={onUse}>
               {t("wzUseEngine")} <span className="mk">»</span>
             </button>
           </div>
@@ -180,18 +180,28 @@ export function RtxSetupPage({
           <>
             <div className="drow">
               <span className="dk">{t("wzCommon")}</span>
-              <span className="dpick" onClick={() => pickZip(setCommonZip)} title={commonZip}>
+              <button
+                type="button"
+                className="dpick plainbtn"
+                onClick={() => pickZip(setCommonZip)}
+                title={commonZip}
+              >
                 {commonZip ? base(commonZip) : t("wzPickZip")}
-              </span>
+              </button>
             </div>
             <div className="drow">
               <span className="dk">{t("wzModel")}</span>
               <span className="wv">
                 {t("wzAutoArch")} → {arch ?? "?"}
               </span>
-              <span className="dpick" onClick={() => pickZip(setModelZip)} title={modelZip}>
+              <button
+                type="button"
+                className="dpick plainbtn"
+                onClick={() => pickZip(setModelZip)}
+                title={modelZip}
+              >
                 {modelZip ? base(modelZip) : t("wzPickZip")}
-              </span>
+              </button>
               {mismatch && <span className="cdetail warn">{t("wzArchMismatch")}</span>}
             </div>
             <div className="wzgo">
@@ -199,6 +209,7 @@ export function RtxSetupPage({
                 <span className="wzbusy">{t("wzInstalling")}</span>
               ) : (
                 <button
+                  type="button"
                   className="wzbtn"
                   disabled={!canInstall}
                   onClick={() => onInstall(commonZip, modelZip)}
@@ -233,6 +244,7 @@ export function RtxSetupPage({
                 <span className="wzbusy">{t("wzDownloading")}</span>
               ) : (
                 <button
+                  type="button"
                   className="wzbtn"
                   disabled={!arch || busy}
                   onClick={onDownloadInstall}
@@ -257,13 +269,14 @@ export function RtxSetupPage({
           <i />
           <i />
         </span>{" "}
-        // RTX AEC RUNTIME · AFX SDK 2.1.0 · win64 · aec48
+        <span className="slashText">RTX AEC RUNTIME · AFX SDK 2.1.0 · win64 · aec48</span>
       </div>
       {dev && (
         <div className="devbar">
           <span className="dvk">DEV · simulate</span>
           {RTX_DEV_STATES.map((s) => (
             <button
+              type="button"
               key={s}
               className={`dvb ${devState === s ? "on" : ""}`}
               onClick={() => onDevState(s)}
@@ -275,7 +288,7 @@ export function RtxSetupPage({
       )}
       <hr className="hair" />
 
-      <div className="asec">// {t("wzSystem")}</div>
+      <div className="asec">{t("wzSystem")}</div>
       <div className="wzsys">
         <div className="drow">
           <span className="dk">{t("wzGpu")}</span>
@@ -301,13 +314,13 @@ export function RtxSetupPage({
           <span className="dpath" title={runtimeDir}>
             {runtimeDir}
           </span>
-          <button className="dopen" onClick={() => onRecheck(runtimeDir)}>
+          <button type="button" className="dopen" onClick={() => onRecheck(runtimeDir)}>
             {t("recheck")} <span className="mk">↻</span>
           </button>
         </div>
       </div>
 
-      <div className="asec">// {t("wzReadiness")}</div>
+      <div className="asec">{t("wzReadiness")}</div>
       <div className="wzladder">
         {RTX_LADDER.map((k) => (
           <span key={k} className={`wznode ${ladder[k]}`}>
@@ -317,7 +330,7 @@ export function RtxSetupPage({
         ))}
       </div>
 
-      <div className="asec">// {t("wzAction")}</div>
+      <div className="asec">{t("wzAction")}</div>
       {action()}
     </div>
   );

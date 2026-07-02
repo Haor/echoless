@@ -10,10 +10,12 @@ export function Toggle({
 }) {
   return (
     <button
+      type="button"
       className={`toggle ${on ? "on" : ""}`}
       disabled={disabled}
       onClick={onToggle}
       aria-pressed={on}
+      aria-label={on ? "on" : "off"}
     >
       <span className="knob" />
     </button>

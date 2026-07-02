@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 // 选项少 → 一排按钮(不做下拉)。
 export function SegButtons<T extends string>({
@@ -14,6 +14,7 @@ export function SegButtons<T extends string>({
     <div className="segg">
       {options.map((o) => (
         <button
+          type="button"
           key={o.value}
           className={`b ${o.value === value ? "active" : ""}`}
           onClick={() => onChange(o.value)}
@@ -39,8 +40,9 @@ export function Field({
   onCommit: (v: unknown) => void;
   wide?: boolean;
 }) {
-  const [txt, setTxt] = useState(value == null ? "" : String(value));
-  useEffect(() => setTxt(value == null ? "" : String(value)), [value]);
+  const valueText = value == null ? "" : String(value);
+  const [draft, setDraft] = useState({ source: valueText, text: valueText });
+  const txt = draft.source === valueText ? draft.text : valueText;
   const commit = () => {
     const s = txt.trim();
     if (s === "") return onCommit(null);
@@ -55,9 +57,10 @@ export function Field({
       className={`afield ${wide ? "wide" : ""}`}
       value={txt}
       placeholder={placeholder}
+      aria-label={placeholder}
       inputMode={numeric ? "decimal" : "text"}
       spellCheck={false}
-      onChange={(e) => setTxt(e.target.value)}
+      onChange={(e) => setDraft({ source: valueText, text: e.target.value })}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") (e.target as HTMLInputElement).blur();

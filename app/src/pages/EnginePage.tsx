@@ -86,6 +86,18 @@ function Meter({ label, n }: { label: string; n: number }) {
   );
 }
 
+function checkPill(c: NvafxCheck) {
+  return (
+    <div className="echk" key={c.name}>
+      <span className={`cpill ${c.status}`}>{c.status}</span>
+      <span className="cname">{c.name}</span>
+      <span className="cdetail" title={c.detail}>
+        {c.detail}
+      </span>
+    </div>
+  );
+}
+
 interface Props {
   processors: Processor[];
   platform: Platform;
@@ -99,6 +111,156 @@ interface Props {
   localvqeModel: string | null;
   onRecheck: (runtimeDir?: string) => void;
   onSetup: () => void;
+}
+
+function NvafxCard({
+  kind,
+  params,
+  doctor,
+  dev,
+  nvSupported,
+  nvReady,
+  problems,
+  onSelect,
+  onParam,
+  onRecheck,
+  onSetup,
+}: {
+  kind: string;
+  params: Record<string, unknown>;
+  doctor: NvafxDoctor | null;
+  dev: boolean;
+  nvSupported: boolean;
+  nvReady: boolean;
+  problems: number;
+  onSelect: (kind: string) => void;
+  onParam: (key: string, val: unknown) => void;
+  onRecheck: (runtimeDir?: string) => void;
+  onSetup: () => void;
+}) {
+  const { t, lang } = useI18n();
+  const nv = doctor?.report;
+
+  async function pickRuntime() {
+    try {
+      const sel = await open({ directory: true });
+      if (typeof sel === "string") {
+        onParam("runtime_dir", sel);
+        onRecheck(sel);
+      }
+    } catch {
+      /* cancelled */
+    }
+  }
+
+  return (
+    <div
+      className={`ecard wide ${kind === "nvidia_afx_aec" ? "active" : ""} ${
+        nvSupported ? "" : "na"
+      }`}
+    >
+      <div className="eh">
+        <span className="en">
+          NVAFX <i className="sub">· RTX AEC</i>
+        </span>
+        <button
+          type="button"
+          className={`etag plainbtn ${nvReady ? "" : nvSupported ? "warn" : "na"}`}
+          disabled={!nvSupported}
+          aria-pressed={kind === "nvidia_afx_aec"}
+          onClick={() => onSelect("nvidia_afx_aec")}
+        >
+          {kind === "nvidia_afx_aec" && <i className="dot" />}{" "}
+          {dev && !doctor?.ok
+            ? kind === "nvidia_afx_aec"
+              ? `${t("active")} · DEV`
+              : `${t("rdyReady")} · DEV`
+            : !nvSupported
+              ? "WINDOWS · RTX ONLY"
+              : doctor?.ok
+                ? kind === "nvidia_afx_aec"
+                  ? t("active")
+                  : t("rdyReady")
+                : `${problems} ${t("rdyIssues")}`}
+        </button>
+      </div>
+      <div className="etier">{PROFILES[2].tier[lang]}</div>
+      <div className="ewrap">
+        <div className="ecol">
+          <Meter label="ECHO" n={PROFILES[2].echo} />
+          <Meter label="VOICE" n={PROFILES[2].voice} />
+          <div className="espec">
+            <span>{PROFILES[2].cost}</span>
+            <span className="sep">·</span>
+            <span>{PROFILES[2].sr}</span>
+          </div>
+          <div className="espec os">{PROFILES[2].os}</div>
+          <div className="epair">
+            <span className="mk">»</span> {t("engPair")}
+          </div>
+        </div>
+        <div className="ecol nvcol">
+          {!nvSupported ? (
+            <div className="cdetail na">{t("engWinOnly")}</div>
+          ) : (
+            <>
+              <div className="nvgpu">
+                {nv && nv.gpus.length > 0 ? (
+                  <>
+                    {nv.gpus[0].name}
+                    <i>
+                      {" "}
+                      · {nv.gpus[0].driver_version}
+                      {nv.selected_arch ? ` · ${nv.selected_arch}` : ""}
+                    </i>
+                  </>
+                ) : (
+                  <span className="cdetail na">{t("engNoGpu")}</span>
+                )}
+              </div>
+              <div className="echks">{(nv?.checks ?? []).map(checkPill)}</div>
+              <div className="drow nvrt">
+                <span className="dk">RUNTIME</span>
+                <button
+                  type="button"
+                  className="dpick plainbtn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    pickRuntime();
+                  }}
+                  title={(params.runtime_dir as string) || nv?.runtime_dir}
+                >
+                  {(params.runtime_dir as string) || nv?.runtime_dir || t("auto")}
+                </button>
+                <button
+                  type="button"
+                  className="dopen"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRecheck((params.runtime_dir as string) || undefined);
+                  }}
+                >
+                  {t("engRecheck")} <span className="mk">↻</span>
+                </button>
+                {!doctor?.ok && (
+                  <button
+                    type="button"
+                    className="setupbtn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSetup();
+                    }}
+                  >
+                    {t("engSetupRtx")} <span className="mk">&raquo;</span>
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function EnginePage({
@@ -150,18 +312,6 @@ export function EnginePage({
     return true;
   };
 
-  async function pickRuntime() {
-    try {
-      const sel = await open({ directory: true });
-      if (typeof sel === "string") {
-        onParam("runtime_dir", sel);
-        onRecheck(sel);
-      }
-    } catch {
-      /* cancelled */
-    }
-  }
-
   // LocalVQE 模型清单(卡片内,checklist 盒子风格):绿=已下载可用,黄=未下载可点下载。
   // 点模型 = 选 LocalVQE 引擎 + 设该模型(onPickModel 原子处理),清单常驻不展开。
   const localvqeModels = () => (
@@ -173,6 +323,7 @@ export function EnginePage({
         const box = downloading ? "···" : selected ? "✓" : found ? "OK" : t("lvqeGet");
         return (
           <button
+            type="button"
             key={m.file}
             className={`lvmod ${selected ? "on" : found ? "have" : "miss"}`}
             disabled={downloading}
@@ -196,6 +347,7 @@ export function EnginePage({
       })}
       <div className="lvtools">
         <button
+          type="button"
           className="dopen"
           onClick={(e) => {
             e.stopPropagation();
@@ -239,13 +391,8 @@ export function EnginePage({
         <div className="espec os">{p.os}</div>
       </>
     );
-    return (
-      <div
-        className={`ecard ${active ? "active" : ""} ${sup ? "" : "na"} ${
-          isLvqe ? "lvwide" : ""
-        }`}
-        onClick={() => sup && onSelect(p.kind)}
-      >
+    const body = (
+      <>
         <div className="eh">
           <span className="en">{p.name}</span>
           <span className={`etag ${rdy ? "" : sup ? "warn" : "na"}`}>
@@ -261,7 +408,27 @@ export function EnginePage({
         ) : (
           meters
         )}
-      </div>
+      </>
+    );
+    if (isLvqe) {
+      return (
+        <div
+          className={`ecard ${active ? "active" : ""} ${sup ? "" : "na"} lvwide`}
+        >
+          {body}
+        </div>
+      );
+    }
+    return (
+      <button
+        type="button"
+        aria-pressed={active}
+        disabled={!sup}
+        className={`ecard cardbtn ${active ? "active" : ""} ${sup ? "" : "na"}`}
+        onClick={() => onSelect(p.kind)}
+      >
+        {body}
+      </button>
     );
   };
 
@@ -271,16 +438,6 @@ export function EnginePage({
   const problems = (nv?.checks ?? []).filter(
     (c) => c.status === "missing" || c.status === "unsupported",
   ).length;
-
-  const checkPill = (c: NvafxCheck) => (
-    <div className="echk" key={c.name}>
-      <span className={`cpill ${c.status}`}>{c.status}</span>
-      <span className="cname">{c.name}</span>
-      <span className="cdetail" title={c.detail}>
-        {c.detail}
-      </span>
-    </div>
-  );
 
   return (
     <div className="page engine">
@@ -301,109 +458,19 @@ export function EnginePage({
         {card(PROFILES[1])}
       </div>
 
-      {/* NVAFX 全宽:规格牌 + doctor 就绪清单 + runtime 选择 + Broadcast 建议 */}
-      <div
-        className={`ecard wide ${kind === "nvidia_afx_aec" ? "active" : ""} ${
-          nvSupported ? "" : "na"
-        }`}
-        onClick={() => nvSupported && onSelect("nvidia_afx_aec")}
-      >
-        <div className="eh">
-          <span className="en">NVAFX <i className="sub">· RTX AEC</i></span>
-          <span
-            className={`etag ${nvReady ? "" : nvSupported ? "warn" : "na"}`}
-          >
-            {kind === "nvidia_afx_aec" && <i className="dot" />}{" "}
-            {dev && !doctor?.ok
-              ? kind === "nvidia_afx_aec"
-                ? `${t("active")} · DEV`
-                : `${t("rdyReady")} · DEV`
-              : !nvSupported
-                ? "WINDOWS · RTX ONLY"
-                : doctor?.ok
-                  ? kind === "nvidia_afx_aec"
-                    ? t("active")
-                    : t("rdyReady")
-                  : `${problems} ${t("rdyIssues")}`}
-          </span>
-        </div>
-        <div className="etier">{PROFILES[2].tier[lang]}</div>
-        <div className="ewrap">
-          <div className="ecol">
-            <Meter label="ECHO" n={PROFILES[2].echo} />
-            <Meter label="VOICE" n={PROFILES[2].voice} />
-            <div className="espec">
-              <span>{PROFILES[2].cost}</span>
-              <span className="sep">·</span>
-              <span>{PROFILES[2].sr}</span>
-            </div>
-            <div className="espec os">{PROFILES[2].os}</div>
-            <div className="epair">
-              <span className="mk">»</span> {t("engPair")}
-            </div>
-          </div>
-          <div className="ecol nvcol">
-            {!nvSupported ? (
-              <div className="cdetail na">{t("engWinOnly")}</div>
-            ) : (
-              <>
-                <div className="nvgpu">
-                  {nv && nv.gpus.length > 0 ? (
-                    <>
-                      {nv.gpus[0].name}
-                      <i>
-                        {" "}
-                        · {nv.gpus[0].driver_version}
-                        {nv.selected_arch ? ` · ${nv.selected_arch}` : ""}
-                      </i>
-                    </>
-                  ) : (
-                    <span className="cdetail na">{t("engNoGpu")}</span>
-                  )}
-                </div>
-                <div className="echks">
-                  {(nv?.checks ?? []).map(checkPill)}
-                </div>
-                <div className="drow nvrt">
-                  <span className="dk">RUNTIME</span>
-                  <span
-                    className="dpick"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      pickRuntime();
-                    }}
-                    title={(params.runtime_dir as string) || nv?.runtime_dir}
-                  >
-                    {(params.runtime_dir as string) ||
-                      nv?.runtime_dir ||
-                      t("auto")}
-                  </span>
-                  <button
-                    className="dopen"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRecheck((params.runtime_dir as string) || undefined);
-                    }}
-                  >
-                    {t("engRecheck")} <span className="mk">↻</span>
-                  </button>
-                  {!doctor?.ok && (
-                    <button
-                      className="setupbtn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSetup();
-                      }}
-                    >
-                      {t("engSetupRtx")} <span className="mk">&raquo;</span>
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+      <NvafxCard
+        kind={kind}
+        params={params}
+        doctor={doctor}
+        dev={dev}
+        nvSupported={nvSupported}
+        nvReady={nvReady}
+        problems={problems}
+        onSelect={onSelect}
+        onParam={onParam}
+        onRecheck={onRecheck}
+        onSetup={onSetup}
+      />
       </div>
 
     </div>

@@ -118,10 +118,14 @@ export function MicSetupPage({
           <div className="wzh warn">{t("micPermDenied")}</div>
           <div className="wznote">{t("micPermHint")}</div>
           <div className="wzgo">
-            <button className="wzbtn" onClick={() => openUrl(MIC_PRIVACY_URL)}>
+            <button
+              type="button"
+              className="wzbtn"
+              onClick={() => openUrl(MIC_PRIVACY_URL)}
+            >
               {t("micOpenPrivacy")} <span className="mk">↗</span>
             </button>
-            <button className="dopen" onClick={onRecheck}>
+            <button type="button" className="dopen" onClick={onRecheck}>
               {t("recheck")} <span className="mk">↻</span>
             </button>
           </div>
@@ -142,17 +146,21 @@ export function MicSetupPage({
           {isMac && (
             <div className="wzcmd">
               <code>{MAC_RESTART_CMD}</code>
-              <button className="dopen" onClick={copyCmd}>
+              <button type="button" className="dopen" onClick={copyCmd}>
                 {copied ? t("micCopied") : t("micCopy")}{" "}
                 <span className="mk">⧉</span>
               </button>
             </div>
           )}
           <div className="wzgo">
-            <button className="wzbtn" onClick={() => openUrl(DRIVER_URL[driver] ?? DRIVER_URL["vb-cable"])}>
+            <button
+              type="button"
+              className="wzbtn"
+              onClick={() => openUrl(DRIVER_URL[driver] ?? DRIVER_URL["vb-cable"])}
+            >
               {t("micOpenDriver")} <span className="mk">↗</span>
             </button>
-            <button className="dopen" onClick={onRecheck}>
+            <button type="button" className="dopen" onClick={onRecheck}>
               {t("recheck")} <span className="mk">↻</span>
             </button>
           </div>
@@ -168,10 +176,14 @@ export function MicSetupPage({
           {doctor?.needs_reboot ? ` · ${t("micRebootAfter")}` : ""}
         </div>
         <div className="wzgo">
-          <button className="wzbtn" onClick={() => openUrl(DRIVER_URL[driver] ?? DRIVER_URL["vb-cable"])}>
+          <button
+            type="button"
+            className="wzbtn"
+            onClick={() => openUrl(DRIVER_URL[driver] ?? DRIVER_URL["vb-cable"])}
+          >
             {t("micOpenDriver")} <span className="mk">↗</span>
           </button>
-          <button className="dopen" onClick={onRecheck}>
+          <button type="button" className="dopen" onClick={onRecheck}>
             {t("recheck")} <span className="mk">↻</span>
           </button>
         </div>
@@ -187,7 +199,7 @@ export function MicSetupPage({
           <i />
           <i />
         </span>{" "}
-        // {t("micRouteHead")} · {driver}
+        <span className="slashText">{t("micRouteHead")} · {driver}</span>
       </div>
       <hr className="hair" />
 
@@ -196,6 +208,7 @@ export function MicSetupPage({
           <span className="dvk">DEV · simulate</span>
           {MIC_DEV_STATES.map((s) => (
             <button
+              type="button"
               key={s}
               className={`dvb ${devState === s ? "on" : ""}`}
               onClick={() => onDevState(s)}
@@ -207,7 +220,7 @@ export function MicSetupPage({
       )}
 
       {/* 路由图:核心诊断 —— 谁连谁、通话软件选哪个 */}
-      <div className="asec">// {t("micRoute")}</div>
+      <div className="asec">{t("micRoute")}</div>
       <div className="mroute">
         <div className="mrow">
           <span className="mfrom">Echoless {t("micOut")}</span>
@@ -223,7 +236,7 @@ export function MicSetupPage({
         </div>
       </div>
 
-      <div className="asec">// {t("wzReadiness")}</div>
+      <div className="asec">{t("wzReadiness")}</div>
       <div className="wzladder">
         <span className={`wznode ${node("driver")}`}>
           <i className="d" />
@@ -243,7 +256,7 @@ export function MicSetupPage({
         </span>
       </div>
 
-      <div className="asec">// {t("wzAction")}</div>
+      <div className="asec">{t("wzAction")}</div>
       {action()}
     </div>
   );

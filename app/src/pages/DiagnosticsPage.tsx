@@ -78,19 +78,19 @@ export function DiagnosticsPage({
       </div>
       <hr className="hair" />
 
-      <div className="asec">// {t("virtualMic")}</div>
+      <div className="asec">{t("virtualMic")}</div>
       <div className="drow">
         <span className="dk">ROUTE</span>
         <span className={`dpath ${routeReady ? "live" : ""}`}>
           {routeReady ? t("micReadyShort") : t("micSetupShort")}
           {appMic ? ` · ${t("micPickShort")}: ${appMic.name}` : ""}
         </span>
-        <button className="dopen" onClick={onMicSetup}>
+        <button type="button" className="dopen" onClick={onMicSetup}>
           {t("setupBtn")} <span className="mk">&raquo;</span>
         </button>
       </div>
 
-      <div className="asec">// {t("secRecord")}</div>
+      <div className="asec">{t("secRecord")}</div>
       <div className="acols">
         <div className="arow">
           <span className="alabel">{t("record")}</span>
@@ -113,10 +113,15 @@ export function DiagnosticsPage({
 
       <div className="drow">
         <span className="dk">{t("recordDir")}</span>
-        <span className="dpick" onClick={pickDir} title={diagDir}>
+        <button
+          type="button"
+          className="dpick plainbtn"
+          onClick={pickDir}
+          title={diagDir}
+        >
           {diagDir || t("choose")}
-        </span>
-        <button className="dopen" onClick={() => openPath(diagDir)}>
+        </button>
+        <button type="button" className="dopen" onClick={() => openPath(diagDir)}>
           {t("openFolder")} <span className="mk">&raquo;</span>
         </button>
       </div>
@@ -135,6 +140,7 @@ export function DiagnosticsPage({
               <span className="recbadge warn">{health.rec_drops} drops</span>
             )}
             <button
+              type="button"
               className="dopen"
               onClick={() => openPath(health.session_dir!)}
             >
@@ -148,7 +154,7 @@ export function DiagnosticsPage({
         )}
       </div>
 
-      <div className="asec">// {t("secHealth")}</div>
+      <div className="asec">{t("secHealth")}</div>
       <div className={`acols ${running ? "" : "dim-soft"}`}>
         {counters.map((c) => (
           <div className="arow" key={c.label}>

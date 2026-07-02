@@ -140,7 +140,7 @@ export function stopRun(): Promise<void> {
 }
 
 // 向运行中的子进程 stdin 写一行 JSON 控制命令。具体能力以 started.supported_controls 为准。
-export function sendRunControl(line: string): Promise<void> {
+function sendRunControl(line: string): Promise<void> {
   return invoke<void>("send_run_control", { line });
 }
 export function startDiagnostics(
@@ -220,7 +220,7 @@ export interface PipelineCfg {
   output_level?: number;
 }
 
-export const OUTPUT_LEVEL_UNITY = 50;
+const OUTPUT_LEVEL_UNITY = 50;
 // 仅用于前端 tooltip 显示当前 dB;曲线与后端 output_level_gain 完全一致(gain=(v/50)^log2(3))。
 const OUTPUT_LEVEL_EXP = Math.log2(3); // ≈1.58496
 export function outputLevelToGain(level: number): number {

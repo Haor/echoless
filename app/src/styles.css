@@ -265,6 +265,21 @@ body {
   text-transform: uppercase;
   margin: 16px 0 6px;
 }
+.asec::before,
+.slashText::before {
+  content: "// ";
+}
+.plainbtn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-family: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+}
 .acols {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -723,6 +738,15 @@ body {
   color: var(--t);
   min-width: 0;
   overflow: hidden;
+}
+button.ecard {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+button.ecard:disabled {
+  cursor: default;
 }
 .ecard.wide {
   margin-top: 14px;
