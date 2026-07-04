@@ -725,7 +725,9 @@ body {
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
-  padding: 0 3px;
+  /* 右侧给绝对定位的参数量列留槽(30px 列宽 + 3px 边距) */
+  padding: 0 36px 0 3px;
+  position: relative;
   font: inherit;
   font-family: var(--mono);
   cursor: pointer;
@@ -785,12 +787,12 @@ body {
   min-width: 0;
 }
 .lvms {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-  /* flex none:参数/体积列不许被剪(曾 0 1 auto + overflow hidden,窄列时
-     「4.8M ~18MB」被从右侧剪成「4.」);挤压全部让 .lvsp 吸收 */
-  flex: none;
+  /* 绝对定位右锚:参数量列与行内容解耦 —— 徽标行内容再宽也顶不动它,
+     三行永远钉在同一竖线(曾用 flex 布局,负空间时被顶出右缘错位) */
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--t-mut);
   font-size: 10px;
   letter-spacing: 0.3px;
