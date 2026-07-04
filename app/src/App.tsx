@@ -1541,11 +1541,6 @@ function useAppController() {
         )}
         <span className="sp" />
         <span className="fright">
-          {/* v11:图签 SHEET 编号随视图翻页 */}
-          <span className="stamp">
-            <ScrambleText text={`SHT ${SHEET_NO[view]}/06`} />
-          </span>
-          <span className="fdot">·</span>
           <VolumeWheel
             volume={pipeline.output_level ?? 50}
             onChange={changeOutVolume}
@@ -1609,16 +1604,6 @@ function useAppController() {
 export default function App() {
   return useAppController();
 }
-
-// footer 图签 SHEET 编号(v11:随视图翻页)。
-const SHEET_NO: Record<View, string> = {
-  overview: "01",
-  engine: "02",
-  advanced: "03",
-  diagnostics: "04",
-  micsetup: "05",
-  rtxsetup: "06",
-};
 
 // UPTIME 走表:开机从零计,关机冻结最后读数(v3 原则 #5)。
 function UptimeStamp({ powerOn }: { powerOn: boolean }) {

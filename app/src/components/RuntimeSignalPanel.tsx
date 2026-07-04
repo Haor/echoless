@@ -30,7 +30,7 @@ export const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
           <span>
             <ScrambleText text={RAIL_TEXT[statusKind]} />
           </span>
-          <span>0 / −60 DBFS</span>
+          <span>0 / −120 DBFS</span>
         </span>
         <div className="near">
           <div className="trace">

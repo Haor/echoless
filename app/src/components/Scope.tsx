@@ -122,7 +122,8 @@ export function Scope({
       x.setLineDash([]);
 
       const wave = tel[`${traceKey}Wave` as const];
-      const e = clamp01((tel[traceKey] + 60) / 60) * (tel.on ? 1 : 0.05);
+      // 量程 0..-120 dBFS,与 srail 标注、dB 读数下限一致。
+      const e = clamp01((tel[traceKey] + 120) / 120) * (tel.on ? 1 : 0.05);
 
       let pts: [number, number][];
       if (wave && wave.length > 1) {

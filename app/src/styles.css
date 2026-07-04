@@ -202,6 +202,15 @@ body {
   padding: 0 16px;
   border-bottom: 1px solid var(--line);
 }
+/* Tauri drag region 只认被点元素自身的 data 属性:非交互子件(斜纹/标题/uid)
+   一律点击穿透,让整条标题栏可拖(caption 按钮除外)。 */
+.tbar .hatch,
+.tbar .screen,
+.tbar .uid,
+.tbar .devtag,
+.tbar .appicon {
+  pointer-events: none;
+}
 /* v3:dev 标改纸白贴纸(sticker) */
 .devtag {
   flex: none;
