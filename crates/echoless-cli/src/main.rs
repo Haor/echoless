@@ -1,7 +1,7 @@
 //! echoless — 跨平台 reference-based AEC 工具 CLI。
 //!
 //! 当前可用:`processors` / `devices` / `doctor audio` / `offline` / `run` / `nvafx doctor/install/download-install`。
-//! 实时主路径走 cpal;主线走经典 AEC3(sonora)保真,LocalVQE 作为独立可选处理器。
+//! 实时主路径走 cpal;主线走经典 AEC3(aec3)保真,LocalVQE 作为独立可选处理器。
 
 mod audio_commands;
 mod cli;

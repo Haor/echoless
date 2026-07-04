@@ -6,14 +6,14 @@
 
 | 改名前 | 改名后 |
 |---|---|
-| `vendor/sonora/crates/sonora-aec3/src/` | `vendor/aec3/crates/aec3-core/src/` |
-| `vendor/sonora/crates/sonora/src/` | `vendor/aec3/crates/aec3-apm/src/` |
-| `crates/echoless-processors/src/sonora_aec3.rs`(`SonoraAec3`) | `crates/echoless-processors/src/aec3.rs`(`Aec3Engine`) |
+| `vendor/aec3/crates/aec3-core/src/` | `vendor/aec3/crates/aec3-core/src/` |
+| `vendor/aec3/crates/aec3-apm/src/` | `vendor/aec3/crates/aec3-apm/src/` |
+| `crates/echoless-processors/src/aec3.rs`(`Aec3Engine`) | `crates/echoless-processors/src/aec3.rs`(`Aec3Engine`) |
 
 ## 锚点校准注记(2026-07-04 逐项核实,相对原方案的修正)
 
 - 原方案引用 `render_delay_buffer.rs:347-357` 的「二次 clamp」**不存在**;`align_from_delay` 唯一 clamp 点是 `:275` `total_delay.max(0).min(self.max_delay())`。
-- 顶层重导出在 `crates/sonora/src/lib.rs:34-35`(非 31):`pub use sonora_aec3::config as aec3_config;` 等。
+- 顶层重导出在 `vendor/aec3/crates/aec3-apm/src/lib.rs:34-35`(非 31):`pub use aec3::config as aec3_config;` 等。
 - 软 reset 阈值不是字面 `125`,是常量 `NUM_BLOCKS_PER_SECOND_BY_2`(`echo_path_delay_estimator.rs:145`)。
 - `realtime.rs` 拆分后,`apply_near_delay`(577-593)、underrun `far.fill(0.0)`(511-519)、`skip_stale`(565-575)**仍在 `crates/echoless-cli/src/realtime.rs`**;`set_near_delay_ms` 热更新在 `realtime/control.rs:385-401`,retune 在 `:519-530`。
 - 其余锚点全部核实无漂移。
@@ -43,7 +43,7 @@ pub render_gate_hold_blocks: usize,      // 连续低能量 N 块才进入 hold(
 
 ### 下发链路
 
-`crates/echoless-processors/src/aec3.rs` 的 `Aec3Tuning`(改名前 21-36 + Default 38-50,字段:tail_ms / delay_num_filters / linear_stable_echo_path / ns / ns_level / agc / far_channels)加 `delay_hold: Option<bool>`(echoless 侧默认 Some(true))→ `build_aec3_config`(199-219,注意末尾有 `c.validate()`)映射三字段 → builder 注入口 `aec3_config`(fork 注入链:`aec3-apm/src/audio_processing_impl.rs` 169 字段 / 206-208 setter / 1291-1302 应用)。**builder 级 = 重启生效,非热更新。** 高级页暂不暴露 UI(前端另由 UI 重构分支处理)。
+`crates/echoless-processors/src/aec3.rs` 的 `Aec3Tuning`(改名前 21-36 + Default 38-50,字段:tail_ms / delay_num_filters / linear_stable_echo_path / ns / ns_level / agc / far_channels)加 `delay_hold: Option<bool>`(echoless 侧默认 Some(true))→ `build_aec3_config`(199-219,注意末尾有 `c.validate()`)映射三字段 → builder 注入口 `aec3_config`(fork 注入链:`vendor/aec3/crates/aec3-apm/src/audio_processing_impl.rs` 169 字段 / 206-208 setter / 1291-1302 应用)。**builder 级 = 重启生效,非热更新。** 高级页暂不暴露 UI(前端另由 UI 重构分支处理)。
 
 ## 功能 2:负方向偏置(方案 N1)— vendor 零改动
 

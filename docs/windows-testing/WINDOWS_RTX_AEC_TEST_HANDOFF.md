@@ -2,7 +2,7 @@
 
 ## 目标
 
-在 Windows 侧评估 NVIDIA RTX / Maxine Audio Effects SDK 的 AEC 能力，并用 Echoless 新增的诊断录制能力生成同源证据。当前产品主线仍是 `sonora_aec3` 保真优先；RTX AEC 只作为可选 backend / 对照路线评估，不要默认与 AEC3 级联。
+在 Windows 侧评估 NVIDIA RTX / Maxine Audio Effects SDK 的 AEC 能力，并用 Echoless 新增的诊断录制能力生成同源证据。当前产品主线仍是 `aec3` 保真优先；RTX AEC 只作为可选 backend / 对照路线评估，不要默认与 AEC3 级联。
 
 ## 2026-06-06 Windows 实测更新
 
@@ -152,8 +152,8 @@ features/nvafxaec/models/<arch>/aec_48k.trtpkg
    - 主调研文档，先看这里。包含 NVIDIA Maxine AEC、AEC3、LocalVQE、验证矩阵、风险清单。
 2. `docs/research/reference_repos_exploration_report.md`
    - 源码级核实报告。用于确认 LocalVQE C API、Maxine API 形态、虚拟麦路线和参考仓库证据。
-3. `docs/research/sonora_aec3_internal_map.md`
-   - AEC3 / sonora 当前可调能力、delay、stereo far reference、tail、NS/AGC 风险。
+3. `docs/research/aec3_internal_map.md`
+   - AEC3 / aec3 当前可调能力、delay、stereo far reference、tail、NS/AGC 风险。
 4. `docs/research/cross_platform_architecture.md`
    - Audio I/O/Core/Processor/CLI/GUI 分层蓝本。Windows agent 如果要判断 RTX backend 应该挂在哪里，需要读这个。
 
@@ -237,7 +237,7 @@ features/nvafxaec/models/<arch>/aec_48k.trtpkg
 
 ### 4. LocalVQE v1.3 standalone 可选测试
 
-复制 `example.toml` 为 `localvqe-v13.toml`，注释掉 `sonora_aec3` 块，启用：
+复制 `example.toml` 为 `localvqe-v13.toml`，注释掉 `aec3` 块，启用：
 
 ```toml
 [[chain]]
@@ -327,7 +327,7 @@ RTX AEC 不要与 AEC3 串联后直接下结论。先做：
 - macOS artifact 只用于验证 AEC3、LocalVQE、配置解析、CLI/GUI 基础路径。
 - NVIDIA AFX / RTX AEC backend 目前是 Windows x64 only；macOS 不应尝试安装 RTX runtime 或运行 `nvafx offline/install`。
 - `echoless nvafx doctor --json` 可以作为 GUI/安装器的统一能力探针；macOS 上应看到 `ok=false`，并包含 `platform=unsupported` 检查项。
-- GUI 默认 backend 仍应是 `sonora_aec3`；RTX AEC 只在 doctor 通过的 Windows RTX 机器上显示为可选 backend。
+- GUI 默认 backend 仍应是 `aec3`；RTX AEC 只在 doctor 通过的 Windows RTX 机器上显示为可选 backend。
 
 ## 结果回传格式
 

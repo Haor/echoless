@@ -25,7 +25,7 @@ Do not start from RTX AEC. RTX AEC is a later candidate/backend investigation, n
 The required research files are copied into:
 
 - `../research/windows_aec_research.md`
-- `../research/sonora_aec3_internal_map.md`
+- `../research/aec3_internal_map.md`
 - `../research/reference_repos_exploration_report.md`
 - `../research/cross_platform_architecture.md`
 
@@ -37,7 +37,7 @@ If the agent has GitHub access, it can fetch raw files from:
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/windows-testing/WINDOWS_INSTALLED_APP_SMOKE_HANDOFF.md>
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/windows-testing/WINDOWS_RTX_AEC_TEST_HANDOFF.md>
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/research/windows_aec_research.md>
-- <https://raw.githubusercontent.com/Haor/echoless/main/docs/research/sonora_aec3_internal_map.md>
+- <https://raw.githubusercontent.com/Haor/echoless/main/docs/research/aec3_internal_map.md>
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/research/reference_repos_exploration_report.md>
 - <https://raw.githubusercontent.com/Haor/echoless/main/docs/research/cross_platform_architecture.md>
 

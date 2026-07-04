@@ -28,7 +28,7 @@ Implemented proof points:
 
 3. AEC3 `ns` / `ns_level` / `agc`:
 
-- They map to Sonora's top-level APM config and can be applied through `AudioProcessing::apply_config`.
+- They map to AEC3's top-level APM config and can be applied through `AudioProcessing::apply_config`.
 - They do not reopen devices, change frame geometry, or rebuild the processor chain.
 - `tail_ms`, `delay_num_filters`, and `linear_stable_echo_path` remain restart-required because they are injected into the AEC3 builder-level config.
 
@@ -81,7 +81,7 @@ Implemented proof points:
 - `cargo test -p echoless-cli realtime::control --locked`
 - `cargo test -p echoless-cli realtime::stats --locked`
 - `cargo test -p echoless-processors chain::tests --locked`
-- `cargo test -p echoless-processors sonora_aec3 --locked`
+- `cargo test -p echoless-processors aec3 --locked`
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`
 - `cargo test --workspace --locked`
 - `pnpm -C app build`

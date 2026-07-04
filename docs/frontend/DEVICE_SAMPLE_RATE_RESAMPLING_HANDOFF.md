@@ -91,7 +91,7 @@ sample_rate = 48000
 frame_ms = 10
 reference_channels = "mono"
 [[chain]]
-kind = "sonora_aec3"
+kind = "aec3"
 EOF
 # 旧错误: 麦克风不支持该采样率 · WhiteCatBox 在 48000 Hz 无可用 input 配置
 

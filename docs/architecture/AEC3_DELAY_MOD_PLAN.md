@@ -1,8 +1,8 @@
 # AEC3 延迟魔改方案:延迟保持(惯性)+ 负方向延迟搜索
 
 日期:2026-07-03 · 状态:方案(待执行)
-前置:`AEC3_INTERNALIZATION_PLAN.md`(先内化改名再魔改;下文行号基于当前 `vendor/sonora` 路径,改名后同构映射)。
-背景真理来源:`docs/research/sonora_aec3_internal_map.md`(延迟链路 §6.6)。
+前置:`AEC3_INTERNALIZATION_PLAN.md`(先内化改名再魔改;下文行号基于当前 `vendor/aec3` 路径,改名后同构映射)。
+背景真理来源:`docs/research/aec3_internal_map.md`(延迟链路 §6.6)。
 
 ---
 
@@ -32,7 +32,7 @@ capture(near) ──> BlockProcessor                        ▼
                     └─> render_buffer.align_from_delay(移 render 读指针,clamp [0, max] ③)
 ```
 
-关键事实(file:line 见 `vendor/sonora/crates/sonora-aec3/src/`):
+关键事实(file:line 见 `vendor/aec3/crates/aec3-core/src/`):
 
 - **① underrun 打击面**:`render_delay_buffer.rs:229-240` underrun 时 `delay -= 1`(硬扣一 block);`block_processor.rs:166-170` 同时对 controller `reset(false)` 软重置。**这是 ref 断续毁掉对齐的直接来源。**
 - **② 无 render-activity gate**:`echo_path_delay_estimator.rs:107-111` 无条件调 `matched_filter.update`。`render_delay_buffer` 算了 `render_activity`(`:185-191,425-431`,阈值 `active_render_limit=100.0`)但**只给 echo_remover 用,从不进延迟估计**。MatchedFilter 内部只有逐样本防除零弱门(`matched_filter.rs:104`)。→ 静音期直方图被噪声污染、估计漂移。
@@ -43,7 +43,7 @@ capture(near) ──> BlockProcessor                        ▼
 - **有利遗产**:controller 对估计器返回 `None` 是"粘"的——保留已有 delay 只递增计数(`render_delay_controller.rs:118-121`);`significant_candidate_found` 一旦置位,非 hard reset 不清(`matched_filter_lag_aggregator.rs:220-222`)。**上游本身有半套惯性,缺的是 ①② 两处。**
 - **调参够不到**:`delay_selection_thresholds.converged` 提高、`hysteresis_limit_blocks` 调大(仅压延迟增大方向)、`smoothing_delay_found` 调小,都只能减缓漂移,**治不了 ① 的硬扣和 ② 的静音污染**。
 - **外部延迟路径不可用作惯性**:`use_external_delay_estimator=true` 会整个关掉自适应估计(`block_processor.rs:75-83,193-195`),变成开环跟随;且 `align_from_external_delay` 对负值未 clamp,行为未定义(`render_delay_buffer.rs:283-290`)。
-- **注入通道已就绪**:fork 的 `builder.aec3_config(EchoCanceller3Config)`(`audio_processing_impl.rs:1291-1302`)→ `echoless-processors/src/sonora_aec3.rs` 的 `Aec3Tuning`(`:21-50`)→ `build_aec3_config`(`:199-219`)。builder 级字段 = **重建引擎生效(重启),非热更新**。
+- **注入通道已就绪**:fork 的 `builder.aec3_config(EchoCanceller3Config)`(`audio_processing_impl.rs:1291-1302`)→ `echoless-processors/src/aec3.rs` 的 `Aec3Tuning`(`:21-50`)→ `build_aec3_config`(`:199-219`)。builder 级字段 = **重建引擎生效(重启),非热更新**。
 
 ---
 
@@ -96,7 +96,7 @@ hold 错误(静音期间物理延迟真的变了,如切设备)的代价 = 恢复
 3. **代价核算**:输出链路额外 +20ms(总延迟预算内需确认;语音连麦可接受)。搜索窗损失 20ms(608→588ms)可忽略,必要时 `delay_num_filters` +1 补回。
 4. **观测钩子**:AEC3 内部估计的 delay 若长期贴 0 下限,说明真实 lag 比 -D 更负、偏置不足——在 metrics 里透出 `aec3_delay_blocks`(fork 已可访问内部状态),前端诊断页给「建议增大 near delay / 重跑 probe」提示。
 
-改动面:`echoless-core`(默认值)、`probe_delay.rs`(推荐公式)、`sonora_aec3.rs`(metrics 透出)、前端文案。**vendor 零改动**。
+改动面:`echoless-core`(默认值)、`probe_delay.rs`(推荐公式)、`aec3.rs`(metrics 透出)、前端文案。**vendor 零改动**。
 
 ### 方案 N2(远期,真负 tap):core 搜索窗负偏移
 

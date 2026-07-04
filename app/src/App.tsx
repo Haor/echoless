@@ -144,7 +144,7 @@ function pickReference(devices: DeviceList, current: string): string {
 }
 
 const MODELS: { kind: string; label: string }[] = [
-  { kind: "sonora_aec3", label: "AEC3" },
+  { kind: "aec3", label: "AEC3" },
   { kind: "localvqe", label: "LOCALVQE" },
   { kind: "nvidia_afx_aec", label: "NVAFX" },
 ];
@@ -280,7 +280,7 @@ const INITIAL_APP_STATE: AppState = {
 };
 
 const INITIAL_ENGINE_STATE: EngineState = {
-  kind: "sonora_aec3",
+  kind: "aec3",
   pipeline: INITIAL_PIPELINE,
   params: {},
 };
@@ -834,7 +834,7 @@ function useAppController() {
     paramsRef.current = np; // 同步更新 ref:探测后自动恢复引擎时能立刻读到新 initial_delay_ms
     paramsByKind.current[kind] = np;
     updateEngine({ params: np });
-    if (kind === "sonora_aec3" && key === "initial_delay_ms") {
+    if (kind === "aec3" && key === "initial_delay_ms") {
       if (powerOnRef.current) {
         if (!hasRunControl("set_initial_delay_ms")) {
           reportMissingRunControl("set_initial_delay_ms");
@@ -849,7 +849,7 @@ function useAppController() {
       }
       return;
     }
-    if (kind === "sonora_aec3" && (key === "ns" || key === "ns_level")) {
+    if (kind === "aec3" && (key === "ns" || key === "ns_level")) {
       if (powerOnRef.current) {
         if (!hasRunControl("set_aec3_ns")) {
           reportMissingRunControl("set_aec3_ns");
@@ -861,7 +861,7 @@ function useAppController() {
       }
       return;
     }
-    if (kind === "sonora_aec3" && key === "agc") {
+    if (kind === "aec3" && key === "agc") {
       if (powerOnRef.current) {
         if (!hasRunControl("set_aec3_agc")) {
           reportMissingRunControl("set_aec3_agc");

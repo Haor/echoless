@@ -23,10 +23,10 @@
 |---|---|---|
 | `cargo clippy --workspace --all-targets --locked -D warnings`(root) | **EXIT=0** ✅ | P0.0 基线刷绿确认 |
 | `cargo clippy ...`(`app/src-tauri`,独立 workspace) | **EXIT=0** ✅ | ROB-4 那两处会让 Tauri 编译失败的 `flatten()` 已修 |
-| `cargo clippy ...`(`vendor/sonora`) | **EXIT=0** ✅ | SON-3 gate 生效 |
-| `cargo test`(root / app / sonora) | **全部 0 failed** ✅ | root ~280+、sonora ~670+ 测试全过 |
+| `cargo clippy ...`(`vendor/aec3`) | **EXIT=0** ✅ | SON-3 gate 生效 |
+| `cargo test`(root / app / aec3) | **全部 0 failed** ✅ | root ~280+、aec3 ~670+ 测试全过 |
 
-关键**回归测试真实存在且通过**(非占位):零分配证明(`processor_chain_alloc`、`vendor/sonora .../realtime_alloc`)、诊断 writer join 无 `.part` 残留、sonora 后端错误记账、命令超时杀子进程、毒化锁恢复。唯一 warning:`block v0.1.6` future-incompat(已知,纳入 TEST-2 依赖治理)。
+关键**回归测试真实存在且通过**(非占位):零分配证明(`processor_chain_alloc`、`vendor/aec3 .../realtime_alloc`)、诊断 writer join 无 `.part` 残留、aec3 后端错误记账、命令超时杀子进程、毒化锁恢复。唯一 warning:`block v0.1.6` future-incompat(已知,纳入 TEST-2 依赖治理)。
 
 ---
 
@@ -44,12 +44,12 @@
 | P3 实时音质 | PERF-1 | ✅ 真修(证据稍窄) | 计数 allocator 真断言稳态 `process()` 零分配;但只覆盖 chain 本体 + Identity 节点 |
 | P3 实时音质 | QUAL-1 | ⚠️→**已补**(§3) | 有状态 rubato 替换无状态线性(改对了,立体声保留);但 SRC 延迟未计入 + 缺连续性测试 → 本次已补 |
 | P3 实时音质 | QUAL-3 / QUAL-4 | ⚠️ 真修但增益有限 | QUAL-3 `make_contiguous` 仍 O(n) memmove(省了每帧 `vec!`);QUAL-4 桶边界用预估帧数,drop 时小视觉偏差(峰值数值仍等价) |
-| P3 实时音质 | ROB-2 / SON-1 / SON-2 | ✅ 真修 | writer join 无 `.part`;sonora 错误记入 stats(注:capture 出错时 bypass=直通原麦含回声,需前端展示 `last_backend_error`);realtime_alloc 真计数断言 0 |
+| P3 实时音质 | ROB-2 / SON-1 / SON-2 | ✅ 真修 | writer join 无 `.part`;aec3 错误记入 stats(注:capture 出错时 bypass=直通原麦含回声,需前端展示 `last_backend_error`);realtime_alloc 真计数断言 0 |
 | P4 安全健壮 | SEC-1~6 / ROB-1 / ROB-3 / QUAL-2 / DOC-1 | ✅ 真修 | 校验逻辑代码+测试双确认;内置 pin 优先(`ensure!` 立即失败);O_EXCL 唯一临时文件;库不搜 CWD;模型下载校验 size+SHA256 |
 | P4 安全健壮 | ROB-4 | ❌→**已补**(§3) | Tauri 侧改了,但 `probe_delay.rs` 仍 `map_while(Result::ok)` 吞错,且台账自报「无残留」不实 → 本次已补 |
 | P5 前端延迟 | FE-1 / FE-2 / QUAL-5 | ✅ 真修 | rAF 隐藏/停机暂停 + ResizeObserver;`useSyncExternalStore` 隔离;DSP helper 去重 |
 | P5 前端延迟 | LAT-1 | 🟡 部分 + 诚实改名 | 补了 `mic_q`,仍漏设备硬件缓冲/IO 重采样残值;label 收窄为「Pipeline / 管线延迟」 |
-| P6 架构 | ARCH-2 / ARCH-3 / FE-3 | ✅ 真生效非空桩 | core 死代码删净;stdin 热控**真落地**——vendored Sonora `apply_config` 真在线 reinit NS/AGC2 子模块,**不重建 APM** |
+| P6 架构 | ARCH-2 / ARCH-3 / FE-3 | ✅ 真生效非空桩 | core 死代码删净;stdin 热控**真落地**——vendored AEC3 `apply_config` 真在线 reinit NS/AGC2 子模块,**不重建 APM** |
 
 **没有发现任何「台账标 done 实则未做 / 张冠李戴 / 空提交」。** 抽查的 closing SHA 全部存在且改动对得上 finding。
 
@@ -116,8 +116,8 @@
 cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked
 # Tauri 后端(独立 workspace)
 (cd app/src-tauri && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
-# vendored sonora(独立 workspace)
-(cd vendor/sonora && cargo clippy -p sonora -p sonora-aec3 --all-targets --locked -- -D warnings && cargo test --locked)
+# vendored aec3(独立 workspace)
+(cd vendor/aec3 && cargo clippy -p aec3-apm -p aec3-core --all-targets --locked -- -D warnings && cargo test --locked)
 # 前端
 (cd app && pnpm exec tsc --noEmit)
 # 打包(发布务必带 --require-localvqe-assets 以 fail-fast)

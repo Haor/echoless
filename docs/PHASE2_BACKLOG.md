@@ -24,7 +24,7 @@
   并行必然冲突;原计划「阶段 1 可与 P3 并行」作废)。
 - Codex 调用走 `/codex:rescue`(companion),`--cd` 指向对应 worktree,workspace-write;
   把方案 md 全文作为任务规格喂入,要求按步骤输出 diff 摘要 + 跑 `cargo test -p` 相关包。
-- P3/P4 验收由 Claude 复核:P3 全仓 grep 无 `sonora` 残留 + 兼容别名测试;
+- P3/P4 验收由 Claude 复核:P3 全仓 grep 无 `aec3` 残留 + 兼容别名测试;
   P4 回归 = 非平稳激励 + >60s 长跑(顺带验证 internal map §11.6 退化疑云)。
 
 ## P1 — UI 重构(主工作树)
@@ -48,11 +48,11 @@ Triage 表已附在 `docs/audit/UI_ISSUES_VERIFICATION_20260703.md` 末尾。结
 - **后端/产品项 10 条** → 新增 P8。
 - C6 的「0ms 歧义」会随 P4 的 probe 公式改动自然消失,P1 文案按 P4 新语义写。
 
-## P3 — Vendor 重构:sonora 内化改名(Codex)
+## P3 — Vendor 重构:aec3 内化改名(Codex)
 
 按 `docs/architecture/AEC3_INTERNALIZATION_PLAN.md` 执行(8 步):
 
-- sonora→aec3-apm/aec3-core 等改名映射;kind `"sonora_aec3"`→`"aec3"` 带兼容别名。
+- aec3→aec3-apm/aec3-core 等改名映射;kind `"aec3"`→`"aec3"` 带兼容别名。
 - vendor 有独立 `.git` 需先删除并入。
 - **先内化改名、后延迟魔改**(保持 diff 分离)。
 

@@ -88,7 +88,7 @@ pub(crate) struct OfflineArgs {
     /// 处理链 TOML 配置(含 [[chain]]);给了则用其 chain/rate/frame_ms
     #[arg(long)]
     pub(crate) config: Option<String>,
-    /// 快捷处理器 kind,如 "sonora_aec3" 或 "localvqe"
+    /// 快捷处理器 kind,如 "aec3" 或 "localvqe"
     #[arg(long)]
     pub(crate) chain: Option<String>,
     #[arg(long, default_value_t = 48000)]
@@ -129,19 +129,19 @@ pub(crate) struct RunArgs {
     /// 最终输出电平:0=静音,50=原声,100=3x 增益
     #[arg(long)]
     pub(crate) output_level: Option<u32>,
-    /// 覆盖处理器,可重复或逗号分隔;默认建议 sonora_aec3
+    /// 覆盖处理器,可重复或逗号分隔;默认建议 aec3
     #[arg(long, value_delimiter = ',')]
     pub(crate) processor: Vec<String>,
-    /// 开启 sonora_aec3 降噪
+    /// 开启 aec3 降噪
     #[arg(long)]
     pub(crate) ns: bool,
-    /// 关闭 sonora_aec3 降噪
+    /// 关闭 aec3 降噪
     #[arg(long)]
     pub(crate) no_ns: bool,
-    /// 覆盖 sonora_aec3 降噪强度:low/moderate/high/veryhigh
+    /// 覆盖 aec3 降噪强度:low/moderate/high/veryhigh
     #[arg(long)]
     pub(crate) ns_level: Option<String>,
-    /// 覆盖 sonora_aec3 echo tail 长度(ms)
+    /// 覆盖 aec3 echo tail 长度(ms)
     #[arg(long)]
     pub(crate) tail_ms: Option<u32>,
     /// 每秒打印滚动实时统计

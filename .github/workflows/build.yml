@@ -75,13 +75,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: Sonora tests
-        working-directory: vendor/sonora
-        run: cargo test -p sonora -p sonora-aec3 --locked
+      - name: AEC3 tests
+        working-directory: vendor/aec3
+        run: cargo test -p aec3-apm -p aec3-core --locked
 
-      - name: Sonora clippy
-        working-directory: vendor/sonora
-        run: cargo clippy -p sonora -p sonora-aec3 --all-targets --locked -- -D warnings
+      - name: AEC3 clippy
+        working-directory: vendor/aec3
+        run: cargo clippy -p aec3-apm -p aec3-core --all-targets --locked -- -D warnings
 
       - name: Build release
         run: cargo build --release --workspace --locked
@@ -112,7 +112,7 @@ jobs:
           set -euo pipefail
           cargo audit
           (cd app/src-tauri && cargo audit)
-          (cd vendor/sonora && cargo audit)
+          (cd vendor/aec3 && cargo audit)
 
       - name: LocalVQE C API regression
         shell: bash

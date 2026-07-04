@@ -58,7 +58,7 @@ export interface ParamSpec {
 
 export type ProcessorKind =
   | "passthrough"
-  | "sonora_aec3"
+  | "aec3"
   | "localvqe"
   | "nvidia_afx_aec";
 

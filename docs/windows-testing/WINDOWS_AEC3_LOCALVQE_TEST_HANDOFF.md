@@ -4,7 +4,7 @@
 
 Windows 侧先测试 Echoless 当前已经可运行的两条路径：
 
-1. `sonora_aec3` 保真基线
+1. `aec3` 保真基线
 2. `localvqe` v1.3 standalone
 
 只有第一阶段完成、诊断录制样本已经生成后，再进入 RTX / NVIDIA AFX AEC 调研。不要一开始就安装或测试 RTX AEC，也不要把 `AEC3 -> LocalVQE` 级联作为默认结论。
@@ -31,7 +31,7 @@ Windows 侧先测试 Echoless 当前已经可运行的两条路径：
 1. `docs/windows-testing/WINDOWS_AEC3_LOCALVQE_TEST_HANDOFF.md`
 2. `docs/windows-testing/WINDOWS_RTX_AEC_TEST_HANDOFF.md`
 3. `docs/research/windows_aec_research.md`
-4. `docs/research/sonora_aec3_internal_map.md`
+4. `docs/research/aec3_internal_map.md`
 5. `docs/research/reference_repos_exploration_report.md`
 6. `docs/research/cross_platform_architecture.md`
 
@@ -92,7 +92,7 @@ Windows 侧先测试 Echoless 当前已经可运行的两条路径：
 
 ## 第二阶段：LocalVQE v1.3 standalone
 
-复制 `example.toml` 为 `localvqe-v13.toml`，注释掉 `sonora_aec3`，启用：
+复制 `example.toml` 为 `localvqe-v13.toml`，注释掉 `aec3`，启用：
 
 ```toml
 [[chain]]

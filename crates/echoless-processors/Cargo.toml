@@ -3,7 +3,7 @@ name = "echoless-processors"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "统一回声处理节点:EchoProcessor trait + ProcessorChain(可单开/串联/组合/扩展)+ sonora/localvqe 节点"
+description = "统一回声处理节点:EchoProcessor trait + ProcessorChain(可单开/串联/组合/扩展)+ aec3/localvqe 节点"
 
 [dependencies]
 anyhow.workspace = true
@@ -11,14 +11,14 @@ toml.workspace = true
 serde.workspace = true
 libloading.workspace = true
 rubato.workspace = true
-# 经典 AEC3 引擎:vendored fork(见 ../../vendor/sonora,源自 dignifiedquire/sonora @ aacadf0)。
-# 改 path 依赖以便开放 EchoCanceller3Config 注入口(方案 A,见 research/sonora_aec3_internal_map.md §9)。
-# 默认特性 sonora-engine 开启;关掉则 sonora_aec3 节点回退为直通(便于快速构建)。
-sonora = { path = "../../vendor/sonora/crates/sonora", optional = true }
+# 经典 AEC3 引擎:vendored fork(见 ../../vendor/aec3,上游基线 aacadf0)。
+# 改 path 依赖以便开放 EchoCanceller3Config 注入口(方案 A,见 research/aec3_internal_map.md §9)。
+# 默认特性 aec3-engine 开启;关掉则 aec3 节点回退为直通(便于快速构建)。
+aec3-apm = { path = "../../vendor/aec3/crates/aec3-apm", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 
 [features]
-default = ["sonora-engine"]
-sonora-engine = ["dep:sonora"]
+default = ["aec3-engine"]
+aec3-engine = ["dep:aec3-apm"]

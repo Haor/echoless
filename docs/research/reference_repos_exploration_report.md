@@ -3,8 +3,8 @@
 > 范围:`reference_repos/` 下 16 组(21 个顶层目录,部分同类仓库按组归并)的源码级深扒,结合 `research/windows_aec_research.md` 已有结论与确定的需求目标(Windows 外放音箱 + USB 麦克风,reference-based 实时 AEC,经虚拟麦克风送 Discord/VRChat)。
 > 方法:graphify 索引导航 + 逐文件源码核实,关键「直接可用」结论带 `file:line` 证据。关键判断以**源码为准**(README 与源码不一致处按已发现证据修正)。
 > 产出统计:**86 条直接可用项 · 135 条被忽视高价值点 · 16 组/21 顶层目录覆盖**。建议弃用 1(EchoFree),降权 2(Virtual-Audio-Driver 公开版、SynchronousAudioRouter)。
-> 2026-06-05 复核更新:修正 `sonora` 的 Windows/C++ validation 口径、确认 `sonora-aec3` 尚未移植 neural REE、补充 AecApo 样例缺口,并收窄 `DATA_DISCONTINUITY` 的证据边界。
-> 2026-06-05 增补:新加入第 17 个仓库 **`MicYou`**(Kotlin/GPLv3)——非 AEC,但「不写驱动、自动化第三方虚拟声卡」的安装/配置 UX 是我们最大自研缺口的 MVP 参考(见 §3.6、§6)。同时确认架构方向:经典 AEC3(sonora)与 LocalVQE 统一为可组合 `EchoProcessor` 节点(可单开/串联/扩展),**neural REE 移出目标**——详见 `cross_platform_architecture.md`。
+> 2026-06-05 复核更新:修正 `aec3` 的 Windows/C++ validation 口径、确认 `aec3-core` 尚未移植 neural REE、补充 AecApo 样例缺口,并收窄 `DATA_DISCONTINUITY` 的证据边界。
+> 2026-06-05 增补:新加入第 17 个仓库 **`MicYou`**(Kotlin/GPLv3)——非 AEC,但「不写驱动、自动化第三方虚拟声卡」的安装/配置 UX 是我们最大自研缺口的 MVP 参考(见 §3.6、§6)。同时确认架构方向:经典 AEC3(aec3)与 LocalVQE 统一为可组合 `EchoProcessor` 节点(可单开/串联/扩展),**neural REE 移出目标**——详见 `cross_platform_architecture.md`。
 
 ---
 
@@ -12,7 +12,7 @@
 
 1. **AEC3 已经把 neural 残余抑制从「串联」升级成「深度集成接口」(本次最大认知更新)。** 当前官方 AEC3 源码新增了可注入的 `NeuralResidualEchoEstimator` 抽象基类(TFLite 实现),与内部 `dominant_nearend / S2_linear / Y2 / E2` 全部中间状态共享。这意味着「AEC3 主消 + LocalVQE/DTLN 残余」的工程量可从「写独立 neural 模块 + 时序对齐」降到「写一个 `NeuralResidualEchoEstimator` 子类」,且官方给了 production tuning(`webrtc-aec3-src/aec3/neural_residual_echo_estimator/neural_residual_echo_estimator_impl.cc:569-589`)。**现有调研把主要 neural 候选定位为 AEC3 之外的串联后处理,是最大盲区。**
 
-2. **`sonora` 是 WebRTC APM/AEC3 的纯 Rust M145 移植 + 现成 `wap_*` C API,但不是 2025 neural REE 的现成替代品。** Windows x64 CI 覆盖普通 build/test;2400+ C++ reference validation 在 Ubuntu/macOS 跑,不是 Windows;且 `sonora-aec3` 明确跳过 `NeuralResidualEchoEstimator`。因此它仍是 classical AEC3/APM 的强主线候选(2.5/5 → 4.0/5),能显著降低 GN/depot_tools 成本,但若要官方 2025 neural REE 路径,仍需 C++ official 或补 port(`sonora/README.md:57-71`、`sonora/crates/sonora-aec3/src/residual_echo_estimator.rs:179`、`sonora/crates/sonora-ffi/src/functions.rs:22-52`)。
+2. **`aec3` 是 WebRTC APM/AEC3 的纯 Rust M145 移植 + 现成 `wap_*` C API,但不是 2025 neural REE 的现成替代品。** Windows x64 CI 覆盖普通 build/test;2400+ C++ reference validation 在 Ubuntu/macOS 跑,不是 Windows;且 `aec3-core` 明确跳过 `NeuralResidualEchoEstimator`。因此它仍是 classical AEC3/APM 的强主线候选(2.5/5 → 4.0/5),能显著降低 GN/depot_tools 成本,但若要官方 2025 neural REE 路径,仍需 C++ official 或补 port(`aec3/README.md:57-71`、`aec3/crates/aec3-core/src/residual_echo_estimator.rs:179`、`aec3/crates/aec3-ffi/src/functions.rs:22-52`)。
 
 3. **虚拟麦克风的 user→kernel 实时喂音频通道,当前本地参考集合留白——必须自研或购买。** `Virtual-Audio-Driver` 公开版的 `WriteBytes` 是 `RtlZeroMemory`(**永远输出静音**),基线 3/5 严重高估,实际可用度为 0(`Virtual-Audio-Driver/Source/Main/minwavertstream.cpp:1392-1421`);作者明确把 IPC 通道作为付费定制内容。`simpleaudiosample` / `sysvad` 也都只写正弦波。这是落地最大的自研缺口(预算 2-8 人周)。
 
@@ -34,7 +34,7 @@
 
 | # | 东西 | 来源 file:line | License | 成本 | 关键坑 |
 |---|---|---|---|---|---|
-| 1 | **sonora 全栈**(纯 Rust WebRTC APM M145,含 AEC3/NS/AGC2)+ `sonora-ffi` 现成 `wap_*` C ABI(staticlib+cbindgen) | `sonora/README.md:57-71`;`sonora/crates/sonora/src/audio_processing.rs:400-405,564-580`;`sonora/crates/sonora-ffi/src/functions.rs:22-52` | BSD-3 | 低 | 0.1.0 初期接口;f32 为 deinterleaved、i16 为 interleaved;2400+ C++ validation 非 Windows;neural REE 未 ported;config 1036 行无 preset |
+| 1 | **aec3 全栈**(纯 Rust WebRTC APM M145,含 AEC3/NS/AGC2)+ `aec3-ffi` 现成 `wap_*` C ABI(staticlib+cbindgen) | `aec3/README.md:57-71`;`aec3/crates/aec3-apm/src/audio_processing.rs:400-405,564-580`;`aec3/crates/aec3-ffi/src/functions.rs:22-52` | BSD-3 | 低 | 0.1.0 初期接口;f32 为 deinterleaved、i16 为 interleaved;2400+ C++ validation 非 Windows;neural REE 未 ported;config 1036 行无 preset |
 | 2 | **AECMOS_local 48kHz fullband 评测模型**(echo_mos + deg_mos 双指标,本地 ONNX 无需联网) | `AEC-Challenge/AECMOS/AECMOS_local/aecmos.py:45-50` + `Run_1668423760_Stage_0.onnx` | MIT | 低 | 48k 版需人工标注场景 marker(st/nst/dt) |
 | 3 | **AEC3 `NeuralResidualEchoEstimator` 抽象接口 + 官方 AdjustConfig tuning** | `webrtc-aec3-src/api-audio/neural_residual_echo_estimator.h:26-65`;`webrtc-aec3-src/aec3/neural_residual_echo_estimator/neural_residual_echo_estimator_impl.cc:569-589` | BSD-3 + PATENTS | 中 | 仓库不含模型;frame 硬锁 256 样本(16ms@16k);只跑 band0 |
 | 4 | **AEC3 `use_external_delay_estimator` + `SetAudioBufferDelay`** 外部延迟接入 | `webrtc-aec3-src/aec3/render_delay_buffer.cc:351,375-384`;`webrtc-aec3-src/api-audio/echo_canceller3_config.h:55` | BSD-3 + PATENTS | 低 | 切 external 后内部 matched_filter 完全 bypass,无自我修正 |
@@ -78,7 +78,7 @@
 - **stereo 分两路处理**:delay 估计用 `AlignmentMixer` 强制 mono(`prefer_first_two_channels=true`, `activity_power_threshold=10000`),adaptive filter + suppressor 保留 stereo(`webrtc-aec3-src/aec3/alignment_mixer.h:25-27`)。**IAecEngine 要暴露两个独立选项**,不要捆成单一 stereo 开关。
 - **双讲门控 `DominantNearendDetector`**:per-channel 低频 [bin1..15] 的 ENR/SNR 双阈值 + 滞回(enter 慢/stay 久/echo 突涨立即退出),OR 合并(`webrtc-aec3-src/aec3/dominant_nearend_detector.cc:32-76`)。作为 IAecEngine 统一 DTD 输出事实标准。
 - **多通道默认配置** `CreateDefaultMultichannelConfig()`(coarse 11 blocks/rate 0.95):stereo 直接用,别自己拍参数(`webrtc-aec3-src/api-audio/echo_canceller3_config.cc:288-301`)。
-- **filter tail 无硬上限**:`Validate()` 只 FloorLimit(1),可改到 64 blocks(256ms);sonora README 给出的 48k full pipeline benchmark 是 13.3µs/10ms 帧,调大 tail 至少有性能试验空间(`sonora/BENCHMARKS.md`)。
+- **filter tail 无硬上限**:`Validate()` 只 FloorLimit(1),可改到 64 blocks(256ms);aec3 README 给出的 48k full pipeline benchmark 是 13.3µs/10ms 帧,调大 tail 至少有性能试验空间(`aec3/BENCHMARKS.md`)。
 
 ### 3.5 Neural 残余抑制(真理来源:AEC3 集成层)
 - **neural REE「始终运行」**:即便输出被忽略也要每 block 喂数据保持 LSTM state 一致(`webrtc-aec3-src/aec3/residual_echo_estimator.cc:214-216`)。任何 stateful neural 后端不能按需启停。
@@ -103,9 +103,9 @@
 - **Linux PipeWire 零驱动虚拟麦**(`PipeWireManager.kt`,若日后做):`pw-cli create-node ... support.null-audio-sink` + `pw-loopback` 把 monitor 变 source(`:182-218`)。
 - **跨平台抽象模式**:`AudioEngine.kt` `expect/actual` + `PlatformAdaptor.kt` 的 `usesSystemAudioSinkForVirtualOutput` 能力开关 → 直译成我们的 `AudioSink` trait + cfg 分发 + `VirtualDeviceManager{install/set_default/restore}`。
 
-### 3.7 工程组织与产品化(真理来源:project-raven + sonora-ffi)
+### 3.7 工程组织与产品化(真理来源:project-raven + aec3-ffi)
 - **AEC 健康监控 bypass 状态机**(Recall.ai 同款实战阈值,直接当默认 SLA):drift>200ms bypass / drift<100ms 才 reenable / 5s holdoff / 10 overflows/2s / 200 empty pulls / health check 2s。**bypass 期仍继续喂数据让 background filter 暗中收敛**(`project-raven/src/main/systemAudioNative.ts:115-123,373-378`)。
-- **panic 不跨 FFI**:`ffi_guard!` + `catch_unwind` 三层保护,Rust panic 返回错误码而非 abort(`sonora/crates/sonora-ffi/src/panic_guard.rs`)。
+- **panic 不跨 FFI**:`ffi_guard!` + `catch_unwind` 三层保护,Rust panic 返回错误码而非 abort(`aec3/crates/aec3-ffi/src/panic_guard.rs`)。
 - **IAecEngine C ABI** 取三家之长:LocalVQE opaque handle + options builder + Maxine string selector + typed setter。
 
 ---
@@ -116,7 +116,7 @@
 
 ### 4.1 架构方向级(改变技术决策)
 1. **AEC3 内置 neural REE 接口**(见执行摘要 #1)——把 neural 从串联改深度集成,显著降低接口和时序对齐成本。`webrtc-aec3-src` + `LocalVQE` 双向印证。
-2. **sonora 把 classical AEC3/APM 在 Windows 落地从「数月 GN 折腾」降到 Rust+FFI 路线**(见执行摘要 #2)。这条直接改变引擎选型与 Phase 3 路线;但若目标包含 2025 neural REE,当前本地 `sonora-aec3` 仍缺 port,不能直接替代 official C++。
+2. **aec3 把 classical AEC3/APM 在 Windows 落地从「数月 GN 折腾」降到 Rust+FFI 路线**(见执行摘要 #2)。这条直接改变引擎选型与 Phase 3 路线;但若目标包含 2025 neural REE,当前本地 `aec3-core` 仍缺 port,不能直接替代 official C++。
 3. **drift ppm 闭环在当前本地参考集合中未见 production 实现 = 我们的创新空间**(4 处死代码互证)。应把这块作为单独可验证模块做出工程证据。
 4. **按 DTD 切换 neural 拓扑的产品策略**:LocalVQE 1024ms echo 窗单兵就能覆盖外放长 tail,但 double-talk ERLE 仅 8.5dB;应在「far-end-only 用 LocalVQE single」与「double-talk 用 AEC3+LocalVQE residual」之间按 dominant_nearend 切换(`LocalVQE README:98` + `DT ERLE 8.5dB`)。
 5. **Win11 AEC APO 是 OS 官方接口路线而非纯「高级路线」**:aux loopback 入口能把一部分对齐/设备恢复问题交给系统接口,应升级为 Win11 主路径之一,与用户态虚拟麦并行。但 `Windows-driver-samples/audio/sysvad/APO/AecApo` 只是模板,算法与实时注入策略仍需自研。
@@ -124,7 +124,7 @@
 ### 4.2 纠正基线错误判断(必须改文档)
 6. **`Virtual-Audio-Driver` 公开版 mic 永远输出静音**(`WriteBytes`=`RtlZeroMemory`),基线 3/5 → 实际可用度 0;「custom builds 可用 named pipes/shared memory」经全仓 grep 证伪(付费内容)。
 7. **`project-raven` 的 `project-raven/src/native/webrtc-aec/` C API 未接入主路径**:主应用实际加载 GStreamer `webrtcdsp` addon,`project-raven/src/native/webrtc-aec/` 是遗留实验且本地只见 macOS 预构建痕迹;`stats.diverged` 语义还是错的(`stream_has_echo()` ≠ filter diverged)。连子目录 README 都虚标 M124/AEC3。
-8. **`aec3-rs` 与 `sonora` 不是同一 milestone,但 `sonora` 也尚未覆盖 2025 neural REE**:aec3-rs 用旧 main/shadow 命名,sonora 用新 refined/coarse;不过 `sonora/crates/sonora-aec3/src/residual_echo_estimator.rs:179` 明确 `NeuralResidualEchoEstimator is skipped (not ported)`。
+8. **`aec3-rs` 与 `aec3` 不是同一 milestone,但 `aec3` 也尚未覆盖 2025 neural REE**:aec3-rs 用旧 main/shadow 命名,aec3 用新 refined/coarse;不过 `aec3/crates/aec3-core/src/residual_echo_estimator.rs:179` 明确 `NeuralResidualEchoEstimator is skipped (not ported)`。
 9. **DTLN-aec 是 32ms window / 8ms hop,不是单纯 8ms API frame**;wrapper 以 512 样本块进入 `Process`,内部跑 4 个 128-sample hop,叠在 AEC3 后要按窗口和 buffering 重算延迟预算(`DTLN_AEC-wrapper/DTLN_AEC/DTLN_AEC.cpp:19-20,321-419`)。
 10. **TSPNN 的 ONNX 是 AECMOS 评测器,不是 TSPNN AEC 模型**;基线「无可下载 checkpoint」判断反了——拿到的是一份现成评测 harness(`TSPNN/eval/eval.py`)。
 11. **NKF 模型只有 28KB**(candidate 池最小),小到可塞进 hot path 作 SpeexDSP MVP 的零成本增量(`NKF-AEC/src/nkf_epoch70.pt`);基线「3/5 算法参考」偏乐观——无 train 脚本,自家重训成本高于 DTLN。
@@ -172,7 +172,7 @@
 - **最佳来源**:AEC3 2025 `NeuralResidualEchoEstimator` 深度集成层 + LocalVQE(模型源)。
 - **可直接用**:抽象基类 + AdjustConfig tuning、double-mask 范式、mask 频率下采样公式、LSTM state 衰减、LocalVQE C API、DTLN Model_2、NKF 28KB 权重、AECMOS harness。
 - **必须自研的 gap**:Windows 上 AEC3+neural REE 真实编译路径(第一道硬墙)、stereo render 喂 neural 策略、48kHz 全带模型、production 单线程 benchmark、neural 健康 watchdog(超时/NaN/crash 降级)、外放专属训练数据。
-- **建议(主线决策)**:**AEC3 主消后必须叠 neural,但走深度集成而非串联,且分阶段**。MVP 不上 neural(SpeexDSP preprocess 已够);Phase 2/3 若走 official C++ 写 `LocalVqeNeuralReeAdapter : public NeuralResidualEchoEstimator`;若走 `sonora`,需先补 neural REE port。强制单线程 + 独立 MMCSS 线程;强制 `use_external_delay_estimator`。
+- **建议(主线决策)**:**AEC3 主消后必须叠 neural,但走深度集成而非串联,且分阶段**。MVP 不上 neural(SpeexDSP preprocess 已够);Phase 2/3 若走 official C++ 写 `LocalVqeNeuralReeAdapter : public NeuralResidualEchoEstimator`;若走 `aec3`,需先补 neural REE port。强制单线程 + 独立 MMCSS 线程;强制 `use_external_delay_estimator`。
 
 ### 维度 5 · 立体声参考与双讲门控
 - **最佳来源**:AEC3(本地参考集合中最完整的 stereo+DTD 四级管线)。其他引擎只能配合不能替代。
@@ -187,8 +187,8 @@
 - **建议**:阶段 1 VB-Cable 兜底;阶段 2 基于 simpleaudiosample 派生 capture-only 虚拟 mic(`WriteBytes` 换 shared-memory+KEVENT memcpy,缩小 HLK 范围);阶段 3 并行 AEC APO;≤2 人团队认真评估买 TVirtAudio SDK / MikeTheTech 定制把这块外包。**绝对避免** fork Virtual-Audio-Driver 公开版做业务。
 
 ### 维度 7 · 构建集成与许可证
-- **最佳来源**:webrtc-audioprocessing 4 文件 build harness(壳 Apache-2.0)+ LocalVQE/sonora-ffi C API。
-- **可直接用**:4 文件 CMake harness、LocalVQE C 头、sonora-ffi 双 crate-type+cbindgen、Maxine string selector、Speex `speexdsp/win32/libspeexdsp.def`。
+- **最佳来源**:webrtc-audioprocessing 4 文件 build harness(壳 Apache-2.0)+ LocalVQE/aec3-ffi C API。
+- **可直接用**:4 文件 CMake harness、LocalVQE C 头、aec3-ffi 双 crate-type+cbindgen、Maxine string selector、Speex `speexdsp/win32/libspeexdsp.def`。
 - **必须自研的 gap**:cargo+CMake 多后端混编模板、单文件 signed installer、cpu dispatch 多 DLL、EV+Authenticode+attestation CI、GPL 隔离边界文档、模型供应链安全、统一 THIRD_PARTY_NOTICES。
 - **建议**:主 build = Rust/cargo,C/C++ 后端走 cmake crate;WebRTC 走 fork harness + vendor M124 子树(脱 depot_tools);IAecEngine C ABI 取三家之长;严格 license 矩阵(GPL 仅 clean-room,WebRTC PATENTS 法务确认,MS-PL 源码层保留)。
 
@@ -199,7 +199,7 @@
 | 仓库 | 定位 | Verdict | 一句话理由 |
 |---|---|---|---|
 | **webrtc-aec3-src** | 成品核心引擎源码 | **直接用**(配 wrapper) | 线性 AEC 行业最成熟 + 2025 neural REE 深度集成接口 + 真·外部 delay;主要阻塞是独立编译 |
-| **sonora** | AEC3 纯 Rust 移植 | **直接用(classical AEC3 主线候选)** | M145 移植 + Windows 普通 CI + 现成 C API;2400+ C++ validation 非 Windows,且 neural REE 未 ported |
+| **aec3** | AEC3 纯 Rust 移植 | **直接用(classical AEC3 主线候选)** | M145 移植 + Windows 普通 CI + 现成 C API;2400+ C++ validation 非 Windows,且 neural REE 未 ported |
 | **LocalVQE** | neural AEC+NS+dereverb | **直接用**(neural 后端) | Apache-2.0 + C API + Win 自发现 + 1024ms 窗 + 16ms 延迟;集成成本最低的 neural 路径 |
 | **speexdsp** | MVP 引擎 + 基础设施 | **直接用 + 参考** | MDF AEC + resampler(drift)+ decorrelate + preprocess 五件套;成品核心上限低于 AEC3 |
 | **webrtc-audioprocessing** | AEC3 构建脚手架 | **直接用**(构建) | 4 文件把 AEC3 编成 MSVC 静态库,省 1-2 周;但「脱 GN」半真 |
@@ -224,7 +224,7 @@
 > 指向 `research/windows_aec_research.md` 的章节。
 
 1. **§3.3 / §9(Neural 架构)**:新增「AEC3 内置 `NeuralResidualEchoEstimator` 深度集成接口」——把主要 neural 候选从「AEC3 之外串联」重定位为「AEC3 内 adapter 子类」。这是架构层的重写,影响 §9.4 引擎抽象。
-2. **§3.2 / §4.1(引擎选型)**:`sonora` 评级 2.5/5 → 4.0/5,新增为 classical WebRtcAec3Engine 的 Rust 主线实现路径,与 webrtc-audioprocessing CMake wrapper 并列。明确 caveat:Windows 普通 CI 不等于 Windows C++ reference validation,且当前 `sonora-aec3` 未 port neural REE。`aec3-rs` 标注 milestone 偏旧 + 无 FFI。
+2. **§3.2 / §4.1(引擎选型)**:`aec3` 评级 2.5/5 → 4.0/5,新增为 classical WebRtcAec3Engine 的 Rust 主线实现路径,与 webrtc-audioprocessing CMake wrapper 并列。明确 caveat:Windows 普通 CI 不等于 Windows C++ reference validation,且当前 `aec3-core` 未 port neural REE。`aec3-rs` 标注 milestone 偏旧 + 无 FFI。
 3. **§7(虚拟麦克风)**:(a) `Virtual-Audio-Driver` 公开版降到「仅 INF/工程模板」,明确「mic 恒静音、无 IPC」;(b) 虚拟麦克风起点改为 `simpleaudiosample`;(c) 新增「Win11 AEC APO(sysvad/APO/AecApo)」为官方接口路线;(d) 新增「driver 声明 AEC effect / 不声明 mic-array 防双 AEC」。
 4. **§6(drift)**:把「PulseAudio 把 drift 留给应用层」修正为更准确的「PulseAudio 既没做应用层 fractional resample 也没做内部 set_drift,只做 drop-based resync;ppm 闭环在当前本地参考集合中未见 production 实现」。新增 4 处死代码互证 + calc_diff 公式 + 参数表。
 5. **§5(WASAPI 采集)**:补 obs-studio 的具体技巧清单(SILENT 双路径、DEVICE_INVALIDATED 静默、ClearBuffer、时间戳分两路、while 排空);明确 project-raven 采集为反例。
@@ -238,8 +238,8 @@
 
 按优先级(均为基线 open question 或本次新发现的硬墙):
 
-1. **【硬墙】Windows 上编出含 `NeuralResidualEchoEstimator` 的 AEC3**:webrtc-audioprocessing 是 M124(早于 neural REE 抽象),需 bump milestone + 解决 TFLite/protobuf/pffft/flatbuffers 完整依赖。若选择 `sonora`,第一步是补 port neural REE。这是 neural 主线的第一道墙。
-2. **【选型对照】sonora vs webrtc-audioprocessing**:实测 sonora 在 Windows MSVC 下与官方 C++ 的数值一致性 + 长时稳定性 + stress test(当前 Windows 只覆盖普通 cargo test;2400+ C++ reference validation 不在 Windows)。若 classical AEC3 过关,可省掉一大块 GN/depot_tools 路线。
+1. **【硬墙】Windows 上编出含 `NeuralResidualEchoEstimator` 的 AEC3**:webrtc-audioprocessing 是 M124(早于 neural REE 抽象),需 bump milestone + 解决 TFLite/protobuf/pffft/flatbuffers 完整依赖。若选择 `aec3`,第一步是补 port neural REE。这是 neural 主线的第一道墙。
+2. **【选型对照】aec3 vs webrtc-audioprocessing**:实测 aec3 在 Windows MSVC 下与官方 C++ 的数值一致性 + 长时稳定性 + stress test(当前 Windows 只覆盖普通 cargo test;2400+ C++ reference validation 不在 Windows)。若 classical AEC3 过关,可省掉一大块 GN/depot_tools 路线。
 3. **【Phase 0 评测 harness】**:用 AECMOS_local(48k)+ DTLN audio_samples ground-truth,**强制单线程**对比 SpeexDSP / AEC3 / LocalVQE v1.2/v1.3 / DTLN / NKF 在单 mic+render 场景的 ERLE / echo_mos / deg_mos。
 4. **【虚拟麦克风 PoC】**:基于 simpleaudiosample 派生,把 `WriteBytes` 换成 shared-memory + KEVENT 喂音频,Win10/11 各跑一次 Discord/VRChat 真机(验证 AEC effect 声明是否让 Discord 关自己的 AEC、format=Headset 是否优先列出、设备热切换是否无缝)。
 5. **【drift 公式离线验证】**:Python 离线 pipeline 实现 calc_diff + apply_diff_time + 简易 SRC,用已有 mic/ref wav 验证公式,对比 AEC3 `use_external_delay_estimator` vs 内部 matched_filter 的 ERLE。

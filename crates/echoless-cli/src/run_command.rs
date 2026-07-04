@@ -82,21 +82,21 @@ fn apply_run_overrides(mut cfg: PipelineConfig, a: &RunArgs) -> Result<PipelineC
         bail!("--ns 与 --no-ns 不能同时使用");
     }
     if a.ns {
-        set_sonora_param(&mut cfg.chain, "ns", toml::Value::Boolean(true))?;
+        set_aec3_param(&mut cfg.chain, "ns", toml::Value::Boolean(true))?;
     }
     if a.no_ns {
-        set_sonora_param(&mut cfg.chain, "ns", toml::Value::Boolean(false))?;
+        set_aec3_param(&mut cfg.chain, "ns", toml::Value::Boolean(false))?;
     }
     if let Some(level) = &a.ns_level {
-        set_sonora_param(&mut cfg.chain, "ns", toml::Value::Boolean(true))?;
-        set_sonora_param(
+        set_aec3_param(&mut cfg.chain, "ns", toml::Value::Boolean(true))?;
+        set_aec3_param(
             &mut cfg.chain,
             "ns_level",
             toml::Value::String(level.clone()),
         )?;
     }
     if let Some(tail_ms) = a.tail_ms {
-        set_sonora_param(
+        set_aec3_param(
             &mut cfg.chain,
             "tail_ms",
             toml::Value::Integer(tail_ms.into()),
@@ -119,9 +119,11 @@ fn apply_run_overrides(mut cfg: PipelineConfig, a: &RunArgs) -> Result<PipelineC
 }
 
 #[cfg_attr(not(feature = "realtime"), allow(dead_code))]
-fn set_sonora_param(nodes: &mut [NodeConfig], key: &str, value: toml::Value) -> Result<()> {
-    let Some(node) = nodes.iter_mut().find(|node| node.kind == "sonora_aec3") else {
-        bail!("{key} 需要配置中存在 sonora_aec3 节点,或使用 --processor sonora_aec3");
+fn set_aec3_param(nodes: &mut [NodeConfig], key: &str, value: toml::Value) -> Result<()> {
+    let Some(node) = nodes.iter_mut().find(|node| {
+        node.kind == "aec3" || node.kind == "sonora_aec3" // legacy alias, remove after 2 releases
+    }) else {
+        bail!("{key} 需要配置中存在 aec3 节点,或使用 --processor aec3");
     };
     node.params.insert(key.to_string(), value);
     Ok(())
@@ -179,7 +181,7 @@ mod tests {
         args.reference_channels = Some(echoless_core::ReferenceChannels::Stereo);
         args.near_delay_ms = Some(25);
         args.output_level = Some(75);
-        args.processor = vec!["sonora_aec3".into()];
+        args.processor = vec!["aec3".into()];
         args.ns_level = Some("high".into());
         args.tail_ms = Some(120);
 
@@ -197,7 +199,7 @@ mod tests {
             echoless_core::ReferenceChannels::Stereo
         );
         assert_eq!(cfg.chain.len(), 1);
-        assert_eq!(cfg.chain[0].kind, "sonora_aec3");
+        assert_eq!(cfg.chain[0].kind, "aec3");
         assert_eq!(
             cfg.chain[0].params["reference_channels"].as_str(),
             Some("stereo")
@@ -220,13 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn run_overrides_reject_sonora_flags_without_sonora_node() {
+    fn run_overrides_reject_aec3_flags_without_aec3_node() {
         let mut args = run_args();
         args.tail_ms = Some(120);
 
         let err = apply_run_overrides(PipelineConfig::default(), &args).unwrap_err();
 
-        assert!(err.to_string().contains("sonora_aec3"));
+        assert!(err.to_string().contains("aec3"));
     }
 
     #[test]

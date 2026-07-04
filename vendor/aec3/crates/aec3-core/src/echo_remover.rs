@@ -1,0 +1,797 @@
+//! Echo remover — orchestrates echo removal using the subtractor, suppression,
+//! and AEC state machine.
+//!
+//! Ported from `modules/audio_processing/aec3/echo_remover.h/cc`.
+
+use std::ptr;
+
+use crate::aec_state::{AecState, AecStateUpdate};
+use crate::aec3_fft::{Aec3Fft, Window};
+use crate::block::Block;
+use crate::comfort_noise_generator::ComfortNoiseGenerator;
+use crate::common::{
+    BLOCK_SIZE, FFT_LENGTH_BY_2, FFT_LENGTH_BY_2_PLUS_1, log2_to_db, num_bands_for_rate,
+    valid_full_band_rate,
+};
+use crate::config::EchoCanceller3Config;
+use crate::delay_estimate::DelayEstimate;
+use crate::echo_path_variability::{DelayAdjustment, EchoPathVariability};
+use crate::echo_remover_metrics::EchoRemoverMetrics;
+use crate::fft_data::FftData;
+use crate::render_buffer::RenderBuffer;
+use crate::render_signal_analyzer::RenderSignalAnalyzer;
+use crate::residual_echo_estimator::{ResidualEchoEstimator, ResidualEchoInput};
+use crate::subtractor::Subtractor;
+use crate::subtractor_output::SubtractorOutput;
+use crate::suppression_filter::SuppressionFilter;
+use crate::suppression_gain::{SuppressionGain, SuppressionInput};
+
+/// Echo control metrics returned by `get_metrics`.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct EchoRemoverMetricsOutput {
+    pub echo_return_loss: f64,
+    pub echo_return_loss_enhancement: f64,
+}
+
+/// Computes the linear echo power: S2 = |Y - E|^2.
+fn linear_echo_power(e: &FftData, y: &FftData, s2: &mut [f32; FFT_LENGTH_BY_2_PLUS_1]) {
+    for (s2_k, (((y_re, e_re), y_im), e_im)) in s2.iter_mut().zip(
+        y.re.iter()
+            .zip(e.re.iter())
+            .zip(y.im.iter())
+            .zip(e.im.iter()),
+    ) {
+        *s2_k = (y_re - e_re) * (y_re - e_re) + (y_im - e_im) * (y_im - e_im);
+    }
+}
+
+/// Fades between two input signals using a fixed-size transition.
+fn signal_transition(from: &[f32], to: &[f32], out: &mut [f32]) {
+    debug_assert_eq!(from.len(), to.len());
+    debug_assert_eq!(from.len(), out.len());
+
+    if ptr::eq(from.as_ptr(), to.as_ptr()) {
+        out.copy_from_slice(to);
+    } else {
+        const TRANSITION_SIZE: usize = 30;
+        const ONE_BY_TRANSITION_SIZE_PLUS_ONE: f32 = 1.0 / (TRANSITION_SIZE + 1) as f32;
+
+        debug_assert!(TRANSITION_SIZE <= out.len());
+
+        for k in 0..TRANSITION_SIZE {
+            let a = (k + 1) as f32 * ONE_BY_TRANSITION_SIZE_PLUS_ONE;
+            out[k] = a * to[k] + (1.0 - a) * from[k];
+        }
+
+        out[TRANSITION_SIZE..].copy_from_slice(&to[TRANSITION_SIZE..]);
+    }
+}
+
+/// Returns whether the refined filter output is more appropriate than the
+/// coarse filter output for a single channel.
+fn use_refined_filter_output(subtractor_output: &SubtractorOutput) -> bool {
+    // As the output of the refined adaptive filter generally should be better
+    // than the coarse filter output, add a margin and threshold for when
+    // choosing the coarse filter output.
+    if subtractor_output.e2_coarse_sum < 0.9 * subtractor_output.e2_refined_sum
+        && subtractor_output.y2 > 30.0 * 30.0 * BLOCK_SIZE as f32
+        && (subtractor_output.s2_refined > 60.0 * 60.0 * BLOCK_SIZE as f32
+            || subtractor_output.s2_coarse > 60.0 * 60.0 * BLOCK_SIZE as f32)
+    {
+        return false;
+    }
+
+    // If the refined filter is diverged, choose the filter output that has
+    // the lowest power.
+    if subtractor_output.e2_coarse_sum < subtractor_output.e2_refined_sum
+        && subtractor_output.y2 < subtractor_output.e2_refined_sum
+    {
+        return false;
+    }
+    true
+}
+
+/// Forms the linear filter output by smoothly transitioning between the
+/// refined and coarse filter outputs.
+fn form_linear_filter_output(
+    refined_filter_output_last_selected: bool,
+    use_refined_output: bool,
+    subtractor_output: &SubtractorOutput,
+    output: &mut [f32; FFT_LENGTH_BY_2],
+) {
+    debug_assert_eq!(subtractor_output.e_refined.len(), output.len());
+    debug_assert_eq!(subtractor_output.e_coarse.len(), output.len());
+
+    let from = if refined_filter_output_last_selected {
+        &subtractor_output.e_refined
+    } else {
+        &subtractor_output.e_coarse
+    };
+    let to = if use_refined_output {
+        &subtractor_output.e_refined
+    } else {
+        &subtractor_output.e_coarse
+    };
+
+    signal_transition(from, to, output);
+}
+
+#[derive(Debug)]
+struct EchoRemoverScratch {
+    e: Vec<[f32; FFT_LENGTH_BY_2]>,
+    y2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    e2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    r2: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    r2_unbounded: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    s2_linear: Vec<[f32; FFT_LENGTH_BY_2_PLUS_1]>,
+    y_fft: Vec<FftData>,
+    e_fft: Vec<FftData>,
+    comfort_noise: Vec<FftData>,
+    high_band_comfort_noise: Vec<FftData>,
+    subtractor_output: Vec<SubtractorOutput>,
+}
+
+impl EchoRemoverScratch {
+    fn new(num_capture_channels: usize) -> Self {
+        Self {
+            e: vec![[0.0; FFT_LENGTH_BY_2]; num_capture_channels],
+            y2: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            e2: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            r2: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            r2_unbounded: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            s2_linear: vec![[0.0; FFT_LENGTH_BY_2_PLUS_1]; num_capture_channels],
+            y_fft: vec![FftData::default(); num_capture_channels],
+            e_fft: vec![FftData::default(); num_capture_channels],
+            comfort_noise: vec![FftData::default(); num_capture_channels],
+            high_band_comfort_noise: vec![FftData::default(); num_capture_channels],
+            subtractor_output: (0..num_capture_channels)
+                .map(|_| SubtractorOutput::default())
+                .collect(),
+        }
+    }
+
+    fn reset(&mut self) {
+        for e in &mut self.e {
+            e.fill(0.0);
+        }
+        for y2 in &mut self.y2 {
+            y2.fill(0.0);
+        }
+        for e2 in &mut self.e2 {
+            e2.fill(0.0);
+        }
+        for r2 in &mut self.r2 {
+            r2.fill(0.0);
+        }
+        for r2_unbounded in &mut self.r2_unbounded {
+            r2_unbounded.fill(0.0);
+        }
+        for s2_linear in &mut self.s2_linear {
+            s2_linear.fill(0.0);
+        }
+        for y_fft in &mut self.y_fft {
+            y_fft.clear();
+        }
+        for e_fft in &mut self.e_fft {
+            e_fft.clear();
+        }
+        for comfort_noise in &mut self.comfort_noise {
+            comfort_noise.clear();
+        }
+        for high_band_comfort_noise in &mut self.high_band_comfort_noise {
+            high_band_comfort_noise.clear();
+        }
+        for subtractor_output in &mut self.subtractor_output {
+            *subtractor_output = SubtractorOutput::default();
+        }
+    }
+}
+
+/// Computes a windowed (sqrt-Hanning) padded FFT and updates the related memory.
+fn windowed_padded_fft(
+    fft: &Aec3Fft,
+    v: &[f32],
+    v_old: &mut [f32; FFT_LENGTH_BY_2],
+    out: &mut FftData,
+) {
+    fft.padded_fft(v, v_old, Window::SqrtHanning, out);
+    v_old.copy_from_slice(v);
+}
+
+/// Removes echo from the capture signal.
+#[derive(Debug)]
+pub(crate) struct EchoRemover {
+    config: EchoCanceller3Config,
+    fft: Aec3Fft,
+    sample_rate_hz: usize,
+    num_render_channels: usize,
+    num_capture_channels: usize,
+    use_coarse_filter_output: bool,
+    subtractor: Subtractor,
+    suppression_gain: SuppressionGain,
+    cng: ComfortNoiseGenerator,
+    suppression_filter: SuppressionFilter,
+    render_signal_analyzer: RenderSignalAnalyzer,
+    residual_echo_estimator: ResidualEchoEstimator,
+    echo_leakage_detected: bool,
+    capture_output_used: bool,
+    aec_state: AecState,
+    metrics: EchoRemoverMetrics,
+    e_old: Vec<[f32; FFT_LENGTH_BY_2]>,
+    y_old: Vec<[f32; FFT_LENGTH_BY_2]>,
+    block_counter: usize,
+    gain_change_hangover: i32,
+    refined_filter_output_last_selected: bool,
+    scratch: EchoRemoverScratch,
+}
+
+impl EchoRemover {
+    pub(crate) fn new(
+        backend: aec3_simd::SimdBackend,
+        config: &EchoCanceller3Config,
+        sample_rate_hz: usize,
+        num_render_channels: usize,
+        num_capture_channels: usize,
+    ) -> Self {
+        debug_assert!(valid_full_band_rate(sample_rate_hz));
+        Self {
+            config: config.clone(),
+            fft: Aec3Fft::new(),
+            sample_rate_hz,
+            num_render_channels,
+            num_capture_channels,
+            use_coarse_filter_output: config.filter.enable_coarse_filter_output_usage,
+            subtractor: Subtractor::new(backend, config, num_render_channels, num_capture_channels),
+            suppression_gain: SuppressionGain::new(config, sample_rate_hz, num_capture_channels),
+            cng: ComfortNoiseGenerator::new(config, num_capture_channels),
+            suppression_filter: SuppressionFilter::new(sample_rate_hz, num_capture_channels),
+            render_signal_analyzer: RenderSignalAnalyzer::new(config),
+            residual_echo_estimator: ResidualEchoEstimator::new(config, num_render_channels),
+            echo_leakage_detected: false,
+            capture_output_used: true,
+            aec_state: AecState::new(config, num_capture_channels),
+            metrics: EchoRemoverMetrics::new(),
+            e_old: vec![[0.0; FFT_LENGTH_BY_2]; num_capture_channels],
+            y_old: vec![[0.0; FFT_LENGTH_BY_2]; num_capture_channels],
+            block_counter: 0,
+            gain_change_hangover: 0,
+            refined_filter_output_last_selected: true,
+            scratch: EchoRemoverScratch::new(num_capture_channels),
+        }
+    }
+
+    /// Returns current echo removal metrics.
+    pub(crate) fn get_metrics(&self) -> EchoRemoverMetricsOutput {
+        EchoRemoverMetricsOutput {
+            // Echo return loss (ERL) is inverted to go from gain to attenuation.
+            echo_return_loss: -10.0 * (self.aec_state.erl_time_domain() as f64).log10(),
+            echo_return_loss_enhancement: log2_to_db(self.aec_state.fullband_erle_log2()) as f64,
+        }
+    }
+
+    /// Removes echo from a block of capture samples. The render signal in the
+    /// render buffer is assumed to be pre-aligned with the capture signal.
+    pub(crate) fn process_capture(
+        &mut self,
+        mut echo_path_variability: EchoPathVariability,
+        capture_signal_saturation: bool,
+        external_delay: &Option<DelayEstimate>,
+        render_buffer: &RenderBuffer<'_>,
+        linear_output: Option<&mut Block>,
+        capture: &mut Block,
+    ) {
+        self.block_counter += 1;
+
+        let num_capture_channels = self.num_capture_channels;
+        debug_assert_eq!(
+            render_buffer.get_block(0).num_bands(),
+            num_bands_for_rate(self.sample_rate_hz)
+        );
+        debug_assert_eq!(capture.num_bands(), num_bands_for_rate(self.sample_rate_hz));
+        debug_assert_eq!(
+            render_buffer.get_block(0).num_channels(),
+            self.num_render_channels
+        );
+        debug_assert_eq!(capture.num_channels(), num_capture_channels);
+
+        self.scratch.reset();
+        let scratch = &mut self.scratch;
+        let e = &mut scratch.e;
+        let y2 = &mut scratch.y2;
+        let e2 = &mut scratch.e2;
+        let r2 = &mut scratch.r2;
+        let r2_unbounded = &mut scratch.r2_unbounded;
+        let s2_linear = &mut scratch.s2_linear;
+        let y_fft = &mut scratch.y_fft;
+        let e_fft = &mut scratch.e_fft;
+        let comfort_noise = &mut scratch.comfort_noise;
+        let high_band_comfort_noise = &mut scratch.high_band_comfort_noise;
+        let subtractor_output = &mut scratch.subtractor_output;
+
+        self.aec_state
+            .update_capture_saturation(capture_signal_saturation);
+
+        if echo_path_variability.audio_path_changed() {
+            // Ensure that the gain change is only acted on once per frame.
+            if echo_path_variability.gain_change {
+                if self.gain_change_hangover == 0 {
+                    const MAX_BLOCKS_PER_FRAME: i32 = 3;
+                    self.gain_change_hangover = MAX_BLOCKS_PER_FRAME;
+                } else {
+                    echo_path_variability.gain_change = false;
+                }
+            }
+
+            self.subtractor
+                .handle_echo_path_change(&echo_path_variability);
+            self.aec_state
+                .handle_echo_path_change(&echo_path_variability);
+
+            if echo_path_variability.delay_change != DelayAdjustment::None {
+                self.suppression_gain.set_initial_state(true);
+            }
+        }
+        if self.gain_change_hangover > 0 {
+            self.gain_change_hangover -= 1;
+        }
+
+        // Analyze the render signal.
+        self.render_signal_analyzer.update(
+            render_buffer,
+            Some(self.aec_state.min_direct_path_filter_delay() as usize),
+        );
+
+        // State transition.
+        if self.aec_state.transition_triggered() {
+            self.subtractor.exit_initial_state();
+            self.suppression_gain.set_initial_state(false);
+        }
+
+        // Perform linear echo cancellation.
+        self.subtractor.process(
+            render_buffer,
+            capture,
+            &self.render_signal_analyzer,
+            &self.aec_state,
+            subtractor_output,
+        );
+
+        // Decide refined vs coarse once across all channels.
+        let use_refined_output = if self.use_coarse_filter_output {
+            // If any channel favors the refined filter, use it for all.
+            subtractor_output[..num_capture_channels]
+                .iter()
+                .any(use_refined_filter_output)
+        } else {
+            true
+        };
+
+        // Compute spectra.
+        for ch in 0..num_capture_channels {
+            form_linear_filter_output(
+                self.refined_filter_output_last_selected,
+                use_refined_output,
+                &subtractor_output[ch],
+                &mut e[ch],
+            );
+            windowed_padded_fft(
+                &self.fft,
+                capture.view(0, ch),
+                &mut self.y_old[ch],
+                &mut y_fft[ch],
+            );
+            windowed_padded_fft(&self.fft, &e[ch], &mut self.e_old[ch], &mut e_fft[ch]);
+            linear_echo_power(&e_fft[ch], &y_fft[ch], &mut s2_linear[ch]);
+            y_fft[ch].spectrum(&mut y2[ch]);
+            e_fft[ch].spectrum(&mut e2[ch]);
+        }
+        self.refined_filter_output_last_selected = use_refined_output;
+        // Optionally return the linear filter output.
+        if let Some(linear_out) = linear_output {
+            debug_assert!(linear_out.num_bands() <= 1);
+            debug_assert_eq!(num_capture_channels, linear_out.num_channels());
+            for (ch, e_ch) in e.iter().enumerate().take(num_capture_channels) {
+                linear_out.view_mut(0, ch).copy_from_slice(e_ch);
+            }
+        }
+
+        // Update the AEC state information.
+        self.aec_state.update(&AecStateUpdate {
+            external_delay,
+            adaptive_filter_frequency_responses: self.subtractor.filter_frequency_responses(),
+            adaptive_filter_impulse_responses: self.subtractor.filter_impulse_responses(),
+            render_buffer,
+            e2_refined: e2.as_slice(),
+            y2: y2.as_slice(),
+            subtractor_output: subtractor_output.as_slice(),
+        });
+
+        // Choose the linear output.
+        let y_fft_for_suppression: &[FftData] = if self.aec_state.use_linear_filter_output() {
+            e_fft.as_slice()
+        } else {
+            y_fft.as_slice()
+        };
+
+        // Only do the below processing if the output will be used.
+        let mut g = [0.0f32; FFT_LENGTH_BY_2_PLUS_1];
+        if self.capture_output_used {
+            // Estimate the residual echo power.
+            self.residual_echo_estimator.estimate(
+                &ResidualEchoInput {
+                    aec_state: &self.aec_state,
+                    render_buffer,
+                    s2_linear: s2_linear.as_slice(),
+                    y2: y2.as_slice(),
+                    dominant_nearend: self.suppression_gain.is_dominant_nearend(),
+                },
+                r2.as_mut_slice(),
+                r2_unbounded.as_mut_slice(),
+            );
+
+            // Suppressor nearend estimate: E2 is bound by Y2.
+            if self.aec_state.usable_linear_estimate() {
+                for ch in 0..num_capture_channels {
+                    for (e2_k, &y2_k) in e2[ch].iter_mut().zip(y2[ch].iter()) {
+                        *e2_k = (*e2_k).min(y2_k);
+                    }
+                }
+            }
+
+            // Select nearend spectrum (after E2 clamping).
+            let nearend_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]] =
+                if self.aec_state.usable_linear_estimate() {
+                    e2.as_slice()
+                } else {
+                    y2.as_slice()
+                };
+
+            // Estimate the comfort noise.
+            self.cng.compute(
+                self.aec_state.saturated_capture(),
+                nearend_spectrum,
+                comfort_noise.as_mut_slice(),
+                high_band_comfort_noise.as_mut_slice(),
+            );
+
+            // Suppressor echo estimate.
+            let echo_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]] =
+                if self.aec_state.usable_linear_estimate() {
+                    s2_linear.as_slice()
+                } else {
+                    r2.as_slice()
+                };
+
+            // Determine if the suppressor should assume clock drift.
+            let clock_drift = self.config.echo_removal_control.has_clock_drift
+                || echo_path_variability.clock_drift;
+
+            // Compute preferred gains.
+            let mut high_bands_gain = 0.0f32;
+            self.suppression_gain.get_gain(
+                &SuppressionInput {
+                    nearend_spectrum,
+                    echo_spectrum,
+                    residual_echo_spectrum: r2.as_slice(),
+                    residual_echo_spectrum_unbounded: r2_unbounded.as_slice(),
+                    comfort_noise_spectrum: self.cng.noise_spectrum(),
+                    render_signal_analyzer: &self.render_signal_analyzer,
+                    aec_state: &self.aec_state,
+                    render: render_buffer.get_block(0),
+                    clock_drift,
+                },
+                &mut high_bands_gain,
+                &mut g,
+            );
+
+            self.suppression_filter.apply_gain(
+                comfort_noise.as_slice(),
+                high_band_comfort_noise.as_slice(),
+                &g,
+                high_bands_gain,
+                y_fft_for_suppression,
+                capture,
+            );
+        } else {
+            let nearend_spectrum: &[[f32; FFT_LENGTH_BY_2_PLUS_1]] =
+                if self.aec_state.usable_linear_estimate() {
+                    e2.as_slice()
+                } else {
+                    y2.as_slice()
+                };
+            self.cng.compute(
+                self.aec_state.saturated_capture(),
+                nearend_spectrum,
+                comfort_noise.as_mut_slice(),
+                high_band_comfort_noise.as_mut_slice(),
+            );
+            g.fill(0.0);
+        }
+
+        // Update the metrics.
+        self.metrics
+            .update(&self.aec_state, &self.cng.noise_spectrum()[0], &g);
+    }
+
+    /// Updates the status on whether echo leakage is detected.
+    pub(crate) fn update_echo_leakage_status(&mut self, leakage_detected: bool) {
+        self.echo_leakage_detected = leakage_detected;
+    }
+
+    /// Specifies whether the capture output will be used.
+    pub(crate) fn set_capture_output_usage(&mut self, capture_output_used: bool) {
+        self.capture_output_used = capture_output_used;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::Block;
+    use crate::block_buffer::BlockBuffer;
+    use crate::common::{BLOCK_SIZE, num_bands_for_rate};
+    use crate::echo_path_variability::DelayAdjustment;
+    use crate::fft_buffer::FftBuffer;
+    use crate::render_buffer::RenderBuffer;
+    use crate::render_delay_buffer::RenderDelayBuffer;
+    use crate::spectrum_buffer::SpectrumBuffer;
+
+    #[test]
+    fn basic_api_calls() {
+        for num_render_channels in [1, 2] {
+            for num_capture_channels in [1, 2] {
+                for &rate in &[16000, 32000, 48000] {
+                    let config = EchoCanceller3Config::default();
+                    let mut remover = EchoRemover::new(
+                        aec3_simd::SimdBackend::Scalar,
+                        &config,
+                        rate,
+                        num_render_channels,
+                        num_capture_channels,
+                    );
+
+                    let num_bands = num_bands_for_rate(rate);
+                    let buf_size = config
+                        .filter
+                        .refined
+                        .length_blocks
+                        .max(config.filter.coarse.length_blocks)
+                        + 1;
+                    let bb = BlockBuffer::new(buf_size, num_bands, num_render_channels);
+                    let sb = SpectrumBuffer::new(buf_size, num_render_channels);
+                    let fb = FftBuffer::new(buf_size, num_render_channels);
+                    let render_buffer = RenderBuffer::new(&bb, &sb, &fb);
+
+                    let mut capture = Block::new(num_bands, num_capture_channels);
+                    let delay_estimate = None;
+
+                    for k in 0..100 {
+                        let echo_path_variability = EchoPathVariability::new(
+                            k % 3 == 0,
+                            if k % 5 == 0 {
+                                DelayAdjustment::NewDetectedDelay
+                            } else {
+                                DelayAdjustment::None
+                            },
+                            false,
+                        );
+
+                        remover.process_capture(
+                            echo_path_variability,
+                            k % 2 == 0,
+                            &delay_estimate,
+                            &render_buffer,
+                            Option::None,
+                            &mut capture,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn get_metrics_initial() {
+        let config = EchoCanceller3Config::default();
+        let remover = EchoRemover::new(aec3_simd::SimdBackend::Scalar, &config, 16000, 1, 1);
+        let metrics = remover.get_metrics();
+        // Just verify it doesn't panic and returns finite values.
+        assert!(metrics.echo_return_loss.is_finite() || metrics.echo_return_loss.is_nan());
+    }
+
+    #[test]
+    fn set_capture_output_usage() {
+        let config = EchoCanceller3Config::default();
+        let mut remover = EchoRemover::new(aec3_simd::SimdBackend::Scalar, &config, 16000, 1, 1);
+        remover.set_capture_output_usage(false);
+        assert!(!remover.capture_output_used);
+        remover.set_capture_output_usage(true);
+        assert!(remover.capture_output_used);
+    }
+
+    #[test]
+    fn update_echo_leakage_status() {
+        let config = EchoCanceller3Config::default();
+        let mut remover = EchoRemover::new(aec3_simd::SimdBackend::Scalar, &config, 16000, 1, 1);
+        remover.update_echo_leakage_status(true);
+        assert!(remover.echo_leakage_detected);
+        remover.update_echo_leakage_status(false);
+        assert!(!remover.echo_leakage_detected);
+    }
+
+    #[test]
+    fn signal_transition_same_buffer() {
+        let a = [1.0f32; 64];
+        let mut out = [0.0f32; 64];
+        signal_transition(&a, &a, &mut out);
+        assert_eq!(out, a);
+    }
+
+    #[test]
+    fn signal_transition_crossfade() {
+        let from = [0.0f32; 64];
+        let to = [1.0f32; 64];
+        let mut out = [0.0f32; 64];
+        signal_transition(&from, &to, &mut out);
+        // First sample should be close to 0, last sample in transition close to 1.
+        assert!(out[0] > 0.0 && out[0] < 0.1);
+        assert!(out[29] > 0.9 && out[29] < 1.0);
+        // After transition, should be exactly 1.0.
+        for &v in &out[30..] {
+            assert_eq!(v, 1.0);
+        }
+    }
+
+    /// Simple delay buffer that produces a delayed copy of its input.
+    /// Ported from `test/echo_canceller_test_tools.h`.
+    struct DelayBuffer {
+        buffer: Vec<f32>,
+        next_insert_index: usize,
+    }
+
+    impl DelayBuffer {
+        fn new(delay_samples: usize) -> Self {
+            Self {
+                buffer: vec![0.0; delay_samples],
+                next_insert_index: 0,
+            }
+        }
+
+        fn delay(&mut self, input: &[f32], output: &mut [f32]) {
+            assert_eq!(input.len(), output.len());
+            if self.buffer.is_empty() {
+                output.copy_from_slice(input);
+            } else {
+                for (k, &x) in input.iter().enumerate() {
+                    output[k] = self.buffer[self.next_insert_index];
+                    self.buffer[self.next_insert_index] = x;
+                    self.next_insert_index = (self.next_insert_index + 1) % self.buffer.len();
+                }
+            }
+        }
+    }
+
+    /// Simple LCG random number generator matching WebRTC's `Random` class
+    /// behaviour for `Rand<float>()` (uniform [0, 1)).
+    struct SimpleRng {
+        state: u64,
+    }
+
+    impl SimpleRng {
+        fn new(seed: u32) -> Self {
+            Self { state: seed as u64 }
+        }
+
+        fn next_f32(&mut self) -> f32 {
+            // Simple xorshift64-style PRNG — good enough for test signal generation.
+            self.state ^= self.state << 13;
+            self.state ^= self.state >> 7;
+            self.state ^= self.state << 17;
+            (self.state & 0x7FFF_FFFF) as f32 / 0x8000_0000u32 as f32
+        }
+
+        fn randomize_samples(&mut self, v: &mut [f32]) {
+            let amplitude = 32767.0f32;
+            for s in v.iter_mut() {
+                *s = 2.0 * amplitude * self.next_f32() - amplitude;
+            }
+        }
+    }
+
+    /// Sanity check that the echo remover can properly remove echoes.
+    /// Ported from `EchoRemover.BasicEchoRemoval` in
+    /// `echo_remover_unittest.cc`.
+    #[test]
+    fn basic_echo_removal() {
+        const NUM_BLOCKS: usize = 500;
+        let mut rng = SimpleRng::new(42);
+
+        for num_channels in [1, 2, 4] {
+            for &rate in &[16000, 32000, 48000] {
+                let num_bands = num_bands_for_rate(rate);
+                for delay_samples in [0, 64, 150, 200, 301] {
+                    let config = EchoCanceller3Config::default();
+                    let mut remover = EchoRemover::new(
+                        aec3_simd::SimdBackend::Scalar,
+                        &config,
+                        rate,
+                        num_channels,
+                        num_channels,
+                    );
+                    let mut render_delay_buffer =
+                        RenderDelayBuffer::new(&config, rate, num_channels);
+                    render_delay_buffer.align_from_delay(delay_samples / BLOCK_SIZE);
+
+                    // Create per-band, per-channel delay buffers.
+                    let mut delay_buffers: Vec<Vec<DelayBuffer>> = (0..num_bands)
+                        .map(|_| {
+                            (0..num_channels)
+                                .map(|_| DelayBuffer::new(delay_samples))
+                                .collect()
+                        })
+                        .collect();
+
+                    let mut x = Block::new(num_bands, num_channels);
+                    let mut y = Block::new(num_bands, num_channels);
+
+                    let delay_estimate: Option<DelayEstimate> = None;
+
+                    let mut input_energy = 0.0f32;
+                    let mut output_energy = 0.0f32;
+
+                    for k in 0..NUM_BLOCKS {
+                        let silence = k < 100 || (k % 100 >= 10);
+
+                        for (band, band_delays) in delay_buffers.iter_mut().enumerate() {
+                            for (channel, db) in band_delays.iter_mut().enumerate() {
+                                if silence {
+                                    x.view_mut(band, channel).fill(0.0);
+                                } else {
+                                    rng.randomize_samples(x.view_mut(band, channel));
+                                }
+                                let x_view = x.view(band, channel).to_vec();
+                                db.delay(&x_view, y.view_mut(band, channel));
+                            }
+                        }
+
+                        // Accumulate input energy over the second half.
+                        if k > NUM_BLOCKS / 2 {
+                            for &s in y.view(0, 0) {
+                                input_energy += s * s;
+                            }
+                        }
+
+                        render_delay_buffer.insert(&x);
+                        render_delay_buffer.prepare_capture_processing();
+
+                        let render_buffer = render_delay_buffer.get_render_buffer();
+                        remover.process_capture(
+                            EchoPathVariability::new(false, DelayAdjustment::None, false),
+                            false,
+                            &delay_estimate,
+                            &render_buffer,
+                            None,
+                            &mut y,
+                        );
+
+                        // Accumulate output energy over the second half.
+                        if k > NUM_BLOCKS / 2 {
+                            for &s in y.view(0, 0) {
+                                output_energy += s * s;
+                            }
+                        }
+                    }
+
+                    assert!(
+                        input_energy > 10.0 * output_energy,
+                        "Echo not sufficiently removed: rate={rate}, \
+                         channels={num_channels}, delay={delay_samples}, \
+                         input_energy={input_energy}, output_energy={output_energy}, \
+                         ratio={:.1}",
+                        input_energy / output_energy.max(f32::EPSILON),
+                    );
+                }
+            }
+        }
+    }
+}

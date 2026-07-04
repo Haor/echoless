@@ -9,7 +9,7 @@
 - RTX AEC backend 已接入 `doctor` / 本地 zip `install` / 离线 WAV / 实时 `nvidia_afx_aec`。
 - GitHub Actions run `27064782614` 已通过 Windows/macOS，artifact 为 `echoless-windows-X64` 与 `echoless-macos-ARM64`。
 - Windows 本机 RTX 5080 Blackwell smoke 已通过：USB mic index `4`、reference `system`、output index `3`(CABLE Input)、45s diagnostics 成功、`runtime_errors=0`。
-- 产品默认仍是 `sonora_aec3`；RTX AEC 是 Windows RTX 用户可选 backend，不与 AEC3 默认级联。
+- 产品默认仍是 `aec3`；RTX AEC 是 Windows RTX 用户可选 backend，不与 AEC3 默认级联。
 
 ## 包形态
 

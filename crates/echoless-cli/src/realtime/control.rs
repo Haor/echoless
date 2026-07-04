@@ -414,10 +414,10 @@ fn handle_runtime_control_command(
             let level_value = toml::Value::String(level.clone());
             let result = ctx
                 .chain
-                .set_runtime_param("sonora_aec3", "ns", &ns_value)
+                .set_runtime_param("aec3", "ns", &ns_value)
                 .and_then(|ns_applied| {
                     ctx.chain
-                        .set_runtime_param("sonora_aec3", "ns_level", &level_value)
+                        .set_runtime_param("aec3", "ns_level", &level_value)
                         .map(|level_applied| ns_applied + level_applied)
                 });
             match result {
@@ -432,7 +432,7 @@ fn handle_runtime_control_command(
                 Ok(_) => emit_control_error(
                     ctx.status_json,
                     Some("set_aec3_ns"),
-                    "sonora_aec3 is not present in the active chain",
+                    "aec3 is not present in the active chain",
                 ),
                 Err(err) => emit_control_error(
                     ctx.status_json,
@@ -443,7 +443,7 @@ fn handle_runtime_control_command(
         }
         RuntimeControlCommand::SetAec3Agc(enabled) => {
             let value = toml::Value::Boolean(enabled);
-            match ctx.chain.set_runtime_param("sonora_aec3", "agc", &value) {
+            match ctx.chain.set_runtime_param("aec3", "agc", &value) {
                 Ok(applied) if applied > 0 => emit_runtime_json(
                     ctx.status_json,
                     json!({
@@ -454,7 +454,7 @@ fn handle_runtime_control_command(
                 Ok(_) => emit_control_error(
                     ctx.status_json,
                     Some("set_aec3_agc"),
-                    "sonora_aec3 is not present in the active chain",
+                    "aec3 is not present in the active chain",
                 ),
                 Err(err) => emit_control_error(
                     ctx.status_json,

@@ -85,7 +85,7 @@ const DESC: Record<string, { en: string; zh: string }> = {
 
 function backendLabel(kind: string, proc?: Processor): string {
   if (kind === "nvidia_afx_aec") return "NVAFX";
-  if (kind === "sonora_aec3") return "AEC3";
+  if (kind === "aec3") return "AEC3";
   return proc?.label ?? kind;
 }
 
@@ -118,7 +118,7 @@ function probeInitialDelay(
   platform: Platform,
   kind: string,
 ): number | null {
-  if (platform !== "macos" || kind !== "sonora_aec3") return null;
+  if (platform !== "macos" || kind !== "aec3") return null;
   if (r.recommended_near_delay_ms > 0) return PROBE_INIT_DELAY_MS;
   const stable =
     r.warnings.length === 0 &&

@@ -8,15 +8,15 @@ members = [
     "crates/echoless-core",
     "crates/echoless-cli",
 ]
-# vendored sonora fork 是独立子 workspace(edition 2024/resolver 3),不并入本 workspace;
-# 经 path 依赖引用。见 vendor/sonora/Cargo.toml。
-exclude = ["vendor/sonora"]
+# vendored aec3-apm fork 是独立子 workspace(edition 2024/resolver 3),不并入本 workspace;
+# 经 path 依赖引用。见 vendor/aec3/Cargo.toml。
+exclude = ["vendor/aec3"]
 
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
 license = "MIT"
-# sonora 依赖要求 rust-version 1.91 + edition 2024(本机已 1.96)
+# aec3-apm 依赖要求 rust-version 1.91 + edition 2024(本机已 1.96)
 rust-version = "1.91"
 
 [workspace.dependencies]

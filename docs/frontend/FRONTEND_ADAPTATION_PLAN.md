@@ -7,7 +7,7 @@
 - 保留 CLI 作为一等入口。
 - GUI 与 CLI 共用 `PipelineConfig` / `NodeConfig`。
 - 前端消费 JSON/JSONL,不解析人类可读日志。
-- 默认 backend 使用 `sonora_aec3`。
+- 默认 backend 使用 `aec3`。
 - LocalVQE 与 RTX AEC 作为独立可选 backend。
 - 提供运行健康指标:电平、估算用户延迟、AEC 回声对齐延迟、drop/underrun、backend runtime error。
 - 提供虚拟音频设备安装状态的可检测边界,让前端可以做安装引导或 installer 集成。
@@ -43,7 +43,7 @@
 当前可用 `kind`:
 
 - `passthrough`
-- `sonora_aec3`
+- `aec3`
 - `localvqe`
 - `nvidia_afx_aec`
 
@@ -57,7 +57,7 @@ near_delay_ms = 25
 output_level = 50
 
 [[chain]]
-kind = "sonora_aec3"
+kind = "aec3"
 ns = false
 agc = false
 ```
@@ -224,7 +224,7 @@ echoless processors --json
 
 ```json
 {
-  "kind": "sonora_aec3",
+  "kind": "aec3",
   "label": "AEC3",
   "platforms": ["windows", "macos", "linux"],
   "default": true,
@@ -272,7 +272,7 @@ stdout 为 JSONL events,stderr 为人类日志。音频流启动后先输出 `st
 ```json
 {
   "type": "started",
-  "backend": "sonora_aec3",
+  "backend": "aec3",
   "sample_rate": 48000,
   "frame_ms": 10,
   "near_delay_ms": 25,
@@ -291,7 +291,7 @@ stdout 为 JSONL events,stderr 为人类日志。音频流启动后先输出 `st
   "frames": 576000,
   "sample_rate": 48000,
   "frame_ms": 10,
-  "backend": "sonora_aec3",
+  "backend": "aec3",
   "near_delay_ms": 25,
   "near_delay_buffered_samples": 1200,
   "output_level": 50,
@@ -433,7 +433,7 @@ echoless config validate --config config.toml --json
 
 ### 硬性 contract
 
-- backend kind 只能来自 `processors --json`;当前用户相关 kind 是 `sonora_aec3`、`localvqe`、`nvidia_afx_aec`。`rtx_aec` 不是有效 kind。
+- backend kind 只能来自 `processors --json`;当前用户相关 kind 是 `aec3`、`localvqe`、`nvidia_afx_aec`。`rtx_aec` 不是有效 kind。
 - AEC3 `ns_level` 的提交值只能是 `low`、`moderate`、`high`、`veryhigh`;UI 可以显示 "very high",但不能提交 `very`。
 - RTX AEC v1 只支持 Windows + `sample_rate = 48000` + `frame_ms = 10` + `reference_channels = "mono"`。
 - LocalVQE 的 `device` 是数字 device index;`auto/cpu/gpu` 不能写入 `device`。
@@ -465,7 +465,7 @@ echoless config validate --config config.toml --json
 - LocalVQE: `model`、`library`、`threads`、`backend`、`device`、`noise_gate`、`noise_gate_threshold_dbfs`
 - RTX AEC: `runtime_dir`、`model_path`、`intensity_ratio`、`use_default_gpu`、`disable_cuda_graph`、`on_runtime_error`
 
-首版默认推荐保持 `48000 Hz / 10ms / mono reference / sonora_aec3 / ns=false / agc=false`。高级项可以暴露给愿意调参的用户,但每次应用前必须走 `config validate --json`。
+首版默认推荐保持 `48000 Hz / 10ms / mono reference / aec3 / ns=false / agc=false`。高级项可以暴露给愿意调参的用户,但每次应用前必须走 `config validate --json`。
 
 ### 后端内部项
 

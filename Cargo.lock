@@ -9,6 +9,65 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aec3-agc2"
+version = "0.1.0"
+dependencies = [
+ "aec3-common-audio",
+ "aec3-fft",
+ "aec3-simd",
+ "bytemuck",
+ "derive_more",
+ "tracing",
+]
+
+[[package]]
+name = "aec3-apm"
+version = "0.1.0"
+dependencies = [
+ "aec3-agc2",
+ "aec3-common-audio",
+ "aec3-core",
+ "aec3-ns",
+ "aec3-simd",
+ "tracing",
+]
+
+[[package]]
+name = "aec3-common-audio"
+version = "0.1.0"
+dependencies = [
+ "aec3-simd",
+ "derive_more",
+]
+
+[[package]]
+name = "aec3-core"
+version = "0.1.0"
+dependencies = [
+ "aec3-common-audio",
+ "aec3-fft",
+ "aec3-simd",
+]
+
+[[package]]
+name = "aec3-fft"
+version = "0.1.0"
+
+[[package]]
+name = "aec3-ns"
+version = "0.1.0"
+dependencies = [
+ "aec3-fft",
+]
+
+[[package]]
+name = "aec3-simd"
+version = "0.1.0"
+dependencies = [
+ "cpufeatures 0.3.0",
+]
+
+[[package]]
 name = "alsa"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -444,11 +503,11 @@ dependencies = [
 name = "echoless-processors"
 version = "0.1.0"
 dependencies = [
+ "aec3-apm",
  "anyhow",
  "libloading",
  "rubato",
  "serde",
- "sonora",
  "toml",
  "windows-sys 0.59.0",
 ]
@@ -1061,65 +1120,6 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-
-[[package]]
-name = "sonora"
-version = "0.1.0"
-dependencies = [
- "sonora-aec3",
- "sonora-agc2",
- "sonora-common-audio",
- "sonora-ns",
- "sonora-simd",
- "tracing",
-]
-
-[[package]]
-name = "sonora-aec3"
-version = "0.1.0"
-dependencies = [
- "sonora-common-audio",
- "sonora-fft",
- "sonora-simd",
-]
-
-[[package]]
-name = "sonora-agc2"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "derive_more",
- "sonora-common-audio",
- "sonora-fft",
- "sonora-simd",
- "tracing",
-]
-
-[[package]]
-name = "sonora-common-audio"
-version = "0.1.0"
-dependencies = [
- "derive_more",
- "sonora-simd",
-]
-
-[[package]]
-name = "sonora-fft"
-version = "0.1.0"
-
-[[package]]
-name = "sonora-ns"
-version = "0.1.0"
-dependencies = [
- "sonora-fft",
-]
-
-[[package]]
-name = "sonora-simd"
-version = "0.1.0"
-dependencies = [
- "cpufeatures 0.3.0",
-]
 
 [[package]]
 name = "strength_reduce"

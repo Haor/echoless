@@ -214,7 +214,7 @@
 
 - 文案:`i18n.tsx:251` `probeNoFix`;当 `recommended_near_delay_ms === 0` 时显示(`AdvancedPage.tsx:298-311`)。
 - 语义:后端只有当 mic **领先** ref(负 lag)时才推荐 near delay(`probe_delay.rs:711-716`);测得 echo **+24.5ms**(mic 落后 ref,正常回声路径)时推荐值就是 0 → 显示「无需修正」。语义上对,但用户看到「测出 +24.5ms 却说无需修正」必然困惑。
-- **自动填 init 延迟**:`AdvancedPage.tsx:116-129` 的 `probeInitialDelay` 第一行就是 `if (platform !== "macos" || kind !== "sonora_aec3") return null;` → **Windows 上 `initial_delay_ms` 从不自动回填**(macOS + AEC3 会填)。这正是用户说「要有自动填入 init 延迟」的缺口。
+- **自动填 init 延迟**:`AdvancedPage.tsx:116-129` 的 `probeInitialDelay` 第一行就是 `if (platform !== "macos" || kind !== "aec3") return null;` → **Windows 上 `initial_delay_ms` 从不自动回填**(macOS + AEC3 会填)。这正是用户说「要有自动填入 init 延迟」的缺口。
 
 **修复**:① 文案区分两种 0:「对齐无需修正 · 回声延迟 +24.5ms 为正常回声路径,已交给 AEC3 追踪」;② 放宽 `probeInitialDelay` 的平台限制,Windows + AEC3 也用实测 echo 回填 `initial_delay_ms`(需后端确认 AEC3 delay hint 在 Windows loopback 时序下安全)。
 
@@ -250,7 +250,7 @@
 ### D5. HEALTH 面板是否正常工作 — 🟡 4 项正常,2 项对 LocalVQE 未接线
 
 - **接线正常**(后端真实递增):`ref_underruns`(`realtime.rs:508-516`)、`input_drops`(`realtime.rs:666-702`)、`output_underruns`(`realtime.rs:782`)、`stale_drops`(`realtime.rs:499,510`)。截图里 ref underruns=8 是真实数据(Windows loopback 时序抖动),面板在工作。
-- **盲点**:`runtime_errors` / `diverged` 来自处理器 `stats()` 聚合(`stats.rs:38-52`);AEC3(`sonora_aec3.rs:420-426`)和 NVAFX(`nvafx.rs:312-314`)会填,但 **LocalVQE 直接返回 `ProcessorStats::empty`**(`localvqe.rs:258-259`),即使内部记了 `last_error`(`:234`)也不上报 → 用 LocalVQE 时这两项恒 0/NO。
+- **盲点**:`runtime_errors` / `diverged` 来自处理器 `stats()` 聚合(`stats.rs:38-52`);AEC3(`aec3.rs:420-426`)和 NVAFX(`nvafx.rs:312-314`)会填,但 **LocalVQE 直接返回 `ProcessorStats::empty`**(`localvqe.rs:258-259`),即使内部记了 `last_error`(`:234`)也不上报 → 用 LocalVQE 时这两项恒 0/NO。
 
 **修复**:`localvqe.rs::stats()` 返回真实 error 计数与 diverged,与 NVAFX 对齐。
 

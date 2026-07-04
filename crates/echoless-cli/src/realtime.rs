@@ -1,4 +1,4 @@
-//! cpal 实时管线。结构移植自上游 sonora-aec(BSD-3),处理换成 echoless 的 `ProcessorChain`。
+//! cpal 实时管线。结构移植自上游 aec3-aec(BSD-3),处理换成 echoless 的 `ProcessorChain`。
 //!
 //! 三股 cpal 流 + 三个 ringbuf + 一个独立处理线程:
 //! ```text

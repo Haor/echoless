@@ -60,6 +60,6 @@
 
 ## 排期约束
 
-- P3(内化改名)会重排 control.rs / registry.rs 等文件的 sonora 字样,本任务**等 P3 合入 main 再开**,
+- P3(内化改名)会重排 control.rs / registry.rs 等文件的 aec3 字样,本任务**等 P3 合入 main 再开**,
   避免无谓冲突。与 P4 并行时注意:P4 也动 `realtime/stats.rs`(aec3_delay_blocks 透出)与 probe;
   本任务动 realtime.rs 主循环 + control.rs——文件交集小,可并行,合并时先 P4 后 D1(或反之均可)。

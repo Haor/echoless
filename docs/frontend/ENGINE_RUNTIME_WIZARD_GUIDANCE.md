@@ -12,7 +12,7 @@
 
 ## 总体产品口径
 
-- 默认主路径仍是 `sonora_aec3`。它应该显示为 default / ready。
+- 默认主路径仍是 `aec3`。它应该显示为 default / ready。
 - `localvqe` 是独立实验 backend,不是 AEC3 的默认级联后处理。
 - `nvidia_afx_aec` 是 Windows-only RTX AEC SDK backend,不是 NVIDIA Broadcast App。
 - LocalVQE 和 RTX AEC 都可以显示在 Engine 选择页,但二者的 setup 逻辑不同:

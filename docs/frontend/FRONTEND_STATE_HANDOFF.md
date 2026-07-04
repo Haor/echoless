@@ -150,7 +150,7 @@ pnpm tauri build
 ## 8. 不可回退的约束
 
 - GUI 只消费 JSON/JSONL;不内置 AEC 逻辑。
-- 默认 backend `sonora_aec3`;48k/10ms/mono 默认;NS/AGC 默认关。
+- 默认 backend `aec3`;48k/10ms/mono 默认;NS/AGC 默认关。
 - 不暴露 `.trtpkg`,RTX 模型按 GPU 架构自动选;命名 `NVIDIA AFX / RTX AEC SDK`(非 Broadcast)。
 - 就绪判定唯一真源:`nvafx doctor --json` 的 `ok`/`checks`;配置应用前先 `config validate`。
 - 窗口高度锁 600、宽度区间内可调;长文本截断不外溢(桌面 app 无滚动条)。

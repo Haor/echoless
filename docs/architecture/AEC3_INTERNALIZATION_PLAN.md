@@ -1,5 +1,7 @@
 # AEC3 引擎内化方案(去 sonora 化)
 
+状态:已执行(2026-07-04),上游基线 aacadf0,详见 docs/codex-tasks/TASK_P3_AEC3_INTERNALIZE.md。
+
 日期:2026-07-03 · 状态:方案(待执行)
 目标:将 `vendor/sonora` 彻底内化为项目自有引擎,**全仓不再出现 `sonora` 字样**。
 前提:本地自用,无 license 顾虑([[aec-self-use-no-license]]),fork 可任意改名。

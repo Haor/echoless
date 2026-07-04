@@ -18,7 +18,7 @@ Open Design / HTML prototype 只能作为视觉原型,不能作为配置 contrac
 
 ### 默认主路径
 
-- `sonora_aec3` 是默认 backend。
+- `aec3` 是默认 backend。
 - 默认管线为 `48000 Hz / 10ms frame / mono reference`。
 - 默认音质策略是保真人声优先: AEC 开启,NS/AGC 默认关闭。
 - 输出依赖外部虚拟音频设备,例如 Windows VB-CABLE、macOS BlackHole 2ch 或 VB-CABLE MAC。
@@ -48,7 +48,7 @@ Open Design / HTML prototype 只能作为视觉原型,不能作为配置 contrac
 | `mic` | `default` | 只能来自 `devices --json` 的 input 或后端支持的 selector。 |
 | `reference` | `system` | Windows 可用 `system`;macOS 需按 `devices --json` 和路由设备判断。 |
 | `output` | `default` | 推荐选择虚拟音频 output;只能列出实际枚举到的 output。 |
-| backend select | `sonora_aec3` | 只展示 `processors --json` 返回且当前平台可用的 kind。 |
+| backend select | `aec3` | 只展示 `processors --json` 返回且当前平台可用的 kind。 |
 | `reference_channels` | `mono` | 可选 `mono`/`stereo`;默认 mono;RTX AEC 只能 mono。 |
 | `output_level` | `50` | 全局最终输出电平,不是处理器参数。范围 `0..100`;`0` 静音,`50` 原声,`100` 约 `3x` 增益。曲线为 `gain = (output_level / 50)^log2(3)`,后端在所有处理器之后统一应用并做软限幅保护。 |
 | `ns` | `false` | AEC3 内置降噪;用户需要时可开启;运行中可热控。 |

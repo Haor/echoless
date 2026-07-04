@@ -18,7 +18,7 @@ pub(crate) fn cmd_processors(args: ProcessorsArgs) -> Result<()> {
     for k in registry::kinds() {
         println!("  - {k}");
     }
-    println!("(在 --chain 或 config 的 [[chain]] 里按 kind 引用;默认建议 sonora_aec3)");
+    println!("(在 --chain 或 config 的 [[chain]] 里按 kind 引用;默认建议 aec3)");
     Ok(())
 }
 
@@ -66,7 +66,7 @@ fn processor_manifest() -> serde_json::Value {
                 "params": {}
             },
             {
-                "kind": "sonora_aec3",
+                "kind": "aec3",
                 "label": "AEC3",
                 "platforms": ["windows", "macos", "linux"],
                 "default": true,
@@ -188,7 +188,7 @@ mod tests {
 
         let aec3 = processors
             .iter()
-            .find(|processor| processor["kind"] == "sonora_aec3")
+            .find(|processor| processor["kind"] == "aec3")
             .unwrap();
 
         assert_eq!(aec3["default"], true);

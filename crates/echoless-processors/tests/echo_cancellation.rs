@@ -1,21 +1,21 @@
-//! sonora_aec3 节点回归测试。验证 vendored sonora fork 后:
+//! aec3 节点回归测试。验证 vendored aec3 fork 后:
 //!   (1) AEC3 真实消回声;
 //!   (2) 经 fork 开放的 tail 调参口能注入、跑通、不劣化。
-//! 无外部 WAV,纯合成。仅在 sonora-engine 特性下运行(默认开)。
+//! 无外部 WAV,纯合成。仅在 aec3-engine 特性下运行(默认开)。
 //!
-//! 关键经验(调研得来,见 research/sonora_aec3_internal_map.md):
+//! 关键经验(调研得来,见 research/aec3_internal_map.md):
 //!   - 激励必须是**非平稳语音类**信号。AEC3 有 stationarity gate,平稳白噪声会被当
 //!     背景噪声、抑制滤波器自适应(实测平稳白噪声仅 ~8dB,非平稳语音类 20–41dB)。
 //!   - `erle_db` 统计在本路径下恒为常数、不可信(§7);效果以输出能量下降为准。
 //!   - 合成长跑(>10s)效果会随 pause 段累积退化,疑为合成信号 artifact;真实退化
 //!     行为待真实录音验证(Phase 1)。故本测试用 5s 短窗稳定断言。
 
-#![cfg(feature = "sonora-engine")]
+#![cfg(feature = "aec3-engine")]
 
 use echoless_processors::registry;
 
 const SR: usize = 48_000;
-const FRAME: usize = 480; // sonora_aec3 io_spec = 48k
+const FRAME: usize = 480; // aec3 io_spec = 48k
 
 fn white(n: usize) -> f32 {
     let mut x = (n as u64)
@@ -37,7 +37,7 @@ fn refsig(n: usize) -> f32 {
 /// 跑合成回声场景。`paths` = 各回声径 (延迟样本, 增益);near 为各径叠加,无近端人声。
 /// 返回回声能量下降 dB(跳过前 2 秒收敛)。
 fn run(params: toml::Table, paths: &[(usize, f32)]) -> f32 {
-    let mut p = registry::build("sonora_aec3").unwrap();
+    let mut p = registry::build("aec3").unwrap();
     p.configure(&params).unwrap();
     let far_channels = p.io_spec().far_channels.max(1) as usize;
 
@@ -107,8 +107,8 @@ fn stereo_reference_mode_cancels_single_path_echo() {
 }
 
 #[test]
-fn stereo_reference_mode_changes_sonora_io_spec() {
-    let mut p = registry::build("sonora_aec3").unwrap();
+fn stereo_reference_mode_changes_aec3_io_spec() {
+    let mut p = registry::build("aec3").unwrap();
     let mut params = toml::Table::new();
     params.insert(
         "reference_channels".into(),

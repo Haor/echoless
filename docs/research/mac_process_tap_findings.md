@@ -61,7 +61,7 @@ Realtime integration smoke test:
   --mic coreaudio:BuiltInMicrophoneDevice \
   --reference system \
   --output coreaudio:BlackHole2ch_UID \
-  --processor sonora_aec3 \
+  --processor aec3 \
   --reference-channels stereo \
   --status-json \
   --stats-interval-ms 1000

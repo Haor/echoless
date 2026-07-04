@@ -23,7 +23,7 @@ output_level = 50         # 最终输出电平:0=静音,50=原声,100=3x;gain=(l
 
 # 处理节点:首版建议选择一个 backend;空 = 直通。kind 之外的键 = 该方案参数。
 [[chain]]
-kind = "sonora_aec3"
+kind = "aec3"
 # initial_delay_ms = 48      # AEC3 初始延迟 hint;默认依赖运行时动态估计
 # tail_ms = 120              # echo tail 长度(默认 52ms;外放+房间混响常需更长)
 # delay_num_filters = 5      # 延迟搜索窗(默认 5 ≈ 608ms)

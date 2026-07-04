@@ -325,7 +325,7 @@ fn validate_chain_node(
     errors: &mut Vec<ConfigValidationError>,
 ) {
     let base = format!("chain[{index}]");
-    if !registry::kinds().contains(&node.kind.as_str()) {
+    if !is_known_processor_kind(&node.kind) {
         errors.push(ConfigValidationError::new(
             format!("{base}.kind"),
             format!(
@@ -338,7 +338,8 @@ fn validate_chain_node(
     }
 
     match node.kind.as_str() {
-        "sonora_aec3" => validate_sonora_node(&base, &node.params, errors),
+        "aec3" => validate_aec3_node(&base, &node.params, errors),
+        "sonora_aec3" => validate_aec3_node(&base, &node.params, errors), // legacy alias, remove after 2 releases
         "localvqe" => validate_localvqe_node(&base, &node.params, errors),
         "nvidia_afx_aec" => validate_nvafx_node(cfg, &base, &node.params, errors),
         "passthrough" => {}
@@ -346,7 +347,11 @@ fn validate_chain_node(
     }
 }
 
-fn validate_sonora_node(base: &str, params: &toml::Table, errors: &mut Vec<ConfigValidationError>) {
+fn is_known_processor_kind(kind: &str) -> bool {
+    registry::kinds().contains(&kind) || kind == "sonora_aec3" // legacy alias, remove after 2 releases
+}
+
+fn validate_aec3_node(base: &str, params: &toml::Table, errors: &mut Vec<ConfigValidationError>) {
     expect_bool(params, base, "ns", errors);
     expect_bool(params, base, "agc", errors);
     expect_bool(params, base, "linear_stable_echo_path", errors);
@@ -675,7 +680,7 @@ mod tests {
     fn config_validation_accepts_default_aec3_baseline() {
         let cfg = PipelineConfig {
             chain: vec![NodeConfig {
-                kind: "sonora_aec3".into(),
+                kind: "aec3".into(),
                 params: toml::Table::new(),
             }],
             ..PipelineConfig::default()
@@ -694,7 +699,7 @@ mod tests {
             frame_ms = 10
 
             [[chain]]
-            kind = "sonora_aec3"
+            kind = "aec3"
             "#,
         )
         .unwrap();
@@ -750,7 +755,7 @@ mod tests {
             reference_channels: ReferenceChannels::Stereo,
             chain: vec![
                 NodeConfig {
-                    kind: "sonora_aec3".into(),
+                    kind: "aec3".into(),
                     params: bad_params,
                 },
                 NodeConfig {

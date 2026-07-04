@@ -6,7 +6,7 @@
 
 当前状态:
 
-- 真实 WebRTC AEC3 路径:vendored `sonora` fork + `sonora_aec3` 处理器。
+- 真实 WebRTC AEC3 路径:vendored `aec3` fork + `aec3` 处理器。
 - 实时主路径:`echoless run --config configs/example.toml` 走 `cpal` + ringbuf。
 - 设备 I/O 边界已支持固定比率线性重采样:非 48k/16k 原生采样率的 mic/reference/output 可打开后适配到管线采样率。
 - far reference 可用 `reference_channels = "mono" | "stereo"` 切换;默认 mono,stereo 用于外放 L/R 对比试听。
@@ -18,14 +18,14 @@
 - macOS artifact 可正常构建 AEC3/LocalVQE 路径;RTX AEC 在 macOS 上按设计不可用,GUI/安装器应通过 `echoless nvafx doctor --json` 禁用该 backend。
 - 输出依赖外部虚拟音频设备:Windows 推荐 VB-CABLE,macOS 推荐 BlackHole 或 VB-CABLE MAC;也可使用 Virtual Desktop Mic 等用户已有设备。
 - GUI/安装器应提供虚拟音频设备安装引导:检测设备是否已安装,未安装时引导用户安装,安装后重新枚举并验证 output/input 端可用。
-- 产品默认策略:以 `sonora_aec3` 保真人声为主。LocalVQE 与 RTX AEC 是独立可选 backend。
+- 产品默认策略:以 `aec3` 保真人声为主。LocalVQE 与 RTX AEC 是独立可选 backend。
 
 ## crate 结构
 
 | crate | 职责 | 状态 |
 |---|---|---|
 | `echoless-audio-io` | 平台无关音频 I/O trait + 类型 + 文件/null 后端 | ✅ |
-| `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + `sonora_aec3` / `localvqe` / `nvidia_afx_aec` 节点 | ✅ AEC3 可用;LocalVQE 可加载 DLL/dylib + GGUF 推理;RTX AEC Windows 可动态加载 AFX runtime |
+| `echoless-processors` | `EchoProcessor` trait + `ProcessorChain` + `aec3` / `localvqe` / `nvidia_afx_aec` 节点 | ✅ AEC3 可用;LocalVQE 可加载 DLL/dylib + GGUF 推理;RTX AEC Windows 可动态加载 AFX runtime |
 | `echoless-core` | `PipelineConfig` + 离线编排 + 输出电平/声道策略等共享工具 | ✅ 离线可用;实时 cpal sidecar runtime 在 CLI |
 | `echoless-cli` | CLI 前端:`processors` / `devices` / `offline` / `run` | ✅ |
 
@@ -33,9 +33,9 @@
 
 ## 核心设计:统一处理器
 
-sonora 经典 AEC3、LocalVQE、RTX AEC 都是平级 `EchoProcessor` 节点。
+aec3 经典 AEC3、LocalVQE、RTX AEC 都是平级 `EchoProcessor` 节点。
 当前产品主线是 AEC3 保真优先,LocalVQE 保留为独立可选处理器:
-- AEC3:`--chain sonora_aec3`
+- AEC3:`--chain aec3`
 - LocalVQE:`--chain localvqe`
 - 加新方案 = 在 `echoless-processors` 写一个 `impl EchoProcessor` + 在 `registry` 登记一行,其余不动。
 
@@ -107,7 +107,7 @@ cargo run -p echoless-cli --bin echoless -- offline \
     --mic takes/doubletalk_01.mic.wav \
     --reference takes/doubletalk_01.ref.wav \
     --out out.wav \
-    --chain "sonora_aec3"
+    --chain "aec3"
 
 # 或用配置文件
 cargo run -p echoless-cli --bin echoless -- offline --mic m.wav --reference r.wav --out o.wav --config configs/example.toml
