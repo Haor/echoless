@@ -134,7 +134,7 @@ export function VolumeWheel({
         if (next !== vRef.current) onChange(next);
       }}
     >
-      VOL {volume}
+      VOL {volume <= 0 ? "MUTE" : volume}
       {/* 悬停浮现「 · +5.4 dB」,点分隔同其它参数 */}
       <span ref={dbRef} className="voldb" />
     </span>
