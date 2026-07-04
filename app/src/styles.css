@@ -1504,6 +1504,9 @@ button.ecard:disabled {
   background-clip: text;
   -webkit-background-clip: text;
   transition: opacity 0.6s ease;
+  /* crton/crtoff 的 filter 动画会临时提升合成层,动画结束降级时点阵
+     重光栅化差半像素 → 字标上下微跳。常驻 will-change 让层恒定。 */
+  will-change: filter;
 }
 /* v14:字标随电源亮灭 —— OFF=低亮度待机;开机时 CRT 屏幕点亮式闪燃(steps 硬切) */
 .word .wtxt:not(.lit) { opacity: 0.22; }
@@ -2160,13 +2163,29 @@ hr.hair {
 .fbar .vol .voldb {
   color: var(--t-soft);
   text-transform: none;
+  /* 收回 = 宽度收拢 + 淡出(不做乱码);进场瞬开盒子,视觉仍由 scramble 负责 */
+  display: inline-block;
+  overflow: hidden;
+  white-space: pre;
+  vertical-align: bottom;
+  max-width: 0;
+  opacity: 0;
+  transition:
+    max-width 0.3s ease,
+    opacity 0.3s ease;
+}
+.fbar .vol .voldb.on {
+  max-width: 14ch;
+  opacity: 1;
+  transition: none;
 }
 .fbar .bg {
   display: flex;
   gap: 2px;
   align-items: flex-end;
   height: 12px;
-  margin-left: 14px;
+  /* v18:UP 与电平条间距过大(flex gap 18 + margin 14),margin 退掉 */
+  margin-left: 0;
 }
 .fbar .bg i {
   width: 3px;

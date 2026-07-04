@@ -34,14 +34,16 @@ export function VolumeWheel({
   const hoverRef = useRef(false);
   const dbRef = useRef<HTMLSpanElement>(null);
   const shown = useRef(false); // dB 是否已浮现(区分「首次出现」与「滚动更新」)
+  const clearTimer = useRef(0); // 收回过渡结束后清文本的定时器
 
   const showDb = useCallback((animated: boolean) => {
     const el = dbRef.current;
     if (!el) return;
+    window.clearTimeout(clearTimer.current); // 取消待清的收回残文
+    el.classList.add("on");
     const text = ` · ${dbLabel(vRef.current)}`;
     if (animated && !shown.current) {
       shown.current = true;
-      utils.remove(el); // 停掉在飞的收回动画,从残余文本继续 scramble 到全文
       animate(el, {
         innerHTML: scrambleText({
           text,
@@ -58,22 +60,17 @@ export function VolumeWheel({
     }
   }, []);
 
-  // 收回与浮现镜像:scramble 到空串(自动从右侧收),不再瞬间消失。
+  // 收回 = CSS 宽度收拢 + 淡出(不做乱码,用户定案);文本等过渡结束再清。
   const hideDb = useCallback(() => {
     const el = dbRef.current;
     if (!el) return;
     shown.current = false;
     utils.remove(el); // 停掉在飞的 scramble,否则它继续写 innerHTML
-    if (!el.textContent) return;
-    animate(el, {
-      innerHTML: scrambleText({
-        text: "",
-        duration: 320,
-        cursor: "░▒▓",
-        ease: "inOut",
-        override: false,
-      }),
-    } as never);
+    el.classList.remove("on");
+    window.clearTimeout(clearTimer.current);
+    clearTimer.current = window.setTimeout(() => {
+      el.textContent = "";
+    }, 320);
   }, []);
 
   useEffect(() => {
