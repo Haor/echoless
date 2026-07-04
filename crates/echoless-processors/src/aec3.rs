@@ -25,6 +25,8 @@ struct Aec3Tuning {
     delay_num_filters: Option<usize>,
     /// 标记 echo path 线性且稳定(纯 loopback 参考时可酌情开)。
     linear_stable_echo_path: bool,
+    /// ref 断续/静音时保持 AEC3 延迟估计;None 表示走 vendored upstream 默认。
+    delay_hold: Option<bool>,
     /// 开启降噪(NoiseSuppression)。
     ns: bool,
     /// 降噪强度:low / moderate / high / veryhigh。
@@ -41,6 +43,7 @@ impl Default for Aec3Tuning {
             tail_ms: None,
             delay_num_filters: None,
             linear_stable_echo_path: false,
+            delay_hold: Some(true),
             ns: false,
             ns_level: "low".into(),
             agc: false,
@@ -53,7 +56,10 @@ impl Aec3Tuning {
     /// 是否对 EchoCanceller3Config 无任何调参(决定是否走上游原始默认路径,见 §11.4)。
     /// 注:ns/agc 属高层 APM 配置,不影响 aec3_config 注入,故不计入。
     fn aec3_is_default(&self) -> bool {
-        self.tail_ms.is_none() && self.delay_num_filters.is_none() && !self.linear_stable_echo_path
+        self.tail_ms.is_none()
+            && self.delay_num_filters.is_none()
+            && !self.linear_stable_echo_path
+            && self.delay_hold.is_none()
     }
 }
 
@@ -115,6 +121,9 @@ impl EchoProcessor for Aec3Engine {
             .and_then(|v| v.as_bool())
         {
             self.tuning.linear_stable_echo_path = v;
+        }
+        if let Some(v) = params.get("delay_hold").and_then(|v| v.as_bool()) {
+            self.tuning.delay_hold = Some(v);
         }
         if let Some(v) = params.get("ns").and_then(|v| v.as_bool()) {
             self.tuning.ns = v;
@@ -212,6 +221,11 @@ fn build_aec3_config(t: &Aec3Tuning) -> aec3_apm::EchoCanceller3Config {
     }
     if t.linear_stable_echo_path {
         c.echo_removal_control.linear_and_stable_echo_path = true;
+    }
+    if let Some(delay_hold) = t.delay_hold {
+        c.delay.delay_hold = delay_hold;
+        c.delay.render_gate_power_threshold = c.render_levels.active_render_limit;
+        c.delay.render_gate_hold_blocks = 3;
     }
 
     c.validate(); // clamp 所有字段到合法范围
@@ -410,11 +424,15 @@ impl Aec3Engine {
         }
 
         let s = self.inner.apm.statistics();
+        let aec3_delay_blocks = s
+            .delay_ms
+            .and_then(|delay_ms| (delay_ms >= 0).then_some(delay_ms as u32 / 4));
         self.last = ProcessorStats {
             name: "aec3",
             erle_db: s.echo_return_loss_enhancement.unwrap_or(0.0) as f32,
             residual_echo_likelihood: s.residual_echo_likelihood.unwrap_or(0.0) as f32,
             estimated_delay_ms: s.delay_ms.unwrap_or(0),
+            aec3_delay_blocks,
             // 替代判据:上游 divergent_filter_fraction 恒 None(§7),改用"回声似然极高"近似
             // (AEC 基本未起作用)。可靠 diverged 待 fork 暴露 all_filters_diverged。
             diverged: s
@@ -472,6 +490,39 @@ mod tests {
         assert!(processor.tuning.ns);
         assert_eq!(processor.tuning.ns_level, "high");
         assert!(processor.tuning.agc);
+    }
+
+    #[test]
+    fn aec3_config_injects_delay_hold_by_default() {
+        let tuning = Aec3Tuning::default();
+        assert_eq!(tuning.delay_hold, Some(true));
+
+        #[cfg(feature = "aec3-engine")]
+        {
+            let config = build_aec3_config(&tuning);
+            assert!(config.delay.delay_hold);
+            assert_eq!(
+                config.delay.render_gate_power_threshold,
+                config.render_levels.active_render_limit
+            );
+            assert_eq!(config.delay.render_gate_hold_blocks, 3);
+        }
+    }
+
+    #[test]
+    fn aec3_delay_hold_can_be_disabled_from_config() {
+        let mut processor = Aec3Engine::new();
+        let mut params = toml::Table::new();
+        params.insert("delay_hold".into(), toml::Value::Boolean(false));
+
+        processor.configure(&params).unwrap();
+
+        assert_eq!(processor.tuning.delay_hold, Some(false));
+        #[cfg(feature = "aec3-engine")]
+        {
+            let config = build_aec3_config(&processor.tuning);
+            assert!(!config.delay.delay_hold);
+        }
     }
 
     #[test]

@@ -84,10 +84,9 @@ reference 与 mic 的相对到达时间。完整调用、
 
 它的结果只应直接写入:
 
-- 顶层 `near_delay_ms`: 仅当 `recommended_near_delay_ms > 0` 且测量稳定时使用该值。
-  `recommended_near_delay_ms = 0` 表示不需要主动 near 延迟,只展示诊断信息。macOS 默认是
-  `25ms`;Windows/Linux 默认是 `0ms`。运行中的手动修改可热控;probe 本身仍需要暂停主
-  runtime,因为它要独占设备播放蜂鸣和录制。
+- 顶层 `near_delay_ms`: 当测量稳定时使用 `recommended_near_delay_ms`。该值已包含平台默认
+  负向搜索偏置:macOS 默认 `25ms`;Windows/Linux 默认 `20ms`。运行中的手动修改可热控;probe
+  本身仍需要暂停主 runtime,因为它要独占设备播放蜂鸣和录制。
 
 可以显示但不要默认自动改:
 
@@ -172,6 +171,7 @@ macOS/Linux 上前端可以展示为 unsupported,但不应生成可运行的 `nv
 - 运行时展示 `estimated_user_latency_ms` 和 `aec_estimated_delay_ms` 时要区分语义:
   - `estimated_user_latency_ms`: Echoless 软件管线内的用户说话到虚拟输出前估算延迟;不含设备硬件缓冲、通话软件缓冲或网络延迟。首页建议标为 `Pipeline` / `管线延迟`。
   - `aec_estimated_delay_ms`: AEC3 估计的回声路径对齐延迟。
+  - `aec3_delay_blocks`: AEC3 内部延迟估计块数,类型为 `Option<u32>`;长期贴 0 下限表示真实 lag 可能比当前 `near_delay_ms` 偏置更负。
   - `near_delay_ms`: 我们主动加入的 near/mic 对齐延迟,会计入 `estimated_user_latency_ms`。
   - `input_queue_latency_ms` / `output_queue_latency_ms`: 输入/输出队列积压贡献的软件管线延迟。
 - diagnostics 录制应保存 `mic.wav`、`ref.wav`、`out.wav`、`stats.csv` 和 metadata,用于用户反馈和回归分析。

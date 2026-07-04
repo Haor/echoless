@@ -16,9 +16,9 @@ use serde_json::json;
 
 use super::print_human;
 use super::stats::{
-    aggregate_diverged, aggregate_estimated_delay_ms, aggregate_last_error,
-    aggregate_process_time_ms, aggregate_runtime_errors, estimate_user_latency_ms,
-    input_queue_latency_ms, output_queue_latency_ms, StatsSample,
+    aggregate_aec3_delay_blocks, aggregate_diverged, aggregate_estimated_delay_ms,
+    aggregate_last_error, aggregate_process_time_ms, aggregate_runtime_errors,
+    estimate_user_latency_ms, input_queue_latency_ms, output_queue_latency_ms, StatsSample,
 };
 
 const DIAGNOSTIC_QUEUE_FRAMES: usize = 128;
@@ -124,6 +124,7 @@ struct DiagnosticFrame {
     node_process_time_ms: f32,
     node_runtime_errors: u64,
     aec_estimated_delay_ms: i32,
+    aec3_delay_blocks: Option<u32>,
     node_diverged: bool,
     node_last_error: Option<String>,
 }
@@ -150,6 +151,7 @@ impl DiagnosticFrame {
             node_process_time_ms: aggregate_process_time_ms(sample.node_stats),
             node_runtime_errors: aggregate_runtime_errors(sample.node_stats),
             aec_estimated_delay_ms: aggregate_estimated_delay_ms(sample.node_stats),
+            aec3_delay_blocks: aggregate_aec3_delay_blocks(sample.node_stats),
             node_diverged: aggregate_diverged(sample.node_stats),
             node_last_error: aggregate_last_error(sample.node_stats),
         }
@@ -221,7 +223,7 @@ impl DiagnosticRecorder {
         );
         writeln!(
             stats,
-            "frame_index,frames,near_delay_ms,near_delay_buffered_samples,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,input_queue_latency_ms,output_queue_latency_ms,estimated_user_latency_ms,aec_estimated_delay_ms,mic_input_drops,ref_input_drops,input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
+            "frame_index,frames,near_delay_ms,near_delay_buffered_samples,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,input_queue_latency_ms,output_queue_latency_ms,estimated_user_latency_ms,aec_estimated_delay_ms,aec3_delay_blocks,mic_input_drops,ref_input_drops,input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
         )?;
 
         let mic_part_path = dir.join("mic.wav.part");
@@ -411,7 +413,7 @@ impl DiagnosticWriter {
         };
         writeln!(
             stats,
-            "{},{},{},{},{:.2},{:.2},{:.2},{},{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
+            "{},{},{},{},{:.2},{:.2},{:.2},{},{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
             self.frame_index,
             frame.frame_size,
             frame.near_delay_ms,
@@ -433,6 +435,10 @@ impl DiagnosticWriter {
                 self.sample_rate
             ),
             frame.aec_estimated_delay_ms,
+            frame
+                .aec3_delay_blocks
+                .map(|blocks| blocks.to_string())
+                .unwrap_or_default(),
             frame.mic_input_drops,
             frame.ref_input_drops,
             frame.mic_input_drops + frame.ref_input_drops,
@@ -688,6 +694,7 @@ mod tests {
         assert!(stats.contains("node_process_time_ms"));
         assert!(stats.contains("input_queue_latency_ms"));
         assert!(stats.contains("estimated_user_latency_ms"));
+        assert!(stats.contains("aec3_delay_blocks"));
         assert!(stats.contains("near_delay_ms"));
         assert!(stats.contains(",10.00,0.00,56.00,"));
         assert!(dir.join("out.wav").exists());

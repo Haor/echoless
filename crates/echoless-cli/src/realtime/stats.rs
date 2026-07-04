@@ -47,6 +47,10 @@ pub(super) fn aggregate_estimated_delay_ms(stats: &[ProcessorStats]) -> i32 {
         .unwrap_or(0)
 }
 
+pub(super) fn aggregate_aec3_delay_blocks(stats: &[ProcessorStats]) -> Option<u32> {
+    stats.iter().find_map(|stat| stat.aec3_delay_blocks)
+}
+
 pub(super) fn aggregate_diverged(stats: &[ProcessorStats]) -> bool {
     stats.iter().any(|stat| stat.diverged)
 }
@@ -180,6 +184,7 @@ pub(super) struct RealtimeStats {
     node_process_time_ms: f32,
     node_runtime_errors: u64,
     aec_estimated_delay_ms: i32,
+    aec3_delay_blocks: Option<u32>,
     node_diverged: bool,
     node_last_error: Option<String>,
 }
@@ -237,6 +242,7 @@ impl RealtimeStats {
             node_process_time_ms: 0.0,
             node_runtime_errors: 0,
             aec_estimated_delay_ms: 0,
+            aec3_delay_blocks: None,
             node_diverged: false,
             node_last_error: None,
         }
@@ -287,6 +293,7 @@ impl RealtimeStats {
             .max(aggregate_process_time_ms(sample.node_stats));
         self.node_runtime_errors = aggregate_runtime_errors(sample.node_stats);
         self.aec_estimated_delay_ms = aggregate_estimated_delay_ms(sample.node_stats);
+        self.aec3_delay_blocks = aggregate_aec3_delay_blocks(sample.node_stats);
         self.node_diverged = aggregate_diverged(sample.node_stats);
         self.node_last_error = aggregate_last_error(sample.node_stats);
         self.maybe_print();
@@ -411,6 +418,7 @@ impl RealtimeStats {
             "algorithmic_latency_ms": self.algorithmic_latency_ms,
             "estimated_user_latency_ms": estimated_user_latency_ms,
             "aec_estimated_delay_ms": self.aec_estimated_delay_ms,
+            "aec3_delay_blocks": self.aec3_delay_blocks,
             "mic_input_drops": self.mic_input_drops,
             "ref_input_drops": self.ref_input_drops,
             "input_drops": self.mic_input_drops + self.ref_input_drops,
@@ -485,6 +493,7 @@ mod tests {
         stats.mic_input_drops = 1;
         stats.ref_input_drops = 2;
         stats.aec_estimated_delay_ms = 48;
+        stats.aec3_delay_blocks = Some(12);
 
         let value = stats.status_value(stats.started + Duration::from_secs(1));
 
@@ -498,6 +507,7 @@ mod tests {
         assert_eq!(value["output_queue_latency_ms"], 50.0);
         assert_eq!(value["estimated_user_latency_ms"], 106.0);
         assert_eq!(value["aec_estimated_delay_ms"], 48);
+        assert_eq!(value["aec3_delay_blocks"], 12);
         assert_eq!(value["diagnostics_session_dir"], "diagnostics/session-1");
         assert_eq!(value["recording"], false);
         assert_eq!(value["diagnostics_frames"], 0);
