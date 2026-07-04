@@ -55,6 +55,7 @@ pub struct LocalVqe {
     out_queue: VecDeque<f32>,
     started: bool,
     last_error: Option<String>,
+    runtime_errors: u64,
 }
 
 impl LocalVqe {
@@ -74,6 +75,7 @@ impl LocalVqe {
             out_queue: VecDeque::new(),
             started: false,
             last_error: None,
+            runtime_errors: 0,
         }
     }
 
@@ -232,6 +234,7 @@ impl EchoProcessor for LocalVqe {
 
         if let Err(err) = self.process_loaded(near, far, out, frames as usize) {
             self.last_error = Some(err.to_string());
+            self.runtime_errors = self.runtime_errors.saturating_add(1);
             copy_or_zero(near, out);
         }
     }
@@ -255,8 +258,19 @@ impl EchoProcessor for LocalVqe {
         }
     }
 
+    // D5:上报真实错误计数与最近错误(此前恒 empty → HEALTH 面板对 LocalVQE 全盲)。
+    // 神经模型无 AEC 发散概念,diverged 恒 false 是真实语义而非未接线。
     fn stats(&self) -> ProcessorStats {
-        ProcessorStats::empty("localvqe")
+        ProcessorStats {
+            runtime_error_count: self.runtime_errors,
+            last_backend_error: self.last_error.clone(),
+            selected_model: self
+                .model_path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned()),
+            ..ProcessorStats::empty("localvqe")
+        }
     }
 
     fn reset(&mut self) {
