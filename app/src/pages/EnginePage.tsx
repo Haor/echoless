@@ -16,16 +16,16 @@ import {
 import { useI18n } from "../i18n";
 
 // Official LocalVQE models from HF. The default is recommended, not bundled.
+// 行内只标参数量(体积不上行 —— 列宽预算有限,详情看 hover title)。
 const LVQE_MODELS: {
   file: string;
   ver: string;
   params: string;
-  size: string;
   def?: boolean;
 }[] = [
-  { file: "localvqe-v1.4-aec-200K-f32.gguf", ver: "v1.4", params: "200K", size: "3MB" },
-  { file: "localvqe-v1.3-4.8M-f32.gguf", ver: "v1.3", params: "4.8M", size: "18MB", def: true },
-  { file: "localvqe-v1.2-1.3M-f32.gguf", ver: "v1.2", params: "1.3M", size: "5MB" },
+  { file: "localvqe-v1.4-aec-200K-f32.gguf", ver: "v1.4", params: "200K" },
+  { file: "localvqe-v1.3-4.8M-f32.gguf", ver: "v1.3", params: "4.8M", def: true },
+  { file: "localvqe-v1.2-1.3M-f32.gguf", ver: "v1.2", params: "1.3M" },
 ];
 
 // 引擎能力画像(前端描述性数据,非配置 contract)。
@@ -349,17 +349,18 @@ export function EnginePage({
               e.stopPropagation();
               found ? onPickModel(found.path) : downloadModel(m.file);
             }}
-            title={found ? found.path : `${t("lvqeDownload")} · ${m.file}`}
+            title={`${m.ver} · ${m.params} · ${found ? found.path : `${t("lvqeDownload")} ${m.file}`}`}
           >
             <span className={`lvbox ${found ? "ok" : "miss"}`}>{box}</span>
             <span className="lvver">{m.ver}</span>
             {m.def && <i className="lvdef">{t("lvqeDefault")}</i>}
             <span className="lvsp" />
-            <span className="lvms">
-              <span className="lvp">{m.params}</span>
-              <span className="lvsep">·</span>
-              <span className="lvz">{m.size}</span>
-            </span>
+            {/* 默认行徽标占位,参数量不上行(列宽预算;详情在 title) */}
+            {!m.def && (
+              <span className="lvms">
+                <span className="lvp">{m.params}</span>
+              </span>
+            )}
           </button>
         );
       })}

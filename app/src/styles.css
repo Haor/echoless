@@ -798,16 +798,7 @@ body {
 }
 .lvms .lvp {
   flex: none;
-  width: 26px;
-  text-align: right;
-}
-.lvms .lvsep {
-  flex: none;
-  color: var(--t-faint);
-}
-.lvms .lvz {
-  flex: none;
-  width: 34px; /* 体积文案压缩为 18MB/5MB/3MB 后收窄 */
+  width: 30px; /* 200K 四字符 */
   text-align: right;
 }
 .lvtools {
