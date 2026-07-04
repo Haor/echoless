@@ -39,22 +39,7 @@ export interface LocalvqeModel {
   path: string;
   source: "downloaded" | string;
 }
-export interface LocalvqeNativeAsset {
-  filename: string;
-  url: string;
-  sha256: string | null;
-  size: number | null;
-  published: boolean;
-}
-export interface LocalvqeNativeManifest {
-  repo: string;
-  revision: string;
-  platform: string;
-  published: boolean;
-  message: string | null;
-  native_dir: string;
-  assets: LocalvqeNativeAsset[];
-}
+// native runtime 随包分发(2026-07-05 定案),不走下载;native_ready 只兜 dev 病态 case。
 export interface LocalvqeAssets {
   models_dir: string;
   models: LocalvqeModel[];
@@ -62,7 +47,6 @@ export interface LocalvqeAssets {
   library_path?: string | null;
   native_dir?: string | null;
   native_files?: string[];
-  native_manifest?: LocalvqeNativeManifest;
   cli_path?: string | null;
   process_tap_helper_path?: string | null;
 }
@@ -71,9 +55,6 @@ export function localvqeAssets(): Promise<LocalvqeAssets> {
 }
 export function downloadLocalvqeModel(filename: string): Promise<string> {
   return invoke<string>("download_localvqe_model", { filename });
-}
-export function downloadLocalvqeNative(): Promise<LocalvqeAssets> {
-  return invoke<LocalvqeAssets>("download_localvqe_native");
 }
 
 // 主动近端延迟侦测 / AEC 链路诊断。后端 shell `echoless probe-delay --json`,约 15 秒,
