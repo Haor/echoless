@@ -15,6 +15,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "windows")]
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+    AppHandle, WebviewWindow,
+};
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 #[cfg(target_os = "macos")]
 use tauri_plugin_decorum::WebviewWindowExt;
@@ -29,6 +35,23 @@ struct RunChild {
 }
 /// 当前运行中的 echoless run 子进程(同一时刻最多一个)。
 struct RunState(Mutex<Option<RunChild>>);
+
+#[cfg(target_os = "windows")]
+struct TrayIconState(Mutex<Option<TrayIcon>>);
+
+#[cfg(target_os = "windows")]
+struct TrayWindowState {
+    minimizing_to_tray: AtomicBool,
+}
+
+#[cfg(target_os = "windows")]
+impl Default for TrayWindowState {
+    fn default() -> Self {
+        Self {
+            minimizing_to_tray: AtomicBool::new(false),
+        }
+    }
+}
 
 /// Windows tray preferences pushed by the frontend at startup and on change.
 struct TrayPrefs {
@@ -53,6 +76,14 @@ fn run_state_guard(state: &RunState) -> MutexGuard<'_, Option<RunChild>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+#[cfg(target_os = "windows")]
+fn tray_icon_state_guard(state: &TrayIconState) -> MutexGuard<'_, Option<TrayIcon>> {
+    state
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn terminate_run(state: &RunState) {
     let child_opt = {
         let mut guard = run_state_guard(state);
@@ -66,11 +97,27 @@ fn terminate_run(state: &RunState) {
     }
 }
 
-fn set_tray_prefs_inner(
-    prefs: &TrayPrefs,
-    minimize_to_tray: bool,
-    close_to_tray: bool,
-) {
+fn mark_run_exited(state: &RunState, config_path: &Path) {
+    let child_opt = {
+        let mut guard = run_state_guard(state);
+        if guard
+            .as_ref()
+            .is_some_and(|rc| rc.config_path == config_path)
+        {
+            guard.take()
+        } else {
+            None
+        }
+    };
+    if let Some(mut rc) = child_opt {
+        let _ = rc.child.wait();
+        cleanup_run_config(&rc.config_path);
+    } else {
+        cleanup_run_config(config_path);
+    }
+}
+
+fn set_tray_prefs_inner(prefs: &TrayPrefs, minimize_to_tray: bool, close_to_tray: bool) {
     #[cfg(target_os = "windows")]
     {
         prefs
@@ -84,6 +131,132 @@ fn set_tray_prefs_inner(
         prefs.minimize_to_tray.store(false, Ordering::SeqCst);
         prefs.close_to_tray.store(false, Ordering::SeqCst);
     }
+}
+
+fn tray_pref_enabled(value: &AtomicBool) -> bool {
+    let stored = value.load(Ordering::SeqCst);
+    #[cfg(target_os = "windows")]
+    {
+        stored
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = stored;
+        false
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn minimize_to_tray_enabled(prefs: &TrayPrefs) -> bool {
+    tray_pref_enabled(&prefs.minimize_to_tray)
+}
+
+fn close_to_tray_enabled(prefs: &TrayPrefs) -> bool {
+    tray_pref_enabled(&prefs.close_to_tray)
+}
+
+fn tray_tooltip(running: bool) -> &'static str {
+    if running {
+        "Echoless — RUNNING"
+    } else {
+        "Echoless — STOPPED"
+    }
+}
+
+fn update_tray_tooltip(app: &tauri::AppHandle, running: bool) {
+    let tooltip = tray_tooltip(running);
+    #[cfg(target_os = "windows")]
+    {
+        let tray_state = app.state::<TrayIconState>();
+        let tray = tray_icon_state_guard(&tray_state).clone();
+        if let Some(tray) = tray {
+            let _ = tray.set_tooltip(Some(tooltip));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, tooltip);
+    }
+}
+
+#[cfg(target_os = "windows")]
+const TRAY_ID: &str = "main-tray";
+#[cfg(target_os = "windows")]
+const TRAY_MENU_SHOW: &str = "show";
+#[cfg(target_os = "windows")]
+const TRAY_MENU_QUIT: &str = "quit";
+
+#[cfg(target_os = "windows")]
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn register_windows_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, TRAY_MENU_SHOW, "Show", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit_item = MenuItem::with_id(app, TRAY_MENU_QUIT, "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
+
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .tooltip(tray_tooltip(false))
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            TRAY_MENU_SHOW => show_main_window(app),
+            TRAY_MENU_QUIT => {
+                let state = app.state::<RunState>();
+                terminate_run(&state);
+                update_tray_tooltip(app, false);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+
+    let tray = builder.build(app)?;
+    let tray_state = app.state::<TrayIconState>();
+    *tray_icon_state_guard(&tray_state) = Some(tray);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn handle_minimize_to_tray(window: &WebviewWindow) {
+    let prefs = window.state::<TrayPrefs>();
+    if !minimize_to_tray_enabled(&prefs) || !window.is_minimized().unwrap_or(false) {
+        return;
+    }
+
+    let tray_window_state = window.state::<TrayWindowState>();
+    if tray_window_state
+        .minimizing_to_tray
+        .swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
+
+    let _ = window.unminimize();
+    let _ = window.hide();
+    tray_window_state
+        .minimizing_to_tray
+        .store(false, Ordering::SeqCst);
 }
 
 const TAURI_TARGET_TRIPLE: &str = env!("TAURI_ENV_TARGET_TRIPLE");
@@ -1079,11 +1252,13 @@ fn start_run(
         }
         // 退出归因:intentional=主动停/重启(本 flag 已被置 true);否则=子进程自己退出(崩溃)。
         let intentional = stop_reader.load(Ordering::SeqCst);
+        let run_state = app_out.state::<RunState>();
+        mark_run_exited(&run_state, &reader_config_path);
+        update_tray_tooltip(&app_out, false);
         let _ = app_out.emit(
             "echoless://exit",
             serde_json::json!({ "intentional": intentional }),
         );
-        cleanup_run_config(&reader_config_path);
     });
 
     // stderr = 人类日志
@@ -1110,6 +1285,7 @@ fn start_run(
         stopping,
         config_path: path,
     });
+    update_tray_tooltip(&app, true);
     Ok(())
 }
 
@@ -1129,8 +1305,9 @@ fn send_run_control(state: State<RunState>, line: String) -> Result<(), String> 
 }
 
 #[tauri::command]
-fn stop_run(state: State<RunState>) -> Result<(), String> {
+fn stop_run(app: tauri::AppHandle, state: State<RunState>) -> Result<(), String> {
     terminate_run(&state);
+    update_tray_tooltip(&app, false);
     Ok(())
 }
 
@@ -1141,11 +1318,18 @@ fn set_tray_prefs(prefs: State<TrayPrefs>, minimize_to_tray: bool, close_to_tray
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_decorum::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(RunState(Mutex::new(None)))
-        .manage(TrayPrefs::default())
+        .manage(TrayPrefs::default());
+
+    #[cfg(target_os = "windows")]
+    let builder = builder
+        .manage(TrayIconState(Mutex::new(None)))
+        .manage(TrayWindowState::default());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             get_platform,
             list_devices,
@@ -1199,23 +1383,29 @@ pub fn run() {
             {
                 let _ = window.set_traffic_lights_inset(16.0, 13.0);
             }
+            #[cfg(target_os = "windows")]
+            {
+                register_windows_tray(app)?;
+            }
             let _ = &window;
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // 关窗时确保杀掉 echoless 子进程,避免遗留进程占用音频设备。
-            if let WindowEvent::CloseRequested { .. } = event {
-                let child_opt = {
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
+                let prefs = window.state::<TrayPrefs>();
+                if close_to_tray_enabled(&prefs) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
                     let state = window.state::<RunState>();
-                    let mut guard = run_state_guard(&state);
-                    guard.take()
-                };
-                if let Some(mut rc) = child_opt {
-                    rc.stopping.store(true, Ordering::SeqCst);
-                    let _ = rc.child.kill();
-                    cleanup_run_config(&rc.config_path);
+                    terminate_run(&state);
                 }
             }
+            WindowEvent::Resized(_) => {
+                #[cfg(target_os = "windows")]
+                handle_minimize_to_tray(window);
+            }
+            _ => {}
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
