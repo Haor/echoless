@@ -28,24 +28,32 @@ function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
 }
 
+// OFF(穿透/停机)态的波形灰(--t-mut 系):功能照常,视觉降级。
+const DIM_COL = "118, 117, 112";
+
 export function Scope({
   traceKey,
   telRef,
   active,
   revision,
   phase,
+  dimmed = false,
 }: {
   traceKey: TraceKey;
   telRef: MutableRefObject<Telemetry>;
   active: boolean;
   revision: number;
   phase: number;
+  // true = 波形改灰色低亮(OFF 直通中仍在流动,但退出视觉主角)
+  dimmed?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeRef = useRef(active);
+  const dimmedRef = useRef(dimmed);
   const scheduleRef = useRef<() => void>(() => {});
 
   activeRef.current = active;
+  dimmedRef.current = dimmed;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -111,8 +119,19 @@ export function Scope({
       const mid = h / 2;
       const maxA = h / 2 - 3;
 
+      // v13:点划中心线(机械制图 centerline;25/75 基准线已删,线条减法)
+      x.setLineDash([9, 4, 2, 4]);
+      x.strokeStyle = "rgba(214,213,205,0.08)";
+      x.lineWidth = 1;
+      x.beginPath();
+      x.moveTo(0, mid);
+      x.lineTo(w, mid);
+      x.stroke();
+      x.setLineDash([]);
+
       const wave = tel[`${traceKey}Wave` as const];
-      const e = clamp01((tel[traceKey] + 60) / 60) * (tel.on ? 1 : 0.05);
+      // 量程 0..-120 dBFS,与 srail 标注、dB 读数下限一致。
+      const e = clamp01((tel[traceKey] + 120) / 120) * (tel.on ? 1 : 0.05);
 
       let pts: [number, number][];
       if (wave && wave.length > 1) {
@@ -145,7 +164,9 @@ export function Scope({
         x.quadraticCurveTo(pts[i][0], pts[i][1], xc, yc);
       }
       x.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
-      x.strokeStyle = `rgba(${g.col},${tel.on ? 0.95 : 0.45})`;
+      x.strokeStyle = dimmedRef.current
+        ? `rgba(${DIM_COL},${tel.on ? 0.6 : 0.4})`
+        : `rgba(${g.col},${tel.on ? 0.95 : 0.45})`;
       x.lineWidth = g.lw;
       x.lineCap = "round";
       x.lineJoin = "round";
@@ -205,7 +226,7 @@ export function Scope({
 
   useEffect(() => {
     scheduleRef.current();
-  }, [active, revision]);
+  }, [active, revision, dimmed]);
 
   return <canvas ref={canvasRef} data-w={traceKey} />;
 }

@@ -1,0 +1,65 @@
+# Echoless 内化的 AEC3 引擎(源自 dignifiedquire/aec3-apm @ aacadf0 的 fork,已完全内化维护)。
+# 独立子 workspace(edition 2024/resolver 3),经 path 依赖被主 workspace 引用。
+# 已裁剪:cpp/fuzz/ffi/sys/bench、上游 examples/benches/CI 配置/10M 测试音频;
+# 延迟魔改等改动点见各 crate 内 "Echoless:" 注释,内部结构图见 research/aec3_internal_map.md。
+[workspace]
+resolver = "3"
+members = [
+    "crates/aec3-apm",
+    "crates/aec3-common-audio",
+    "crates/aec3-core",
+    "crates/aec3-agc2",
+    "crates/aec3-ns",
+    "crates/aec3-simd",
+    "crates/aec3-fft",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91"
+license = "BSD-3-Clause"
+repository = "https://github.com/dignifiedquire/aec3-apm"
+
+[workspace.dependencies]
+# Internal crates
+aec3-apm = { version = "0.1.0", path = "crates/aec3-apm" }
+aec3-common-audio = { version = "0.1.0", path = "crates/aec3-common-audio" }
+aec3-core = { version = "0.1.0", path = "crates/aec3-core" }
+aec3-agc2 = { version = "0.1.0", path = "crates/aec3-agc2" }
+aec3-ns = { version = "0.1.0", path = "crates/aec3-ns" }
+aec3-simd = { version = "0.1.0", path = "crates/aec3-simd" }
+aec3-fft = { version = "0.1.0", path = "crates/aec3-fft" }
+
+# External dependencies
+cpufeatures = "0.3"
+derive_more = { version = "2", features = ["debug"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bytemuck = { version = "1", features = ["derive"] }
+proptest = "1.11"
+test-strategy = "0.4"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(docsrs)"] }
+elided_lifetimes_in_paths = "warn"
+unnameable_types = "warn"
+unreachable_pub = "warn"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+or_fun_call = "warn"
+use_self = "warn"
+unused_async = "warn"
+absolute_paths = "warn"
+manual_let_else = "warn"
+allow_attributes_without_reason = "warn"
+mod_module_files = "deny"
+# DSP: exact C++ float constants for bit-exact output
+excessive_precision = "allow"
+# DSP: exact C++ table values near known constants (e.g. PI)
+approx_constant = "allow"
+
+# Match C++ optimization level: -O3, LTO, single codegen unit
+[profile.release]
+lto = "thin"
+codegen-units = 1

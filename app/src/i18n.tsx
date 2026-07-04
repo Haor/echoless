@@ -23,6 +23,8 @@ const D: Record<string, { en: string; zh: string }> = {
 
   removingEcho: { en: "Removing Echo", zh: "正在消除回声" },
   echoStopped: { en: "Echo Stopped", zh: "已停止" },
+  // P8-D1:OFF = 穿透 —— 强调 mic 仍然活着,只是 AEC 旁路。
+  bypassLive: { en: "Bypass · Mic Live", zh: "直通 · 麦克风在线" },
   unstable: { en: "Unstable", zh: "不稳定" },
   noReference: { en: "No Reference", zh: "无参考信号" },
   volWheel: {
@@ -63,11 +65,6 @@ const D: Record<string, { en: string; zh: string }> = {
     en: "request system audio permission",
     zh: "请求系统音频权限",
   },
-  // 系统音频参考(Process Tap)要求全局采样率 = 48k(与引擎无关)。
-  sysRefRate: {
-    en: "System Audio ref needs 48k sample rate",
-    zh: "系统音频参考需 48k 采样率",
-  },
 
   // Engine
   engNote: {
@@ -91,7 +88,9 @@ const D: Record<string, { en: string; zh: string }> = {
   engPickModel: { en: "pick .gguf model…", zh: "选择 .gguf 模型…" },
   engModelReq: { en: "model required", zh: "需要模型文件" },
   // LocalVQE 模型列表
-  lvqeDefault: { en: "DEFAULT", zh: "默认" },
+  // 徽标重设计(2026-07-05):DEFAULT 全词太宽挤掉参数量 → 工程 BOM 的标准件记号 STD
+  lvqeDefault: { en: "STD", zh: "标配" },
+  lvqeDefaultHint: { en: "default model", zh: "默认模型" },
   lvqeDownload: { en: "download", zh: "下载" },
   lvqeDownloading: { en: "downloading…", zh: "下载中…" },
   lvqeUse: { en: "use", zh: "使用" },
@@ -99,7 +98,6 @@ const D: Record<string, { en: string; zh: string }> = {
   lvqeCustom: { en: "pick local .gguf…", zh: "选本地 .gguf…" },
   lvqeGet: { en: "GET", zh: "下载" },
   lvqeOpenDir: { en: "open model folder", zh: "打开模型目录" },
-  lvqeGetRuntime: { en: "GET runtime", zh: "下载运行库" },
   lvqeSource: { en: "official repo", zh: "官方 repo" },
   lvqeRuntimeMissing: {
     en: "native runtime missing",
@@ -192,6 +190,10 @@ const D: Record<string, { en: string; zh: string }> = {
   micCopy: { en: "copy", zh: "复制" },
   micCopied: { en: "copied", zh: "已复制" },
   micReboot: { en: "Reboot to finish the virtual audio install.", zh: "重启以完成虚拟声卡安装。" },
+  micRebootTitle: {
+    en: "Driver installed · devices not active yet",
+    zh: "驱动已安装 · 设备尚未生效",
+  },
   micPermDenied: { en: "Microphone permission denied", zh: "麦克风权限被拒绝" },
   micPermHint: {
     en: "Echoless needs microphone access to capture your voice.",
@@ -249,9 +251,25 @@ const D: Record<string, { en: string; zh: string }> = {
   probeStable: { en: "stable", zh: "稳定" },
   probeUnstable: { en: "unstable", zh: "不稳定" },
   probeRec: { en: "set", zh: "建议" },
-  probeNoFix: { en: "no fix needed · 0ms", zh: "无需修正 · 0ms" },
+  probeNoFix: {
+    // v8/C6:去掉「no fix needed」歧义 —— 正 lag 由 AEC3 自行追踪,near_delay 不动。
+    en: "aligned · near_delay kept at 0ms",
+    zh: "已对齐 · 近端延迟保持 0ms",
+  },
   probeFilled: { en: "filled into Near Delay", zh: "已填入近端延迟" },
   probeInit: { en: "init", zh: "初始延迟" },
+
+  // Session · Windows 托盘偏好(P5)
+  trayMinimize: { en: "Minimize to Tray", zh: "最小化到托盘" },
+  trayMinimizeHint: {
+    en: "Minimizing hides the window into the system tray; audio keeps running.",
+    zh: "最小化时窗口收进系统托盘,音频链路不中断。",
+  },
+  trayClose: { en: "Close to Tray", zh: "关闭到托盘" },
+  trayCloseHint: {
+    en: "Closing hides to tray instead of quitting. Quit via tray menu.",
+    zh: "点关闭改为收进托盘而非退出;从托盘菜单 Quit 才真正退出。",
+  },
 
   // Diagnostics
   diagNote: {
@@ -263,7 +281,12 @@ const D: Record<string, { en: string; zh: string }> = {
   secHealth: { en: "Health", zh: "健康" },
   record: { en: "Record", zh: "录制" },
   maxSeconds: { en: "Max Seconds", zh: "最长秒数" },
-  unlimited: { en: "unlimited", zh: "不限" },
+  // 74px 输入框放不下 UNLIMITED(9 字符),用 NO MAX
+  unlimited: { en: "no max", zh: "不限" },
+  volMuteHint: {
+    en: "click: mute / restore · wheel: adjust",
+    zh: "点按:静音/恢复 · 滚轮:调节",
+  },
   recordDir: { en: "Output Dir", zh: "输出目录" },
   choose: { en: "choose…", zh: "选择…" },
   recording: { en: "recording…", zh: "录制中…" },

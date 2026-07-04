@@ -3,7 +3,8 @@
 **From:** 前端(GUI)
 **To:** Codex(后端 / 打包)
 **状态:** 前端模型列表 + 下载已实现;Tauri sidecar 接入已补。
-默认模型与 native runtime 不再进 bundle,统一从 HuggingFace 下载到品牌数据目录。
+分发定案(2026-07-05):**模型不进 bundle、从 HuggingFace 下载到品牌数据目录;
+native runtime 随包分发**(resource 目录优先,GET RUNTIME 下载流程已删除)。
 
 ---
 
@@ -11,12 +12,14 @@
 
 引擎页选中 LocalVQE 时,内嵌一个模型列表(替代原来的单一 .gguf 选择器):
 
-- 列出官方 repo `LocalAI-io/LocalVQE` 的 4 个 `.gguf` 模型:
-  `v1.3-4.8M`(**默认**)/ `v1.2-1.3M` / `v1.1-1.3M` / `v1-1.3M`,带参数量 + 大小。
+- 列出官方 repo `LocalAI-io/LocalVQE` 的 `.gguf` 模型:
+  `v1.4-aec-200K` / `v1.3-4.8M`(**默认**,STD 徽标)/ `v1.2-1.3M`,行内只标参数量
+  (体积见 hover title;v1.4 需要 35b116d 以上的 runtime,旧库加载返回 null)。
 - 列表内置在 **LocalVQE 卡片内**(NVAFX checklist 盒子风格):每行一个状态盒子 ——
   绿 `OK`=已下载可用、黄 `下载/GET`=未下载(点整行即下载)、`✓`=当前选中(整行高亮)。
 - 已存在的(品牌数据目录)点一下即设 `params.model`;未下载点一下即从 HF 拉取后自动选中。
-- 卡片底部:「打开模型目录 ↗」(`open_path(models_dir)`),native 缺失时显示「下载运行库」。
+- 卡片底部:「打开模型目录 ↗」(`open_path(models_dir)`);native 异常缺失时仅显示
+  warn 文案(无下载按钮 —— runtime 随包,缺失属 dev 病态)。
   ~~原「选本地 .gguf…」文件选择器已移除~~,改为打开目录 —— 用户把 `.gguf` 丢进该目录即被检测。
 - `localvqe_models_dir` 首次创建目录时会写一个 `README.txt`,说明「把 LocalVQE .gguf 放这里;
   应用内下载也落这里;任何 .gguf 会被自动检测并可在引擎页选用」。
@@ -26,7 +29,8 @@
 - `localvqe_assets() -> { models_dir, models, native_ready, library_path, native_dir, native_files, cli_path, process_tap_helper_path }`
   - `models_dir` = `<brand data root>/localvqe/models`(自动创建)。
   - 扫描单一品牌数据目录里的 `.gguf`。
-  - 扫描 env override / 品牌数据目录 / CLI dev fallback,返回 LocalVQE native runtime 是否可用。
+  - native 解析顺序:env override → 打包 Resource 目录 → `src-tauri/resources`(dev)→
+    品牌数据目录(兜底)→ CLI 邻目录;返回 LocalVQE native runtime 是否可用。
 - `download_localvqe_model(filename) -> path`
   - 从 `https://huggingface.co/LocalAI-io/LocalVQE/resolve/main/<filename>` 用 `curl -fL` 下载到
     `models_dir`(先写 `.part` 再 rename);限定 `.gguf` 文件名、防路径穿越。
@@ -46,9 +50,10 @@
 `ECHOLESS_LOCALVQE_LIBRARY` env → CLI 自身的默认搜索。
 - Tauri 后端已在 `echoless_command()` 注入 `ECHOLESS_LOCALVQE_LIBRARY`,并把 native 目录 prepend 到
   `PATH` / `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` / `DYLD_FALLBACK_LIBRARY_PATH`。
-- native runtime 走 manifest-driven HF 下载,落到 `<brand data root>/localvqe/native`。
-- 前端以 `native_ready` 判定是否允许 LocalVQE READY;只有模型存在但 native runtime 缺失时显示
-  `SET UP` / `缺少原生运行库`。
+- native runtime 随包分发:`pnpm prepare:tauri-assets` 把 `ECHOLESS_LOCALVQE_LIBRARY` /
+  CI 构建产物 / 现存副本拷进 `resources/localvqe/native`(发布用 `--require-localvqe-assets`
+  缺库即 fail);新构建 ggml 静态链入,单库自包含。
+- 前端以 `native_ready` 判定是否允许 LocalVQE READY;缺失仅显示 warn 文案。
 
 ### 2.3 CLI sidecar / helper
 - `tauri.conf.json` 已配置 `bundle.externalBin = ["binaries/echoless"]`。
@@ -58,7 +63,7 @@
   Tauri 后端会注入 `ECHOLESS_PROCESS_TAP_HELPER`。
 
 ## 3. 验收
-- 打包后:LocalVQE 首次使用需要下载 v1.3 模型与 native runtime。
+- 打包后:native runtime 已在包内;LocalVQE 首次使用只需下载模型(默认 v1.3)。
 - 下载其它版本(v1/v1.1/v1.2)→ 落到 models 目录 → 选中 → 开 ON 也能跑(库经 env 找到)。
 - 无库时报错清晰(已有 bail 文案;前端崩溃退出会在底栏显示该 stderr)。
 

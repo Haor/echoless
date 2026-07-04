@@ -1,0 +1,23 @@
+[package]
+name = "aec3-apm"
+version = "0.1.0"
+description = "WebRTC Audio Processing — pure Rust port with echo cancellation, noise suppression, and AGC"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aec3-common-audio = { workspace = true }
+aec3-core = { workspace = true }
+aec3-agc2 = { workspace = true }
+aec3-ns = { workspace = true }
+aec3-simd = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+aec3-fft = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

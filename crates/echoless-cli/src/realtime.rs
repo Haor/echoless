@@ -45,7 +45,7 @@ pub use self::devices::{
     AudioDoctorOptions, DeviceListOptions,
 };
 use self::devices::{
-    config_choice_summary, is_macos_process_tap, macos_process_tap_sample_rate, mic_selector,
+    config_choice_summary, mic_selector,
     output_selector, pick_config, select_device, select_reference_source, selected_device_label,
     DeviceKind, ReferenceSource, StreamConfigChoice,
 };
@@ -215,12 +215,8 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
     }
     let near_delay_samples = delay_ms_to_samples(cfg.near_delay_ms, sample_rate);
     let ring_size = frame_size * 12 + near_delay_samples; // ~120ms plus explicit near delay
-    if is_macos_process_tap(&reference_source) && sample_rate != macos_process_tap_sample_rate() {
-        bail!(
-            "macOS Process Tap 当前仅支持 {} Hz,当前 sample_rate={sample_rate}",
-            macos_process_tap_sample_rate()
-        );
-    }
+    // A5:tap 采样率由 helper 流头上报,与管线不一致时 reader 侧线性重采样,
+    // 不再要求管线锁 48k。
 
     let reference_channels = if reference_source.has_reference() {
         usize::from(cfg.reference_channels.channel_count())
@@ -268,9 +264,8 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
         (ReferenceSource::ProcessTap, _) => print_human(
             options.status_json,
             format!(
-                "Ref:    macOS Process Tap system audio ({} Hz, {}ch)",
-                macos_process_tap::SAMPLE_RATE,
-                reference_channels
+                "Ref:    macOS Process Tap system audio (device rate auto-resampled to {} Hz, {}ch)",
+                sample_rate, reference_channels
             ),
         ),
         (ReferenceSource::None, _) => print_human(
@@ -373,6 +368,7 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
                 .context("Process Tap ring producer 未初始化")?;
             Some(macos_process_tap::start(
                 cfg.reference_channels,
+                sample_rate,
                 p,
                 counters.ref_input_drops.clone(),
                 running.clone(),

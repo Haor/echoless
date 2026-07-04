@@ -17,6 +17,7 @@ struct Options {
     var mono = false
     var streamStdout = false
     var probePermission = false
+    var preflightPermission = false
     var excludePids: [pid_t] = []
 }
 
@@ -27,6 +28,7 @@ func usage() -> Never {
           echoless-process-tap-poc [--seconds N] [--out PATH] [--mono]
           echoless-process-tap-poc --stream-stdout [--mono] [--exclude-pid PID ...]
           echoless-process-tap-poc --probe-permission [--mono]
+          echoless-process-tap-poc --preflight-permission
 
         Captures macOS system output audio through Core Audio Process Tap.
         Play audio while this runs, then inspect the generated WAV.
@@ -34,6 +36,8 @@ func usage() -> Never {
         Echoless realtime pipeline.
         --probe-permission starts and stops a tap without writing audio. Use it
         only after explicit user action to trigger System Audio Recording TCC.
+        --preflight-permission prints granted|denied|undetermined|unknown to
+        stdout without ever triggering the TCC prompt (private TCC SPI).
         --exclude-pid excludes an audio-producing process, usually the parent
         echoless CLI, so processed output does not contaminate the reference.
 
@@ -65,6 +69,8 @@ func parseOptions() -> Options {
             options.streamStdout = true
         case "--probe-permission":
             options.probePermission = true
+        case "--preflight-permission":
+            options.preflightPermission = true
         case "--exclude-pid":
             index += 1
             guard index < args.count, let pid = Int32(args[index]), pid > 0 else {
@@ -452,7 +458,33 @@ func writeFloat32Wav(
     try data.write(to: URL(fileURLWithPath: path), options: .atomic)
 }
 
+// 无弹窗查询 System Audio Recording(kTCCServiceAudioCapture)授权状态。
+// TCC 没有公开的查询 API;这里走私有 TCC.framework 的 TCCAccessPreflight
+//(AudioCap 同款做法)。任何一步失败都回退 "unknown",绝不触发授权弹窗。
+func preflightAudioCapturePermission() -> String {
+    guard let handle = dlopen(
+        "/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC",
+        RTLD_NOW
+    ) else { return "unknown" }
+    defer { dlclose(handle) }
+    guard let sym = dlsym(handle, "TCCAccessPreflight") else { return "unknown" }
+    typealias PreflightFunc = @convention(c) (CFString, CFDictionary?) -> Int32
+    let preflight = unsafeBitCast(sym, to: PreflightFunc.self)
+    switch preflight("kTCCServiceAudioCapture" as CFString, nil) {
+    case 0: return "granted"
+    case 1: return "denied"
+    case 2: return "undetermined"
+    default: return "unknown"
+    }
+}
+
 let options = parseOptions()
+
+if options.preflightPermission {
+    print(preflightAudioCapturePermission())
+    exit(0)
+}
+
 let recorder = ProcessTapRecorder(options: options)
 
 do {
@@ -470,7 +502,15 @@ if options.probePermission {
     fputs("permission probe succeeded\n", stderr)
     exit(0)
 } else if options.streamStdout {
-    fputs("streaming raw Float32 PCM to stdout\n", stderr)
+    // A5:PCM 前先发 16 字节二进制头(magic ELTP + version + 实际采样率 + 声道数),
+    // Rust 侧据此决定是否插重采样 —— tap 采样率跟随系统输出设备,不恒为 48k。
+    var header = Data("ELTP".utf8)
+    for value in [UInt32(1), UInt32(recorder.sampleRate.rounded()), UInt32(recorder.channels)] {
+        var le = value.littleEndian
+        withUnsafeBytes(of: &le) { header.append(contentsOf: $0) }
+    }
+    FileHandle.standardOutput.write(header)
+    fputs("streaming raw Float32 PCM to stdout (\(recorder.formatDescription))\n", stderr)
     while true {
         Thread.sleep(forTimeInterval: 0.005)
         let data = recorder.drainStreamData()

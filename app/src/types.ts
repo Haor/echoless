@@ -120,6 +120,9 @@ export interface RuntimeStatus {
   last_backend_error?: string | null;
   diagnostics_session_dir?: string | null;
 
+  // P8-D1:穿透中(OFF = mic 直通虚拟麦,AEC 保温)。status 常驻,默认 false。
+  bypassed?: boolean;
+
   // 诊断录制实时态(后端 2026-06 起):录制中为 true + 已录帧/秒 + writer 丢帧。
   recording?: boolean;
   diagnostics_frames?: number;
@@ -189,6 +192,11 @@ export interface LocalvqeNoiseGateChangedEvent {
   noise_gate: boolean;
   noise_gate_threshold_dbfs: number;
 }
+// set_bypass 实时生效后的回执(P8-D1:OFF = 穿透,mic 直通虚拟麦)。
+export interface BypassChangedEvent {
+  type: "bypass_changed";
+  bypassed: boolean;
+}
 
 // run --status-json 在音频流启动后先发的一条事件。
 export interface StartedEvent {
@@ -226,7 +234,8 @@ export type RunEvent =
   | InitialDelayChangedEvent
   | Aec3NsChangedEvent
   | Aec3AgcChangedEvent
-  | LocalvqeNoiseGateChangedEvent;
+  | LocalvqeNoiseGateChangedEvent
+  | BypassChangedEvent;
 
 // ---- doctor audio --json(虚拟声卡检测) ----
 export interface DoctorCandidate {

@@ -493,10 +493,25 @@ fn find_localvqe_library_in_dir(dir: &Path) -> Option<PathBuf> {
     matches.into_iter().next()
 }
 
-fn localvqe_library_path(_app: Option<&tauri::AppHandle>, cli: &Path) -> Option<PathBuf> {
+fn localvqe_library_path(app: Option<&tauri::AppHandle>, cli: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(p) = std::env::var("ECHOLESS_LOCALVQE_LIBRARY") {
         push_file_candidate(&mut candidates, PathBuf::from(p));
+    }
+
+    // 产品决策(2026-07-05 修正):native runtime 随包分发,只有模型走 HF 下载。
+    // 打包 Resource 目录 → dev 的 src-tauri/resources → 品牌数据根(下载兜底)。
+    if let Some(resource_native) = resource_path(app, "resources/localvqe/native") {
+        if let Some(path) = find_localvqe_library_in_dir(&resource_native) {
+            push_file_candidate(&mut candidates, path);
+        }
+    }
+    let manifest_native = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("localvqe")
+        .join("native");
+    if let Some(path) = find_localvqe_library_in_dir(&manifest_native) {
+        push_file_candidate(&mut candidates, path);
     }
 
     if let Some(path) = find_localvqe_library_in_dir(&localvqe_native_dir_path()) {
@@ -599,6 +614,13 @@ fn command_status_error(label: &str, out: &Output) -> String {
         stderr.trim()
     } else {
         stdout.trim()
+    };
+    // 错误会直达前端状态条/卡片,截断防止长输出撑爆 UI。
+    let detail: String = if detail.chars().count() > 240 {
+        let head: String = detail.chars().take(240).collect();
+        format!("{head}…")
+    } else {
+        detail.to_string()
     };
     format!(
         "{label} failed with status {}; output: {detail}",
@@ -740,7 +762,9 @@ async fn probe_delay(
 }
 
 // ---- LocalVQE model/native management: brand data root + HF downloads ----
-const LOCALVQE_HF_REVISION: &str = "5760d09ce556750f76c1251c024e4a8c37231591";
+// revision 跟 main:完整性由每文件 sha256 pin 保证,新上传的文件无需改代码即可下载。
+// (曾 pin 具体 commit,但该 rev 在 HF 上不存在导致下载全挂。)
+const LOCALVQE_HF_REVISION: &str = "main";
 
 #[derive(Clone, Copy)]
 struct LocalVqeModelPin {
@@ -749,30 +773,11 @@ struct LocalVqeModelPin {
     size: u64,
 }
 
-#[derive(Clone, Copy)]
-struct LocalVqeNativeAssetPin {
-    filename: &'static str,
-    sha256: Option<&'static str>,
-    size: Option<u64>,
-}
-
-struct LocalVqeNativePackage {
-    platform: &'static str,
-    published: bool,
-    message: Option<&'static str>,
-    assets: &'static [LocalVqeNativeAssetPin],
-}
-
 const LOCALVQE_MODEL_PINS: &[LocalVqeModelPin] = &[
     LocalVqeModelPin {
         filename: "localvqe-v1-1.3M-f32.gguf",
         sha256: "d5eaf577449d0f920d8ee5e1042b8ddc7b6627313a042c62e2ada1b42719ab30",
         size: 5_162_720,
-    },
-    LocalVqeModelPin {
-        filename: "localvqe-v1.1-1.3M-f32.gguf",
-        sha256: "c118227c6b433d6aa36d9e4b993e0f31aa60787ea38d301d04db917a4a2b0a84",
-        size: 5_173_088,
     },
     LocalVqeModelPin {
         filename: "localvqe-v1.2-1.3M-f32.gguf",
@@ -784,88 +789,12 @@ const LOCALVQE_MODEL_PINS: &[LocalVqeModelPin] = &[
         sha256: "c4f7912485c32cfc206c536f2f050b52513f2f613fdbc616391f6b26ab1d51ec",
         size: 19_268_160,
     },
-];
-
-const LOCALVQE_NATIVE_MACOS_AARCH64: &[LocalVqeNativeAssetPin] = &[
-    LocalVqeNativeAssetPin {
-        filename: "libggml.dylib",
-        sha256: Some("ec33d4cde840497601643752cd99f072c420c939939c8b1a15b6cfeecca42b19"),
-        size: Some(60_208),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml.0.dylib",
-        sha256: Some("ec33d4cde840497601643752cd99f072c420c939939c8b1a15b6cfeecca42b19"),
-        size: Some(60_208),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml.0.9.8.dylib",
-        sha256: Some("ec33d4cde840497601643752cd99f072c420c939939c8b1a15b6cfeecca42b19"),
-        size: Some(60_208),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-base.dylib",
-        sha256: Some("ddec56414496958956a54dfcbbaf64b489a24fba53b66ca7d4ab7244f47c4fe6"),
-        size: Some(653_416),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-base.0.dylib",
-        sha256: Some("ddec56414496958956a54dfcbbaf64b489a24fba53b66ca7d4ab7244f47c4fe6"),
-        size: Some(653_416),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-base.0.9.8.dylib",
-        sha256: Some("ddec56414496958956a54dfcbbaf64b489a24fba53b66ca7d4ab7244f47c4fe6"),
-        size: Some(653_416),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-blas.so",
-        sha256: Some("57edda37be99962bd2a4d4cc8c8d02dfe0f31ed201a9397d8a3205b677091a21"),
-        size: Some(58_704),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-cpu-apple_m1.so",
-        sha256: Some("25da7e004481d351620a1b53a0d731e1cf04620918ea787bbdea9620834d6c5b"),
-        size: Some(812_280),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-cpu-apple_m2_m3.so",
-        sha256: Some("35322ebf4e452f30d98647bc669070e858c43b6468277534e2ab53880a343b9e"),
-        size: Some(812_280),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-cpu-apple_m4.so",
-        sha256: Some("8118f000d4fa3651b4f25af98ca883da67fda412e380a43cc5e4e895330558aa"),
-        size: Some(812_280),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "libggml-metal.so",
-        sha256: Some("395f5d33aa533a047c301686aac66276addf22522a630ee1c26f542589fc494a"),
-        size: Some(798_672),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "liblocalvqe.dylib",
-        sha256: Some("6d7b7e722c0030a0bb4ee35d31d541b4e908c5c9e1251925a3f02724625942e5"),
-        size: Some(99_392),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "liblocalvqe.0.dylib",
-        sha256: Some("6d7b7e722c0030a0bb4ee35d31d541b4e908c5c9e1251925a3f02724625942e5"),
-        size: Some(99_392),
-    },
-    LocalVqeNativeAssetPin {
-        filename: "liblocalvqe.0.1.0.dylib",
-        sha256: Some("6d7b7e722c0030a0bb4ee35d31d541b4e908c5c9e1251925a3f02724625942e5"),
-        size: Some(99_392),
+    LocalVqeModelPin {
+        filename: "localvqe-v1.4-aec-200K-f32.gguf",
+        sha256: "b6e43138588a83bfe903ab5e143b4020b91c1e1629f5a575ac5855ff0003c731",
+        size: 2_924_224,
     },
 ];
-
-const LOCALVQE_NATIVE_WINDOWS_UNPUBLISHED: &[LocalVqeNativeAssetPin] = &[LocalVqeNativeAssetPin {
-    filename: "localvqe.dll",
-    sha256: None,
-    size: None,
-}];
-
-const LOCALVQE_NATIVE_UNSUPPORTED: &[LocalVqeNativeAssetPin] = &[];
 
 fn localvqe_model_pin(filename: &str) -> Option<&'static LocalVqeModelPin> {
     LOCALVQE_MODEL_PINS
@@ -921,16 +850,6 @@ fn verify_pinned_file(
 
 fn verify_localvqe_model_file(path: &Path, pin: &LocalVqeModelPin) -> Result<(), String> {
     verify_pinned_file(path, pin.sha256, pin.size, "LocalVQE 模型")
-}
-
-fn verify_localvqe_native_file(path: &Path, pin: &LocalVqeNativeAssetPin) -> Result<(), String> {
-    let sha256 = pin
-        .sha256
-        .ok_or_else(|| format!("LocalVQE native asset {} has no SHA256 pin", pin.filename))?;
-    let size = pin
-        .size
-        .ok_or_else(|| format!("LocalVQE native asset {} has no size pin", pin.filename))?;
-    verify_pinned_file(path, sha256, size, "LocalVQE native runtime")
 }
 
 fn localvqe_data_dir_path() -> PathBuf {
@@ -1052,69 +971,6 @@ fn collect_native_files(dir: &Path) -> Vec<String> {
     files
 }
 
-fn current_localvqe_native_package() -> LocalVqeNativePackage {
-    if TAURI_TARGET_TRIPLE == "aarch64-apple-darwin" {
-        return LocalVqeNativePackage {
-            platform: TAURI_TARGET_TRIPLE,
-            published: true,
-            message: None,
-            assets: LOCALVQE_NATIVE_MACOS_AARCH64,
-        };
-    }
-    if cfg!(windows) {
-        return LocalVqeNativePackage {
-            platform: TAURI_TARGET_TRIPLE,
-            published: false,
-            message: Some(
-                "LocalVQE Windows native runtime has not been published yet; upload localvqe.dll or set ECHOLESS_LOCALVQE_LIBRARY.",
-            ),
-            assets: LOCALVQE_NATIVE_WINDOWS_UNPUBLISHED,
-        };
-    }
-    LocalVqeNativePackage {
-        platform: TAURI_TARGET_TRIPLE,
-        published: false,
-        message: Some("LocalVQE native runtime is not published for this platform."),
-        assets: LOCALVQE_NATIVE_UNSUPPORTED,
-    }
-}
-
-fn localvqe_native_asset_url(
-    package: &LocalVqeNativePackage,
-    asset: &LocalVqeNativeAssetPin,
-) -> String {
-    format!(
-        "https://huggingface.co/LocalAI-io/LocalVQE/resolve/{LOCALVQE_HF_REVISION}/native/{}/{}",
-        package.platform, asset.filename
-    )
-}
-
-fn localvqe_native_manifest_value(native_dir: &Path) -> Value {
-    let package = current_localvqe_native_package();
-    let assets: Vec<Value> = package
-        .assets
-        .iter()
-        .map(|asset| {
-            json!({
-                "filename": asset.filename,
-                "url": localvqe_native_asset_url(&package, asset),
-                "sha256": asset.sha256,
-                "size": asset.size,
-                "published": package.published && asset.sha256.is_some() && asset.size.is_some(),
-            })
-        })
-        .collect();
-    json!({
-        "repo": "LocalAI-io/LocalVQE",
-        "revision": LOCALVQE_HF_REVISION,
-        "platform": package.platform,
-        "published": package.published,
-        "message": package.message,
-        "native_dir": native_dir.to_string_lossy(),
-        "assets": assets,
-    })
-}
-
 /// List available LocalVQE models from the single local model directory.
 #[tauri::command]
 fn localvqe_assets(app: tauri::AppHandle) -> Result<Value, String> {
@@ -1136,7 +992,6 @@ fn localvqe_assets(app: tauri::AppHandle) -> Result<Value, String> {
         "library_path": library.map(|p| p.to_string_lossy().to_string()),
         "native_dir": native_dir.to_string_lossy(),
         "native_files": native_files,
-        "native_manifest": localvqe_native_manifest_value(&native_dir),
         "cli_path": cli.map(|p| p.to_string_lossy().to_string()),
         "process_tap_helper_path": process_tap_helper.map(|p| p.to_string_lossy().to_string()),
     }))
@@ -1177,7 +1032,8 @@ fn download_localvqe_model_blocking(
         pin.filename
     );
     let mut curl = Command::new("curl");
-    curl.args(["-fL", "--retry", "2", "-o"]).arg(&tmp).arg(&url);
+    // -sS:去掉进度表(否则 curl 把整张进度表写进 stderr,报错时被原样灌进 UI)。
+    curl.args(["-sSfL", "--retry", "2", "-o"]).arg(&tmp).arg(&url);
     let out =
         command_output_with_timeout(&mut curl, MODEL_DOWNLOAD_TIMEOUT, "LocalVQE model download")?;
     if !out.status.success() {
@@ -1193,74 +1049,6 @@ fn download_localvqe_model_blocking(
     }
     std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().to_string())
-}
-
-/// Download the current platform LocalVQE native runtime into the brand data root.
-#[tauri::command]
-async fn download_localvqe_native(app: tauri::AppHandle) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || download_localvqe_native_blocking(&app))
-        .await
-        .map_err(|e| format!("download LocalVQE native task join failed: {e}"))?
-}
-
-fn download_localvqe_native_blocking(app: &tauri::AppHandle) -> Result<Value, String> {
-    let package = current_localvqe_native_package();
-    if !package.published {
-        return Err(package
-            .message
-            .unwrap_or("LocalVQE native runtime is not published for this platform.")
-            .to_string());
-    }
-    let dir = localvqe_native_dir()?;
-    for asset in package.assets {
-        let dest = dir.join(asset.filename);
-        if dest.exists() {
-            match verify_localvqe_native_file(&dest, asset) {
-                Ok(()) => continue,
-                Err(_) => {
-                    let _ = std::fs::remove_file(&dest);
-                }
-            }
-        }
-
-        let tmp = dir.join(format!("{}.part", asset.filename));
-        let _ = std::fs::remove_file(&tmp);
-        let url = localvqe_native_asset_url(&package, asset);
-        let mut curl = Command::new("curl");
-        curl.args(["-fL", "--retry", "2", "-o"]).arg(&tmp).arg(&url);
-        let out = command_output_with_timeout(
-            &mut curl,
-            MODEL_DOWNLOAD_TIMEOUT,
-            "LocalVQE native download",
-        )?;
-        if !out.status.success() {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!(
-                "下载失败({url}): {}",
-                command_status_error("curl", &out)
-            ));
-        }
-        if let Err(err) = verify_localvqe_native_file(&tmp, asset) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(err);
-        }
-        std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
-    }
-
-    if find_localvqe_library_in_dir(&dir).is_none() {
-        return Err(format!(
-            "LocalVQE native runtime downloaded but no platform library was found in {}",
-            dir.display()
-        ));
-    }
-
-    let manifest = localvqe_native_manifest_value(&dir);
-    let manifest_path = dir.join("localvqe-native-manifest.json");
-    let _ = std::fs::write(
-        &manifest_path,
-        serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?,
-    );
-    localvqe_assets(app.clone())
 }
 
 /// NVIDIA AFX / RTX AEC 引擎就绪探针。
@@ -1642,7 +1430,6 @@ pub fn run() {
             probe_delay,
             localvqe_assets,
             download_localvqe_model,
-            download_localvqe_native,
             nvafx_doctor,
             nvafx_install,
             nvafx_download_install,
@@ -1657,13 +1444,16 @@ pub fn run() {
             set_tray_prefs
         ])
         .setup(|app| {
-            // 默认打开基线 1040×640(布局按此定稿);可缩放,设合理 min/max 防止过小/过大破版。
+            // 默认打开基线 1040×640(v17 设计稿画布,布局按此定稿);
+            // B1:min 锁到默认尺寸 —— plate 分格在更小窗口必然破版。
+            // B3:builder 背景色 = 新色板 --bg #1d1d1b,resize 瞬间不露白边。
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Echoless")
                     .inner_size(1040.0, 640.0)
-                    .min_inner_size(960.0, 600.0)
+                    .min_inner_size(1040.0, 640.0)
                     .max_inner_size(1600.0, 1100.0)
+                    .background_color(tauri::window::Color(0x1d, 0x1d, 0x1b, 0xff))
                     .resizable(true)
                     .visible(true);
 

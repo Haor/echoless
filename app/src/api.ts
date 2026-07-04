@@ -39,22 +39,7 @@ export interface LocalvqeModel {
   path: string;
   source: "downloaded" | string;
 }
-export interface LocalvqeNativeAsset {
-  filename: string;
-  url: string;
-  sha256: string | null;
-  size: number | null;
-  published: boolean;
-}
-export interface LocalvqeNativeManifest {
-  repo: string;
-  revision: string;
-  platform: string;
-  published: boolean;
-  message: string | null;
-  native_dir: string;
-  assets: LocalvqeNativeAsset[];
-}
+// native runtime 随包分发(2026-07-05 定案),不走下载;native_ready 只兜 dev 病态 case。
 export interface LocalvqeAssets {
   models_dir: string;
   models: LocalvqeModel[];
@@ -62,7 +47,6 @@ export interface LocalvqeAssets {
   library_path?: string | null;
   native_dir?: string | null;
   native_files?: string[];
-  native_manifest?: LocalvqeNativeManifest;
   cli_path?: string | null;
   process_tap_helper_path?: string | null;
 }
@@ -71,9 +55,6 @@ export function localvqeAssets(): Promise<LocalvqeAssets> {
 }
 export function downloadLocalvqeModel(filename: string): Promise<string> {
   return invoke<string>("download_localvqe_model", { filename });
-}
-export function downloadLocalvqeNative(): Promise<LocalvqeAssets> {
-  return invoke<LocalvqeAssets>("download_localvqe_native");
 }
 
 // 主动近端延迟侦测 / AEC 链路诊断。后端 shell `echoless probe-delay --json`,约 15 秒,
@@ -200,6 +181,19 @@ export function setAec3Ns(ns: boolean, nsLevel: string): Promise<void> {
 }
 export function setAec3Agc(agc: boolean): Promise<void> {
   return sendRunControl(JSON.stringify({ cmd: "set_aec3_agc", agc }));
+}
+// P8-D1:穿透开关(OFF = mic 原样直通虚拟麦)。chain 级 bypass,AEC 保温,
+// 15ms crossfade;运行中实时生效。
+export function setBypass(enabled: boolean): Promise<void> {
+  return sendRunControl(JSON.stringify({ cmd: "set_bypass", enabled }));
+}
+// Windows 托盘偏好(P5 契约,docs/frontend/FRONTEND_STATE_HANDOFF.md §9):
+// 启动时与每次变更时同步到 Rust;非 Windows 平台后端忽略。
+export function setTrayPrefs(
+  minimizeToTray: boolean,
+  closeToTray: boolean,
+): Promise<void> {
+  return invoke("set_tray_prefs", { minimizeToTray, closeToTray });
 }
 export function setLocalvqeNoiseGate(
   noiseGate: boolean,

@@ -30,7 +30,8 @@ For a Windows installed app directory it verifies:
 - Tauri app executable exists.
 - Echoless sidecar CLI exists.
 - `echoless.exe processors --json` reports `localvqe`.
-- LocalVQE model/native assets are not bundled; runtime coverage is handled by the HF download flow.
+- `resources\localvqe\native\localvqe.dll` exists (native runtime ships in the
+  bundle; models are downloaded from HF at first use, not bundled).
 
 The smoke does not need microphone permission, system audio capture permission, VB-CABLE, or physical audio devices.
 
@@ -40,7 +41,7 @@ From the repository root on Windows:
 
 ```powershell
 pnpm -C app install
-pnpm -C app prepare:tauri-assets
+pnpm -C app prepare:tauri-assets --require-localvqe-assets
 pnpm -C app tauri build --debug --ci --bundles nsis
 ```
 

@@ -12,10 +12,10 @@ serde.workspace = true
 libloading.workspace = true
 rubato.workspace = true
 echoless-paths = { path = "../echoless-paths" }
-# 经典 AEC3 引擎:vendored fork(见 ../../vendor/aec3,上游基线 aacadf0)。
+# 经典 AEC3 引擎:内化 fork(见 ../../aec3,上游基线 aacadf0,已完全内化维护)。
 # 改 path 依赖以便开放 EchoCanceller3Config 注入口(方案 A,见 research/aec3_internal_map.md §9)。
 # 默认特性 aec3-engine 开启;关掉则 aec3 节点回退为直通(便于快速构建)。
-aec3-apm = { path = "../../vendor/aec3/crates/aec3-apm", optional = true }
+aec3-apm = { path = "../../aec3/crates/aec3-apm", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

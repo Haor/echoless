@@ -26,16 +26,17 @@
 - `localvqe` 处理器已经真实接入上游动态 C ABI。
 - 后端配置需要 `model` 非空。
 - `library` 可显式填写;不填时 CLI 会优先使用 Tauri 后端注入的
-  `ECHOLESS_LOCALVQE_LIBRARY`。Tauri 后端会从环境变量、品牌数据目录、
-  CLI 同目录 / `localvqe/` 子目录中寻找 native runtime。
-- 模型和 native runtime 不进 bundle;Tauri 后端提供 HF 下载入口,落到 `<brand data root>/localvqe/`。
+  `ECHOLESS_LOCALVQE_LIBRARY`。Tauri 后端解析顺序:环境变量 → 打包 Resource 目录 →
+  `src-tauri/resources`(dev)→ 品牌数据目录(兜底)→ CLI 同目录 / `localvqe/` 子目录。
+- 分发定案(2026-07-05):**native runtime 随包分发,模型不进 bundle**、
+  从 HF 下载落到 `<brand data root>/localvqe/models`。
 
 前端策略:
 
-- 开发态或首次使用尚未下载 LocalVQE assets 时,显示 `SET UP` 并提供模型/runtime 下载入口是正确的。
+- 首次使用尚未下载模型时,显示 `SET UP` 并提供模型下载入口(runtime 无下载入口,随包)。
 - 只有同时检测到 downloaded `.gguf` 模型与 `native_ready=true`,LocalVQE 才显示 `READY`。
 - 前端自动写入 `model = <downloaded model absolute path>`。
-- `library` 可以省略;后端会通过 env 注入 downloaded native library path。
+- `library` 可以省略;后端会通过 env 注入随包 native library path。
 - 用户手动放入 `.gguf` 是 secondary action,通过打开模型目录完成,不是首屏必须项。
 - LocalVQE 卡片应标为 experimental,避免暗示它一定优于 AEC3。
 - LocalVQE 不要求把全局 `sample_rate` 改成 `16000`;GUI 应保持默认 `48000 / 10ms`。

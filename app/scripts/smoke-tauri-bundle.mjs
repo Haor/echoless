@@ -229,6 +229,20 @@ function smoke() {
   assertExecutable(layout.cli, "Echoless sidecar CLI");
   if (!existsDir(layout.resources)) throw new Error(`resources directory missing: ${layout.resources}`);
 
+  // LocalVQE native runtime 随包分发(模型走 HF 下载,不在包内):包里必须有主库。
+  const nativeDir = path.join(layout.resources, "localvqe", "native");
+  const libName =
+    process.platform === "win32"
+      ? (f) => f.toLowerCase() === "localvqe.dll"
+      : process.platform === "darwin"
+        ? (f) => f.startsWith("liblocalvqe") && f.endsWith(".dylib")
+        : (f) => f.startsWith("liblocalvqe") && f.includes(".so");
+  const nativeLib = existsDir(nativeDir) && fs.readdirSync(nativeDir).some(libName);
+  if (!nativeLib) {
+    throw new Error(`LocalVQE native library missing under ${nativeDir}`);
+  }
+  console.log("bundle-smoke: LocalVQE native runtime present");
+
   if (layout.helper) {
     assertExecutable(layout.helper, "Process Tap helper");
   }

@@ -8,7 +8,6 @@ import type {
 } from "../types";
 import {
   downloadLocalvqeModel,
-  downloadLocalvqeNative,
   localvqeAssets,
   openPath,
   type LocalvqeAssets,
@@ -16,16 +15,16 @@ import {
 import { useI18n } from "../i18n";
 
 // Official LocalVQE models from HF. The default is recommended, not bundled.
+// 行内只标参数量(体积不上行 —— 列宽预算有限,详情看 hover title)。
 const LVQE_MODELS: {
   file: string;
   ver: string;
   params: string;
-  size: string;
   def?: boolean;
 }[] = [
-  { file: "localvqe-v1.3-4.8M-f32.gguf", ver: "v1.3", params: "4.8M", size: "~18 MB", def: true },
-  { file: "localvqe-v1.2-1.3M-f32.gguf", ver: "v1.2", params: "1.3M", size: "~5 MB" },
-  { file: "localvqe-v1.1-1.3M-f32.gguf", ver: "v1.1", params: "1.3M", size: "~5 MB" },
+  { file: "localvqe-v1.4-aec-200K-f32.gguf", ver: "v1.4", params: "200K" },
+  { file: "localvqe-v1.3-4.8M-f32.gguf", ver: "v1.3", params: "4.8M", def: true },
+  { file: "localvqe-v1.2-1.3M-f32.gguf", ver: "v1.2", params: "1.3M" },
 ];
 
 // 引擎能力画像(前端描述性数据,非配置 contract)。
@@ -59,7 +58,7 @@ const PROFILES: Profile[] = [
     echo: 8,
     voice: 6,
     cost: "CPU · neural",
-    sr: "16k only",
+    sr: "16k · auto 48 ↔ 16", // A6:管线级自动重采样适配,如实标注
     os: "Win · mac",
   },
   {
@@ -238,7 +237,12 @@ function NvafxCard({
                   className="dopen"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onRecheck((params.runtime_dir as string) || undefined);
+                    // B8:与左侧 dpick 显示同源 —— 检查的就是展示的那个目录。
+                    onRecheck(
+                      (params.runtime_dir as string) ||
+                        nv?.runtime_dir ||
+                        undefined,
+                    );
                   }}
                 >
                   {t("engRecheck")} <span className="mk">↻</span>
@@ -283,7 +287,6 @@ export function EnginePage({
   // Available LocalVQE models/native runtime.
   const [lvAssets, setLvAssets] = useState<LocalvqeAssets | null>(null);
   const [lvDl, setLvDl] = useState<string | null>(null);
-  const [lvNativeDl, setLvNativeDl] = useState(false);
   const [lvErr, setLvErr] = useState<string | null>(null);
   useEffect(() => {
     localvqeAssets().then(setLvAssets).catch(() => {});
@@ -301,18 +304,6 @@ export function EnginePage({
       setLvDl(null);
     }
   }
-  async function downloadNative() {
-    setLvNativeDl(true);
-    setLvErr(null);
-    try {
-      setLvAssets(await downloadLocalvqeNative());
-    } catch (e) {
-      setLvErr(String(e));
-    } finally {
-      setLvNativeDl(false);
-    }
-  }
-
   const proc = (k: string) => processors.find((p) => p.kind === k);
   // 开发态(dev)临时解开 NVAFX 平台/doctor 门槛,用于走通前端流程。
   const supported = (k: string) =>
@@ -344,16 +335,18 @@ export function EnginePage({
               e.stopPropagation();
               found ? onPickModel(found.path) : downloadModel(m.file);
             }}
-            title={found ? found.path : `${t("lvqeDownload")} · ${m.file}`}
+            title={`${m.ver} · ${m.params} · ${found ? found.path : `${t("lvqeDownload")} ${m.file}`}`}
           >
             <span className={`lvbox ${found ? "ok" : "miss"}`}>{box}</span>
             <span className="lvver">{m.ver}</span>
-            {m.def && <i className="lvdef">{t("lvqeDefault")}</i>}
+            {m.def && (
+              <i className="lvdef" title={t("lvqeDefaultHint")}>
+                {t("lvqeDefault")}
+              </i>
+            )}
             <span className="lvsp" />
             <span className="lvms">
               <span className="lvp">{m.params}</span>
-              <span className="lvsep">·</span>
-              <span className="lvz">{m.size}</span>
             </span>
           </button>
         );
@@ -370,28 +363,19 @@ export function EnginePage({
         >
           {t("lvqeOpenDir")} <span className="mk">↗</span>
         </button>
-        {lvAssets && !lvAssets.native_ready && (
-          <button
-            type="button"
-            className="dopen"
-            disabled={lvNativeDl}
-            onClick={(e) => {
-              e.stopPropagation();
-              downloadNative();
-            }}
-            title={lvAssets.native_manifest?.message ?? lvAssets.native_dir ?? undefined}
-          >
-            {lvNativeDl ? t("lvqeDownloading") : t("lvqeGetRuntime")}{" "}
-            <span className="mk">↓</span>
-          </button>
-        )}
       </div>
+      {/* native runtime 随包分发(2026-07-05 定案),正常永远就绪;
+          这条 warn 只兜 dev 环境资源缺失的病态 case,不提供下载按钮 */}
       {lvAssets && !lvAssets.native_ready && (
         <div className="cdetail warn" title={lvAssets.native_dir ?? undefined}>
           {t("lvqeRuntimeMissing")}
         </div>
       )}
-      {lvErr && <div className="cdetail warn">{lvErr}</div>}
+      {lvErr && (
+        <div className="cdetail warn lverr" title={lvErr}>
+          {lvErr}
+        </div>
+      )}
     </div>
   );
 

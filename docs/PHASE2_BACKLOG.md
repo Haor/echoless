@@ -27,9 +27,20 @@
 - P3/P4 验收由 Claude 复核:P3 全仓 grep 无 `aec3` 残留 + 兼容别名测试;
   P4 回归 = 非平稳激励 + >60s 长跑(顺带验证 internal map §11.6 退化疑云)。
 
-## P1 — UI 重构(主工作树)
+## P1 — UI 重构(主工作树)🟡 主体已落地(2026-07-04)
 
-按 `Design/overview.html`(v17 定稿)重构整个前端:
+已完成(commit bb4d304..9688da2):styles.css 全量替换(本地变量字体 Martian Mono/Archivo)、
+plate 四区 overview、tvnoise/字标 crton·crtoff/sysoff、srail 两列、footer SHT+UPTIME、
+逻辑随迁 A2/A4/B8/C1/C3/C5/C4/C6/A6 + B1(min=1040×640)/B3(builder 底色)、
+浏览器预览 shim + `?view=&dev=&os=` 直链、六视图截图对照设计稿核过。
+**剩余**:① ~~OFF→`set_bypass` 前端接线~~ ✅ 已完成(五态 statusKind + AEC BYPASS 文案);
+② 真机(tauri dev / Windows 构建)回归 + i18n 中文排版检查;③ 像素级微调(用户验收反馈已消化多轮:
+噪点 WebGL 化、蓝图图标、量程 −120、全大写注记、afield 视觉同步、vol 收回动画、停机读数清零、
+引擎配置持久化 `echoless.engine.v1`、录制手动停也弹目录);
+④ **设计稿回写**:本轮用户定案的风格修订(全大写注记、ns_level 缩写、48 ↔ 16 间距等)
+尚未同步回 `Design/overview.html`。
+
+原始范围备忘——按 `Design/overview.html`(v17 定稿)重构整个前端:
 
 - `app/src/styles.css` 全量替换为设计稿 CSS(harness 段忽略),包括:暖碳黑色板、
   橙 #ff7235 唯一强调色、Martian Mono + Archivo(wdth 轴)字体、坐标纸网格+动态噪点、
@@ -48,7 +59,7 @@ Triage 表已附在 `docs/audit/UI_ISSUES_VERIFICATION_20260703.md` 末尾。结
 - **后端/产品项 10 条** → 新增 P8。
 - C6 的「0ms 歧义」会随 P4 的 probe 公式改动自然消失,P1 文案按 P4 新语义写。
 
-## P3 — Vendor 重构:aec3 内化改名(Codex)
+## P3 — Vendor 重构:aec3 内化改名(Codex)✅ 已合入 main(2026-07-05)
 
 按 `docs/architecture/AEC3_INTERNALIZATION_PLAN.md` 执行(8 步):
 
@@ -56,7 +67,11 @@ Triage 表已附在 `docs/audit/UI_ISSUES_VERIFICATION_20260703.md` 末尾。结
 - vendor 有独立 `.git` 需先删除并入。
 - **先内化改名、后延迟魔改**(保持 diff 分离)。
 
-## P4 — AEC3 延迟魔改:惯性 + 负方向搜索(Codex,依赖 P3)
+## P4 — AEC3 延迟魔改:惯性 + 负方向搜索(Codex,依赖 P3)✅ 已合入 main(2026-07-05)
+
+> ✅ 遗留已结案(2026-07-05):三窗口实测 41.1→38.3→38.1dB —— 所谓退化是收敛蜜月峰值
+> 后的一次性 ~3dB 回落,25s 后平台平稳(Δ0.26dB);对照 delay_hold=off 同 harness 为
+> 9.6→5.6dB(即 §11.6 的严重退化),P4 是修复而非诱因。断言已改为平台稳定语义。
 
 按 `docs/architecture/AEC3_DELAY_MOD_PLAN.md` 执行:
 
@@ -66,7 +81,7 @@ Triage 表已附在 `docs/audit/UI_ISSUES_VERIFICATION_20260703.md` 末尾。结
   probe 推荐公式改 `max(bias, -lag+safety)`),vendor 零改动、热更新。
 - 回归:非平稳激励 + >60s 长跑。
 
-## P5 — Windows 最小化进系统托盘
+## P5 — Windows 最小化进系统托盘 ✅ Rust 侧已合入 main、前端侧已在 ui-refactor(2026-07-05;待 Windows 实机手测)
 
 Tauri 2(已在用,启用 `tray-icon` feature):
 
@@ -76,7 +91,7 @@ Tauri 2(已在用,启用 `tray-icon` feature):
 - 前端侧:设置页加「最小化到托盘 / 关闭到托盘」开关(持久化到配置),默认最小化=托盘。
 - 注意:AEC 引擎运行中隐藏窗口时音频链路必须不中断;托盘 tooltip 显示运行状态(RUNNING/STOPPED)。
 
-## P6 — 重写 README
+## P6 — 重写 README ✅ 已完成(2026-07-05)
 
 - 面向用户/测试者重写根 README(现状偏开发笔记):是什么、支持平台(Win10/11 + macOS 14.4+)、
   安装、快速上手(选设备→开 AEC→虚拟麦克风给 Discord/VRChat)、故障排查入口。
@@ -96,22 +111,30 @@ Tauri 2(已在用,启用 `tray-icon` feature):
 
 后端/产品向,与 UI 换皮正交。按价值排序:
 
-1. **D1 OFF = passthrough 穿透模式(高优先)— 决策已定(2026-07-04 用户拍板)**:
+1. **D1 OFF = passthrough 穿透模式 ✅ 后端已合入 main、前端接线已在 ui-refactor(2026-07-05)**:
    **不搞三态,OFF 即穿透**——关了用户麦克风必须还能用,「完全停机」不作为用户级操作(退出应用=停机)。
    后端规格已写:`docs/codex-tasks/TASK_P8_OFF_PASSTHROUGH.md`(chain 级 bypass 热命令 + keep-warm
    保收敛 + crossfade,不换处理器;等 P3 合入后开工)。
    **P1 联动**:电源 OFF 的 UI 语义从「整机停转」改为「AEC 旁路」——sysoff 调暗保留,
    srail 停机文案 MONITOR HELD → 直通语义(如 AEC BYPASS),前端 OFF 不再调 stop_run 而是 set_bypass。
-2. **D2 一键 mute**:记忆音量 toggle 0↔恢复,复用 `set_output_level` 实时通道,小活;
-   UI 挂点等 P1 footer 定稿。
-3. **D6+D7+D8 localvqe 转 HF 下载 + 数据目录统一**(决策已定 2026-07-03):模型+native runtime
-   全走 HuggingFace,删随包资源;目录统一 `%LOCALAPPDATA%\Echoless\` 根。三条一起做,
-   实施要点见审计文档 D8 条目。
-4. **D4 Windows 虚拟麦向导闭环**:显式状态机(检测→引导下载→装后未生效提示重启→完成),
-   名字匹配加别名容错。
+2. **D2 一键 mute ✅ 已在 ui-refactor(2026-07-05)**:footer VOL 点按 toggle 0↔记忆值
+   (`echoless.premuteVol.v1`),静音态显示 VOL MUTE,键盘可达,复用实时 `set_output_level`。
+3. **D6+D7+D8 localvqe 数据目录统一 + 模型转 HF 下载 ✅(2026-07-05,Codex d33f464 +
+   19d2989 决策修正)**:新 `crates/echoless-paths` 品牌根(`ECHOLESS_DATA_ROOT` 可覆盖);
+   模型落 `<品牌根>/localvqe/models`,旧目录 gguf 一次性迁移;模型清单 v1.4/v1.3(STD)/v1.2
+   走 GET 下载(sha256 pin,revision=main)。**⚠️ 决策修正(用户 2026-07-05)**:
+   native runtime 恢复随包分发(resource 目录优先,品牌根仅作兜底),GET RUNTIME UI 删除,
+   prepare/smoke/CI 的 native 打包链路恢复(`--require-localvqe-assets` 只管 native)。
+   HF 无需再传 native;模型 v1.4 已在库上。
+4. **D4 Windows 虚拟麦向导闭环 ✅ 已在 ui-refactor(2026-07-05;待 Windows 真机走查)**:
+   后端 needs_reboot 真值化(VB-CABLE 驱动残迹在 + 端点不在 = 装了没重启),向导加显式
+   reboot 态、端点匹配放宽到 CABLE-A/B 等别名、Windows 隐藏死权限节点、dev 模拟可走查。
 5. **D5 LocalVQE stats 接线**(小活):`localvqe.rs::stats()` 返回真实 errors/diverged。
-6. **A1 权限横幅根治**:helper 加轻量 TCC 预检,返回真实 granted/denied/undetermined。
-7. **A5 Process Tap 采样率解锁**:helper 上报实际采样率,Rust 侧 tap 流插重采样器。
+6. **A1 权限横幅根治 ✅ 已在 ui-refactor(2026-07-05)**:helper `--preflight-permission`
+   走私有 TCCAccessPreflight 无弹窗真查,doctor 不再硬编码 undetermined(本机实测 granted)。
+7. **A5 Process Tap 采样率解锁 ✅ 已在 ui-refactor(2026-07-05)**:helper 发 ELTP 流头
+   (实际采样率+声道),Rust 读头后按需插共享线性重采样;前后端 48k 硬门槛全部移除,
+   端到端实测(48k tap)通过。
 
 ## 建议节拍
 

@@ -9,9 +9,9 @@ members = [
     "crates/echoless-core",
     "crates/echoless-cli",
 ]
-# vendored aec3-apm fork 是独立子 workspace(edition 2024/resolver 3),不并入本 workspace;
-# 经 path 依赖引用。见 vendor/aec3/Cargo.toml。
-exclude = ["vendor/aec3"]
+# 内化的 aec3 引擎是独立子 workspace(edition 2024/resolver 3),不并入本 workspace;
+# 经 path 依赖引用。见 aec3/Cargo.toml。
+exclude = ["aec3"]
 
 [workspace.package]
 edition = "2021"

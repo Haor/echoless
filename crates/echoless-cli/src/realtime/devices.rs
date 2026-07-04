@@ -174,29 +174,6 @@ fn select_system_reference_source(host: &cpal::Host) -> Result<ReferenceSource> 
     })
 }
 
-pub(super) fn is_macos_process_tap(source: &ReferenceSource) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        matches!(source, ReferenceSource::ProcessTap)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = source;
-        false
-    }
-}
-
-pub(super) fn macos_process_tap_sample_rate() -> u32 {
-    #[cfg(target_os = "macos")]
-    {
-        macos_process_tap::SAMPLE_RATE
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        48_000
-    }
-}
-
 fn select_render_device(host: &cpal::Host, selector: &str) -> Result<(SelectedDevice, DeviceKind)> {
     if let Some((prefix, sel)) = selector.split_once(':') {
         let kind = match prefix.to_lowercase().as_str() {
@@ -449,6 +426,10 @@ pub fn audio_doctor_json_with_options(options: AudioDoctorOptions) -> Result<Val
         (true, true) => "missing",
         _ => "unknown",
     };
+    // D4:VB-CABLE 装完必须重启 Windows 才出现音频端点。驱动残迹在而端点不在
+    // = 「已装未生效」,以 needs_reboot 提示前端向导进入重启节点。
+    let driver_present = vb_cable_driver_present();
+    let needs_reboot = cfg!(windows) && driver_present && install_status != "installed";
     let system_audio_probe = options
         .request_system_audio
         .then(request_system_audio_permission);
@@ -465,7 +446,8 @@ pub fn audio_doctor_json_with_options(options: AudioDoctorOptions) -> Result<Val
         "candidate_inputs": candidate_inputs,
         "recommended_driver": recommended_audio_driver(),
         "install_status": install_status,
-        "needs_reboot": false,
+        "needs_reboot": needs_reboot,
+        "virtual_driver_present": driver_present,
         "permission_state": audio_permission_state(&inputs),
         "system_audio_permission": system_audio_permission,
         "system_audio_permission_probe": system_audio_probe.as_ref().map(SystemAudioPermissionProbe::to_json),
@@ -637,14 +619,47 @@ fn audio_permission_state(inputs: &[Value]) -> &'static str {
 }
 
 pub(super) fn system_audio_permission_state() -> &'static str {
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         if macos_process_tap_helper_available() {
-            "undetermined"
-        } else {
-            "unknown"
+            // 真实 TCC 预检(无弹窗)。查询失败才回退 undetermined,
+            // 让 UI 保留「请求权限」入口而不是误报 granted。
+            return macos_process_tap::preflight_permission().unwrap_or("undetermined");
         }
-    } else {
         "unknown"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "unknown"
+    }
+}
+
+// VB-CABLE 驱动残迹检测(仅 Windows):装完未重启时端点枚举不到,
+// 但驱动 sys 文件 / 安装目录已落盘 —— 用它区分「没装」和「装了没生效」。
+fn vb_cable_driver_present() -> bool {
+    #[cfg(windows)]
+    {
+        let windir =
+            std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        let sys_files = [
+            format!(r"{windir}\System32\drivers\vbaudio_cable64_win7.sys"),
+            format!(r"{windir}\System32\drivers\vbaudio_cable32_win7.sys"),
+        ];
+        if sys_files
+            .iter()
+            .any(|p| std::path::Path::new(p).is_file())
+        {
+            return true;
+        }
+        // 卸载程序所在的安装目录兜底(不同版本 sys 文件名可能变)。
+        ["ProgramFiles", "ProgramFiles(x86)"]
+            .iter()
+            .filter_map(|var| std::env::var(var).ok())
+            .any(|pf| std::path::Path::new(&pf).join(r"VB\CABLE").is_dir())
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 

@@ -6,6 +6,7 @@ import type { DoctorAudio, DoctorCandidate, Platform } from "./types";
 export type MicState =
   | "unknown"
   | "missing"
+  | "reboot"
   | "incomplete"
   | "permission"
   | "ready";
@@ -13,6 +14,7 @@ export type MicState =
 // dev 状态切换条用的顺序(unknown 不暴露,它是「未探测」的真实初值)。
 export const MIC_DEV_STATES: MicState[] = [
   "missing",
+  "reboot",
   "incomplete",
   "permission",
   "ready",
@@ -113,6 +115,9 @@ export function simMicDoctor(
         recommended_output: out,
         recommended_app_mic: null,
       };
+    case "reboot":
+      // Windows:驱动残迹在、端点枚举不到 = 装了没重启。
+      return { ...base, needs_reboot: true };
     case "missing":
     case "unknown":
     default:

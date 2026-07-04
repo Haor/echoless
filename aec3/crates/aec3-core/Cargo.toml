@@ -1,0 +1,22 @@
+[package]
+name = "aec3-core"
+version = "0.1.0"
+description = "Echo Canceller 3 (AEC3) — Rust port of WebRTC's modern echo canceller"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["audio", "echo-cancellation", "aec", "webrtc", "dsp"]
+categories = ["multimedia::audio", "algorithms"]
+
+[dependencies]
+aec3-common-audio = { workspace = true }
+aec3-fft = { workspace = true }
+aec3-simd = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+test-strategy = { workspace = true }
+
+[lints]
+workspace = true

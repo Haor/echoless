@@ -65,6 +65,12 @@ export function resetRuntimeHealth() {
   emit();
 }
 
+// 停机/重启时清空实时读数(dBFS / 延迟),否则最后一帧数值残留在界面上。
+export function resetRuntimeLive() {
+  liveSnapshot = ZERO_LIVE;
+  emit();
+}
+
 export function setDiagnosticsSessionDir(sessionDir: string | null) {
   healthSnapshot = { ...healthSnapshot, session_dir: sessionDir };
   emit();
