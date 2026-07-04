@@ -21,9 +21,14 @@ export const RAIL_TEXT: Record<RunStatusKind, string> = {
   stopped: "MONITOR HELD",
 };
 
-// 四态判定 + A4 防抖:遥测抖动(healthy/ref 电平翻转)须持续 2.5s 才切换显示,
-// 消除状态盒「抽搐」;电源开/关(stopped↔其余)不防抖,立即反映。
+// 四态判定 + A4 防抖。两层配合:
+//   1. 参考电平滞回:REF 有声(> -100 dBFS)立即视为有参考;判「参考静音」
+//      须连续静音 REF_SILENT_HOLD_MS —— 音乐/语音的自然间隙逐帧跌破阈值,
+//      瞬时判定会让恢复计时不断被重置,状态卡死在 NO REFERENCE。
+//   2. 状态不对称防抖:劣化(live→warn/noref)须稳定 STATUS_HOLD_MS 才显示;
+//      恢复到 live 与电源开关切换立即反映。
 const STATUS_HOLD_MS = 2500;
+const REF_SILENT_HOLD_MS = 3000;
 
 export function useRunStatusKind(
   powerOn: boolean,
@@ -31,8 +36,21 @@ export function useRunStatusKind(
   dev: boolean,
 ): RunStatusKind {
   const live = useRuntimeLive();
-  const hasReference =
-    refSel !== "none" && (dev || !(live.ref !== null && live.ref <= -100));
+
+  // 滞回:记录最近一次「参考有声」时刻;开机时刻也算(给采集链路启动宽限)。
+  const lastRefLoudAt = useRef(0);
+  useEffect(() => {
+    if (powerOn) lastRefLoudAt.current = performance.now();
+  }, [powerOn]);
+  if (live.ref !== null && live.ref > -100) {
+    lastRefLoudAt.current = performance.now();
+  }
+  const refSilent =
+    live.ref !== null &&
+    live.ref <= -100 &&
+    performance.now() - lastRefLoudAt.current > REF_SILENT_HOLD_MS;
+  const hasReference = refSel !== "none" && (dev || !refSilent);
+
   const raw: RunStatusKind = !powerOn
     ? "stopped"
     : !live.healthy
@@ -54,9 +72,9 @@ export function useRunStatusKind(
       clearPending(); // 候选态回归当前显示 → 取消切换
       return;
     }
-    if (raw === "stopped" || shown === "stopped") {
+    if (raw === "stopped" || shown === "stopped" || raw === "live") {
       clearPending();
-      setShown(raw); // 开/关机立即反映
+      setShown(raw); // 开/关机与「恢复正常」立即反映;只有劣化才防抖
       return;
     }
     if (pending.current?.kind === raw) return; // 已在计时

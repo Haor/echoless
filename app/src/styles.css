@@ -1750,6 +1750,9 @@ hr.hair {
 /* 自绘下拉(brutalist 单色直角) */
 .dd {
   position: relative;
+  /* app 内 Dropdown 根是 div(设计稿为 span):置 inline-block,
+     防止 meta 行内(REFERENCE ▾)被块级换行拆成两行 */
+  display: inline-block;
 }
 .dd-trigger {
   display: inline-flex; /* v3.1:flex 在 inline 流中强制断行,致 meta 内 REFERENCE 两行(截图诊断) */
