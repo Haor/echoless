@@ -68,6 +68,26 @@ pub fn helper_path() -> Result<PathBuf> {
     )
 }
 
+/// 无弹窗查询系统音频录制授权状态(helper 走私有 TCCAccessPreflight)。
+/// 与 probe 不同:绝不触发授权弹窗,可在普通 doctor 里随时调用。
+/// helper 缺失 / 执行失败 / 输出不认识 → None(调用方回退 "unknown")。
+pub fn preflight_permission() -> Option<&'static str> {
+    let helper = helper_path().ok()?;
+    let output = Command::new(&helper)
+        .arg("--preflight-permission")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    match String::from_utf8_lossy(&output.stdout).trim() {
+        "granted" => Some("granted"),
+        "denied" => Some("denied"),
+        "undetermined" => Some("undetermined"),
+        _ => None,
+    }
+}
+
 pub fn probe_permission() -> Result<String> {
     let helper = helper_path()?;
     let output = Command::new(&helper)

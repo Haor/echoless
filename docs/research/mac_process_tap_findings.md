@@ -147,6 +147,13 @@ Frontend/doctor contract:
   `supported | permission_needed | denied | unavailable | unknown`.
 - A request/check command can start and stop a tiny tap to trigger permission;
   there does not appear to be a stable public TCC permission-query API for this.
+- **Update 2026-07-05:** silent query is now implemented through the private
+  `TCCAccessPreflight("kTCCServiceAudioCapture")` SPI (same approach as
+  insidegui/AudioCap). The helper exposes it as `--preflight-permission`
+  (prints `granted|denied|undetermined|unknown`, never prompts), and the normal
+  doctor path calls it instead of hardcoding `undetermined`. Acceptable for
+  this project (personal use, no App Store review); falls back to
+  `undetermined` if the SPI is unavailable.
 
 ## References
 

@@ -637,13 +637,17 @@ fn audio_permission_state(inputs: &[Value]) -> &'static str {
 }
 
 pub(super) fn system_audio_permission_state() -> &'static str {
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         if macos_process_tap_helper_available() {
-            "undetermined"
-        } else {
-            "unknown"
+            // 真实 TCC 预检(无弹窗)。查询失败才回退 undetermined,
+            // 让 UI 保留「请求权限」入口而不是误报 granted。
+            return macos_process_tap::preflight_permission().unwrap_or("undetermined");
         }
-    } else {
+        "unknown"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
         "unknown"
     }
 }
