@@ -73,6 +73,7 @@ import { simMicDoctor, type MicState } from "./mic";
 import {
   publishRuntimeStatus,
   resetRuntimeHealth,
+  resetRuntimeLive,
   setDiagnosticsSessionDir,
 } from "./runtimeTelemetry";
 
@@ -680,6 +681,7 @@ function useAppController() {
       uns.push(
         await onRunExit((ev) => {
           telRef.current.on = false;
+          resetRuntimeLive(); // 清掉停机后残留的 dBFS / 延迟读数
           updateApp({ io: null, bypassed: false });
           refSourceRef.current = null;
           cliVersionRef.current = null;
@@ -859,6 +861,7 @@ function useAppController() {
   async function start() {
     updateApp({ busy: true, err: null });
     resetRuntimeHealth();
+    resetRuntimeLive();
     lastLogRef.current = ""; // 清掉上次的 stderr,避免旧错误误报
     try {
       const toml = currentToml();
