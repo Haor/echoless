@@ -33,8 +33,12 @@
 plate 四区 overview、tvnoise/字标 crton·crtoff/sysoff、srail 两列、footer SHT+UPTIME、
 逻辑随迁 A2/A4/B8/C1/C3/C5/C4/C6/A6 + B1(min=1040×640)/B3(builder 底色)、
 浏览器预览 shim + `?view=&dev=&os=` 直链、六视图截图对照设计稿核过。
-**剩余**:① OFF→`set_bypass` 前端接线 + srail 文案改直通语义(等 P8-D1 后端合入);
-② 真机(tauri dev / Windows 构建)回归 + i18n 中文排版检查;③ 像素级微调(如有)。
+**剩余**:① ~~OFF→`set_bypass` 前端接线~~ ✅ 已完成(五态 statusKind + AEC BYPASS 文案);
+② 真机(tauri dev / Windows 构建)回归 + i18n 中文排版检查;③ 像素级微调(用户验收反馈已消化多轮:
+噪点 WebGL 化、蓝图图标、量程 −120、全大写注记、afield 视觉同步、vol 收回动画、停机读数清零、
+引擎配置持久化 `echoless.engine.v1`、录制手动停也弹目录);
+④ **设计稿回写**:本轮用户定案的风格修订(全大写注记、ns_level 缩写、48 ↔ 16 间距等)
+尚未同步回 `Design/overview.html`。
 
 原始范围备忘——按 `Design/overview.html`(v17 定稿)重构整个前端:
 
@@ -55,7 +59,7 @@ Triage 表已附在 `docs/audit/UI_ISSUES_VERIFICATION_20260703.md` 末尾。结
 - **后端/产品项 10 条** → 新增 P8。
 - C6 的「0ms 歧义」会随 P4 的 probe 公式改动自然消失,P1 文案按 P4 新语义写。
 
-## P3 — Vendor 重构:aec3 内化改名(Codex)
+## P3 — Vendor 重构:aec3 内化改名(Codex)✅ 已合入 main(2026-07-05)
 
 按 `docs/architecture/AEC3_INTERNALIZATION_PLAN.md` 执行(8 步):
 
@@ -116,10 +120,12 @@ Tauri 2(已在用,启用 `tray-icon` feature):
 3. **D6+D7+D8 localvqe 转 HF 下载 + 数据目录统一**(决策已定 2026-07-03):模型+native runtime
    全走 HuggingFace,删随包资源;目录统一 `%LOCALAPPDATA%\Echoless\` 根。三条一起做,
    实施要点见审计文档 D8 条目。
-4. **D4 Windows 虚拟麦向导闭环**:显式状态机(检测→引导下载→装后未生效提示重启→完成),
-   名字匹配加别名容错。
+4. **D4 Windows 虚拟麦向导闭环 ✅ 已在 ui-refactor(2026-07-05;待 Windows 真机走查)**:
+   后端 needs_reboot 真值化(VB-CABLE 驱动残迹在 + 端点不在 = 装了没重启),向导加显式
+   reboot 态、端点匹配放宽到 CABLE-A/B 等别名、Windows 隐藏死权限节点、dev 模拟可走查。
 5. **D5 LocalVQE stats 接线**(小活):`localvqe.rs::stats()` 返回真实 errors/diverged。
-6. **A1 权限横幅根治**:helper 加轻量 TCC 预检,返回真实 granted/denied/undetermined。
+6. **A1 权限横幅根治 ✅ 已在 ui-refactor(2026-07-05)**:helper `--preflight-permission`
+   走私有 TCCAccessPreflight 无弹窗真查,doctor 不再硬编码 undetermined(本机实测 granted)。
 7. **A5 Process Tap 采样率解锁**:helper 上报实际采样率,Rust 侧 tap 流插重采样器。
 
 ## 建议节拍
