@@ -69,7 +69,9 @@ Triage 表已附在 `docs/audit/UI_ISSUES_VERIFICATION_20260703.md` 末尾。结
 
 ## P4 — AEC3 延迟魔改:惯性 + 负方向搜索(Codex,依赖 P3)✅ 已合入 main(2026-07-05)
 
-> ⚠️ 遗留:>60s 长跑复现**轻度**收敛退化(41.1→38.1dB,ignored 测试,不及 §11.6 的 23→9.6dB),待单独调查。
+> ✅ 遗留已结案(2026-07-05):三窗口实测 41.1→38.3→38.1dB —— 所谓退化是收敛蜜月峰值
+> 后的一次性 ~3dB 回落,25s 后平台平稳(Δ0.26dB);对照 delay_hold=off 同 harness 为
+> 9.6→5.6dB(即 §11.6 的严重退化),P4 是修复而非诱因。断言已改为平台稳定语义。
 
 按 `docs/architecture/AEC3_DELAY_MOD_PLAN.md` 执行:
 
@@ -89,7 +91,7 @@ Tauri 2(已在用,启用 `tray-icon` feature):
 - 前端侧:设置页加「最小化到托盘 / 关闭到托盘」开关(持久化到配置),默认最小化=托盘。
 - 注意:AEC 引擎运行中隐藏窗口时音频链路必须不中断;托盘 tooltip 显示运行状态(RUNNING/STOPPED)。
 
-## P6 — 重写 README
+## P6 — 重写 README ✅ 已完成(2026-07-05)
 
 - 面向用户/测试者重写根 README(现状偏开发笔记):是什么、支持平台(Win10/11 + macOS 14.4+)、
   安装、快速上手(选设备→开 AEC→虚拟麦克风给 Discord/VRChat)、故障排查入口。
@@ -130,7 +132,9 @@ Tauri 2(已在用,启用 `tray-icon` feature):
 5. **D5 LocalVQE stats 接线**(小活):`localvqe.rs::stats()` 返回真实 errors/diverged。
 6. **A1 权限横幅根治 ✅ 已在 ui-refactor(2026-07-05)**:helper `--preflight-permission`
    走私有 TCCAccessPreflight 无弹窗真查,doctor 不再硬编码 undetermined(本机实测 granted)。
-7. **A5 Process Tap 采样率解锁**:helper 上报实际采样率,Rust 侧 tap 流插重采样器。
+7. **A5 Process Tap 采样率解锁 ✅ 已在 ui-refactor(2026-07-05)**:helper 发 ELTP 流头
+   (实际采样率+声道),Rust 读头后按需插共享线性重采样;前后端 48k 硬门槛全部移除,
+   端到端实测(48k tap)通过。
 
 ## 建议节拍
 
