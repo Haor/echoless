@@ -111,6 +111,16 @@ export function Scope({
       const mid = h / 2;
       const maxA = h / 2 - 3;
 
+      // v13:点划中心线(机械制图 centerline;25/75 基准线已删,线条减法)
+      x.setLineDash([9, 4, 2, 4]);
+      x.strokeStyle = "rgba(214,213,205,0.08)";
+      x.lineWidth = 1;
+      x.beginPath();
+      x.moveTo(0, mid);
+      x.lineTo(w, mid);
+      x.stroke();
+      x.setLineDash([]);
+
       const wave = tel[`${traceKey}Wave` as const];
       const e = clamp01((tel[traceKey] + 60) / 60) * (tel.on ? 1 : 0.05);
 

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   buildConfigToml,
@@ -56,7 +57,11 @@ import { VolumeWheel } from "./components/VolumeWheel";
 import { RuntimeDiagnosticsPage } from "./components/RuntimeDiagnosticsPage";
 import { RuntimeFooterBars } from "./components/RuntimeFooterBars";
 import { RuntimeSignalPanel } from "./components/RuntimeSignalPanel";
-import { RuntimeStatusStrip } from "./components/RuntimeStatusStrip";
+import {
+  RuntimeStatusStrip,
+  RuntimeSubline,
+  useRunStatusKind,
+} from "./components/RuntimeStatusStrip";
 import { AdvancedPage } from "./pages/AdvancedPage";
 import { EnginePage } from "./pages/EnginePage";
 import { RtxSetupPage } from "./pages/RtxSetupPage";
@@ -990,9 +995,20 @@ function useAppController() {
   //   system(Process Tap / loopback)、none、output 设备回环、以及承载系统声的虚拟声卡输入
   //   (BlackHole / VB-CABLE)。隐藏物理麦克风等(选它们当参考无意义)。
   const VIRTUAL_REF = /blackhole|vb-?cable|vb-?audio|cable|loopback|stereo\s*mix|soundflower/i;
+  // A2:排除自环 —— Echoless 自己的输出设备(及其同名输入侧,如 BlackHole 的 in 口)
+  // 作参考会把处理后的输出再喂回来,形成回授;从候选里剔掉。
+  const selOutDevName = devices?.outputs.find(
+    (d) => d.stable_id === selOutput,
+  )?.name;
+  const isSelfLoop = (r: (typeof refSources)[number]) =>
+    (r.kind === "output" || r.kind === "input") &&
+    ((r.selector ?? r.id) === selOutput ||
+      r.stable_id === selOutput ||
+      (selOutDevName != null && r.label === selOutDevName));
   const availRefs = refSources.filter(
     (r) =>
       r.available &&
+      !isSelfLoop(r) &&
       (r.kind === "system" ||
         r.kind === "none" ||
         r.kind === "output" ||
@@ -1068,8 +1084,30 @@ function useAppController() {
   // 由 ProcessorChain 内部适配)。不符 → 阻止运行,引导去 Advanced 改采样率。
   const sysRefRateConflict = usingSysRef && pipeline.sample_rate !== 48000;
 
+  // 运行四态(含 A4 防抖):状态盒 / srail 状态字 / zsub 共用同一判定。
+  const statusKind = useRunStatusKind(powerOn, refSel, dev);
+
+  // zmeta 版本号(tauri.conf.json 为源)。
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
+
+  // v14/v17:字标随电源亮灭 —— 熄→亮播 crton(磷光渐暖),亮→熄播 crtoff(衰减)。
+  const [wordAnim, setWordAnim] = useState("");
+  const prevPowerRef = useRef(powerOn);
+  useEffect(() => {
+    if (prevPowerRef.current === powerOn) return;
+    prevPowerRef.current = powerOn;
+    setWordAnim(powerOn ? "igniting" : "dying");
+  }, [powerOn]);
+
   return (
-    <div className={`window ${isMac ? "mac" : "win"}`}>
+    <div
+      className={`window ${isMac ? "mac" : "win"} ${powerOn ? "" : "sysoff"}`}
+    >
       {/* ---- titlebar ---- */}
       <header className="tbar" data-tauri-drag-region>
         <AppIcon />
@@ -1101,39 +1139,60 @@ function useAppController() {
       {/* ---- content ---- */}
       <main className="content">
         {view === "overview" && (
-        <>
-        <div className="kick">
-          <span className="d">
-            <i />
-            <i />
-            <i />
-          </span>{" "}
-          {t("kicker")}
-        </div>
-        <div className="hero">
-          <div className="word">ECHOLESS</div>
+        // v12:铭牌分格 plate —— A 铭牌 / B 电源格 / C 信号链 / D 仪器区
+        <div className="plate">
+        <section className="zone za">
+          <div className="kick">
+            <span className="d">
+              <i />
+              <i />
+              <i />
+            </span>{" "}
+            {t("kicker")}
+          </div>
+          {/* v6.1/v14:半调点阵字标,随电源亮灭 */}
+          <div className="word">
+            <span className={`wtxt ${powerOn ? "lit" : ""} ${wordAnim}`}>
+              ECHOLESS
+            </span>
+          </div>
+          {/* v14:zmeta = 真实运行参数(引擎/管线/采集后端/版本) */}
+          <div className="zmeta">
+            ENGINE{" "}
+            <b>
+              <ScrambleText text={modelName(kind)} />
+            </b>{" "}
+            · {pipeline.sample_rate / 1000} KHZ / {pipeline.frame_ms} MS BLOCK
+            · I/O{" "}
+            <b>
+              <ScrambleText text={isMac ? "COREAUDIO" : "WASAPI"} />
+            </b>
+            {appVersion ? ` · ECHOLESS V${appVersion}` : ""}
+          </div>
+        </section>
+
+        <section className="zone zb">
+          <div className="zhead">Power</div>
           <SlideSwitch on={powerOn} onToggle={togglePower} disabled={busy} />
-        </div>
-        <RuntimeStatusStrip
-          powerOn={powerOn}
-          activeReady={activeReady}
-          refSel={refSel}
-          dev={dev}
-          sysRefRateConflict={sysRefRateConflict}
-          sysAudioDenied={sysAudioDenied}
-          sysAudioUndet={sysAudioUndet}
-          onEngineSetup={() => gotoView("engine")}
-          onAdvanced={() => gotoView("advanced")}
-          onProbeSystemAudio={probeSystemAudio}
-        />
+          <RuntimeStatusStrip statusKind={statusKind} />
+          <RuntimeSubline
+            statusKind={statusKind}
+            activeReady={activeReady}
+            sysRefRateConflict={sysRefRateConflict}
+            sysAudioDenied={sysAudioDenied}
+            sysAudioUndet={sysAudioUndet}
+            onEngineSetup={() => gotoView("engine")}
+            onAdvanced={() => gotoView("advanced")}
+            onProbeSystemAudio={probeSystemAudio}
+            onCheckSetup={() => gotoView("diagnostics")}
+          />
+        </section>
 
-        <hr className="hair" />
-
-        {/* ---- controls ---- */}
-        <div className="rows">
-          <div className="row">
-            <span className="bul">•</span>
-            <span className="k">{t("input")}</span>
+        {/* ---- C 信号链:01-04 站点 ---- */}
+        <section className="zone zc">
+          <div className="station">
+            <span className="stnum">01</span>
+            <span className="stkey">{t("input")}</span>
             <span className="co">:</span>
             <span className="v">
               <Dropdown
@@ -1163,9 +1222,9 @@ function useAppController() {
             </span>
           </div>
 
-          <div className="row">
-            <span className="bul">•</span>
-            <span className="k">{t("model")}</span>
+          <div className="station">
+            <span className="stnum">02</span>
+            <span className="stkey">{t("model")}</span>
             <span className="co">:</span>
             <div className="segg" id="models">
               {MODELS.map((m) => {
@@ -1217,9 +1276,9 @@ function useAppController() {
             </span>
           </div>
 
-          <div className="row">
-            <span className="bul">•</span>
-            <span className="k">{t("output")}</span>
+          <div className="station">
+            <span className="stnum">03</span>
+            <span className="stkey">{t("output")}</span>
             <span className="co">:</span>
             <span className="v">
               <Dropdown
@@ -1251,9 +1310,9 @@ function useAppController() {
             </span>
           </div>
 
-          <div className="row">
-            <span className="bul">•</span>
-            <span className="k">{t("noise")}</span>
+          <div className="station">
+            <span className="stnum">04</span>
+            <span className="stkey">{t("noise")}</span>
             <span className="co">:</span>
             <div className={`segg ${nsSupported ? "" : "dim"}`} id="ns">
               <button
@@ -1279,12 +1338,17 @@ function useAppController() {
               <IcoNoise />
             </span>
           </div>
+        </section>
+
+        {/* ---- D 仪器区 ---- */}
+        <section className="zone zd">
+          <RuntimeSignalPanel
+            telRef={telRef}
+            powerOn={powerOn}
+            statusKind={statusKind}
+          />
+        </section>
         </div>
-
-        <hr className="hair" />
-
-        <RuntimeSignalPanel telRef={telRef} powerOn={powerOn} />
-        </>
         )}
         {view === "engine" && (
           <EnginePage
@@ -1374,7 +1438,6 @@ function useAppController() {
             <button
               type="button"
               className="link"
-              style={linkStyle}
               onClick={() => gotoView("engine")}
             >
               {t("engine")} <span className="mk">&gt;&gt;&gt;</span>
@@ -1382,7 +1445,6 @@ function useAppController() {
             <button
               type="button"
               className="link"
-              style={linkStyle}
               onClick={() => gotoView("advanced")}
             >
               {t("advanced")} <span className="mk">&gt;&gt;&gt;</span>
@@ -1390,7 +1452,6 @@ function useAppController() {
             <button
               type="button"
               className="link"
-              style={linkStyle}
               onClick={() => gotoView("diagnostics")}
             >
               {t("diagnostics")} <span className="mk">&gt;&gt;&gt;</span>
@@ -1400,7 +1461,6 @@ function useAppController() {
           <button
             type="button"
             className="link"
-            style={linkStyle}
             onClick={() =>
               gotoView(
                 view === "rtxsetup"
@@ -1421,15 +1481,20 @@ function useAppController() {
         )}
         <span className="sp" />
         <span className="fright">
+          {/* v11:图签 SHEET 编号随视图翻页 */}
+          <span className="stamp">
+            <ScrambleText text={`SHT ${SHEET_NO[view]}/06`} />
+          </span>
+          <span className="fdot">·</span>
           <VolumeWheel
             volume={pipeline.output_level ?? 50}
             onChange={changeOutVolume}
+            invertWheel={isMac}
           />
           {err ? (
             <button
               type="button"
               className="stamp err plainbtn"
-              style={{ color: "var(--warn)", cursor: "pointer" }}
               title={`${err} · 点击关闭`}
               onClick={() => noteError(null)}
             >
@@ -1440,11 +1505,43 @@ function useAppController() {
             <>
               <span className="fdot">·</span>
               <span className="stamp">{stamp}</span>
+              <span className="fdot">·</span>
+              {/* v3:UPTIME 走表(动效只证明系统活着) */}
+              <UptimeStamp powerOn={powerOn} />
             </>
           )}
         </span>
         <RuntimeFooterBars telRef={telRef} powerOn={powerOn} />
       </footer>
+
+      {/* v10:动态底噪 —— brasshands 原实现(feTurbulence seed 0→100 循环,multiply) */}
+      <div className="tvnoise" aria-hidden="true">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="100%"
+          height="100%"
+          preserveAspectRatio="none"
+        >
+          <filter id="tvnoise-f" x="0%" y="0%" width="100%" height="100%">
+            <feTurbulence
+              type="turbulence"
+              baseFrequency="1.15"
+              numOctaves="1"
+              seed="2"
+              stitchTiles="stitch"
+            >
+              <animate
+                attributeName="seed"
+                from="0"
+                to="100"
+                dur="2.6666666666666665s"
+                repeatCount="indefinite"
+              />
+            </feTurbulence>
+          </filter>
+          <rect width="100%" height="100%" filter="url(#tvnoise-f)" />
+        </svg>
+      </div>
     </div>
   );
 }
@@ -1453,15 +1550,31 @@ export default function App() {
   return useAppController();
 }
 
-const linkStyle: React.CSSProperties = {
-  color: "var(--t-soft)",
-  textDecoration: "none",
-  display: "flex",
-  alignItems: "center",
-  gap: 7,
-  background: "transparent",
-  border: "none",
-  font: "inherit",
-  letterSpacing: "inherit",
-  textTransform: "inherit",
+// footer 图签 SHEET 编号(v11:随视图翻页)。
+const SHEET_NO: Record<View, string> = {
+  overview: "01",
+  engine: "02",
+  advanced: "03",
+  diagnostics: "04",
+  micsetup: "05",
+  rtxsetup: "06",
 };
+
+// UPTIME 走表:开机从零计,关机冻结最后读数(v3 原则 #5)。
+function UptimeStamp({ powerOn }: { powerOn: boolean }) {
+  const [text, setText] = useState("UP 00:00:00");
+  useEffect(() => {
+    if (!powerOn) return; // 冻结显示,保留最后读数
+    const start = performance.now();
+    setText("UP 00:00:00");
+    const iv = window.setInterval(() => {
+      const s = Math.floor((performance.now() - start) / 1000);
+      const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+      const mm = String(Math.floor(s / 60) % 60).padStart(2, "0");
+      const ss = String(s % 60).padStart(2, "0");
+      setText(`UP ${hh}:${mm}:${ss}`);
+    }, 1000);
+    return () => window.clearInterval(iv);
+  }, [powerOn]);
+  return <span className="stamp">{text}</span>;
+}

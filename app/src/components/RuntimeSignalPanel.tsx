@@ -2,15 +2,19 @@ import { memo } from "react";
 import { useI18n } from "../i18n";
 import { useRuntimeLive } from "../runtimeTelemetry";
 import { Scope, type Telemetry } from "./Scope";
+import { ScrambleText } from "./ScrambleText";
+import { RAIL_TEXT, type RunStatusKind } from "./RuntimeStatusStrip";
 
 const dash = (v: number | null, d = 1) => (v === null ? "—" : v.toFixed(d));
 
 export const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
   telRef,
   powerOn,
+  statusKind,
 }: {
   telRef: React.MutableRefObject<Telemetry>;
   powerOn: boolean;
+  statusKind: RunStatusKind;
 }) {
   const live = useRuntimeLive();
   const { t } = useI18n();
@@ -21,6 +25,13 @@ export const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
         <span className="v">{t("sigFlow")}</span>
       </div>
       <div className="scope">
+        {/* v14:srail = 监视状态字 + 量程(v17 两列,状态字随四态 scramble) */}
+        <span className="srail">
+          <span>
+            <ScrambleText text={RAIL_TEXT[statusKind]} />
+          </span>
+          <span>0 / −60 DBFS</span>
+        </span>
         <div className="near">
           <div className="trace">
             <span className="lb">MIC</span>

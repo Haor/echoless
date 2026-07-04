@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { openUrl } from "../api";
 import { useI18n } from "../i18n";
 import { useRuntimeLive } from "../runtimeTelemetry";
@@ -9,97 +9,169 @@ const SYS_AUDIO_PRIVACY_URL =
 
 const dash = (v: number | null, d = 1) => (v === null ? "—" : v.toFixed(d));
 
+// 运行四态(v3 语义):工作中 / 无参考 / 不稳定 / 已停止。
+export type RunStatusKind = "live" | "noref" | "warn" | "stopped";
+
+// srail 监视状态字(v14:随四态 scramble)。
+// TODO(P8-D1):后端 set_bypass 落地后,stopped 语义改直通(AEC BYPASS)。
+export const RAIL_TEXT: Record<RunStatusKind, string> = {
+  live: "MONITOR LIVE",
+  noref: "REF SILENT",
+  warn: "MONITOR LIVE",
+  stopped: "MONITOR HELD",
+};
+
+// 四态判定 + A4 防抖:遥测抖动(healthy/ref 电平翻转)须持续 2.5s 才切换显示,
+// 消除状态盒「抽搐」;电源开/关(stopped↔其余)不防抖,立即反映。
+const STATUS_HOLD_MS = 2500;
+
+export function useRunStatusKind(
+  powerOn: boolean,
+  refSel: string,
+  dev: boolean,
+): RunStatusKind {
+  const live = useRuntimeLive();
+  const hasReference =
+    refSel !== "none" && (dev || !(live.ref !== null && live.ref <= -100));
+  const raw: RunStatusKind = !powerOn
+    ? "stopped"
+    : !live.healthy
+      ? "warn"
+      : !hasReference
+        ? "noref"
+        : "live";
+
+  const [shown, setShown] = useState<RunStatusKind>(raw);
+  const pending = useRef<{ kind: RunStatusKind; timer: number } | null>(null);
+  useEffect(() => {
+    const clearPending = () => {
+      if (pending.current) {
+        clearTimeout(pending.current.timer);
+        pending.current = null;
+      }
+    };
+    if (raw === shown) {
+      clearPending(); // 候选态回归当前显示 → 取消切换
+      return;
+    }
+    if (raw === "stopped" || shown === "stopped") {
+      clearPending();
+      setShown(raw); // 开/关机立即反映
+      return;
+    }
+    if (pending.current?.kind === raw) return; // 已在计时
+    clearPending();
+    const timer = window.setTimeout(() => {
+      pending.current = null;
+      setShown(raw);
+    }, STATUS_HOLD_MS);
+    pending.current = { kind: raw, timer };
+  }, [raw, shown]);
+  useEffect(
+    () => () => {
+      if (pending.current) clearTimeout(pending.current.timer);
+    },
+    [],
+  );
+  return shown;
+}
+
+const BOX_CLASS: Record<RunStatusKind, string> = {
+  live: "box",
+  noref: "box idle",
+  warn: "box warn",
+  stopped: "box stopped",
+};
+
+// 状态盒(zb 电源格内的灯行;v12 起格子即容器,盒子褪框)。
 export const RuntimeStatusStrip = memo(function RuntimeStatusStrip({
-  powerOn,
+  statusKind,
+}: {
+  statusKind: RunStatusKind;
+}) {
+  const { t } = useI18n();
+  const statusText =
+    statusKind === "stopped"
+      ? t("echoStopped")
+      : statusKind === "warn"
+        ? t("unstable")
+        : statusKind === "noref"
+          ? t("noReference")
+          : t("removingEcho");
+  return (
+    <div className="status">
+      <span className={BOX_CLASS[statusKind]}>
+        <span
+          className={`sq ${statusKind === "live" || statusKind === "warn" ? "dot" : ""} ${statusKind === "noref" ? "tri" : ""}`}
+        />{" "}
+        <ScrambleText text={statusText} />
+      </span>
+    </div>
+  );
+});
+
+// 电源格注脚(zsub):PIPELINE 延迟 + 右侧状态字/引导动作(v7 层级调低)。
+export const RuntimeSubline = memo(function RuntimeSubline({
+  statusKind,
   activeReady,
-  refSel,
-  dev,
   sysRefRateConflict,
   sysAudioDenied,
   sysAudioUndet,
   onEngineSetup,
   onAdvanced,
   onProbeSystemAudio,
+  onCheckSetup,
 }: {
-  powerOn: boolean;
+  statusKind: RunStatusKind;
   activeReady: boolean;
-  refSel: string;
-  dev: boolean;
   sysRefRateConflict: boolean;
   sysAudioDenied: boolean;
   sysAudioUndet: boolean;
   onEngineSetup: () => void;
   onAdvanced: () => void;
   onProbeSystemAudio: () => void;
+  onCheckSetup: () => void;
 }) {
   const live = useRuntimeLive();
   const { t } = useI18n();
-  const stopped = !powerOn;
-  const unstable = powerOn && !live.healthy;
-  const hasReference =
-    refSel !== "none" && (dev || !(live.ref !== null && live.ref <= -100));
-  const noRef = powerOn && !unstable && !hasReference;
-  const statusText = stopped
-    ? t("echoStopped")
-    : unstable
-      ? t("unstable")
-      : noRef
-        ? t("noReference")
-        : t("removingEcho");
-  const boxClass = stopped
-    ? "box stopped"
-    : unstable
-      ? "box warn"
-      : noRef
-        ? "box idle"
-        : "box";
-
   return (
-    <div className="status">
-      <span className={boxClass}>
-        <span className={`sq ${powerOn ? "dot" : ""} ${noRef ? "tri" : ""}`} />{" "}
-        <ScrambleText text={statusText} />
-      </span>
+    <div className="zsub">
       <span className="m">
-        {t("latency")} <b>{dash(live.lat, 0)}</b> {t("ms")}
+        PIPELINE <b>{dash(live.lat, 0)}</b> {t("ms")}
       </span>
+      <span className="fdot">·</span>
       {!activeReady ? (
-        <button
-          type="button"
-          className="m setup plainbtn"
-          onClick={onEngineSetup}
-          style={{ color: "var(--warn)", cursor: "default" }}
-        >
+        <button type="button" className="m act plainbtn" onClick={onEngineSetup}>
           {t("engSetupHint")} <span className="mk">&raquo;</span>
         </button>
       ) : sysRefRateConflict ? (
-        <button
-          type="button"
-          className="m setup plainbtn"
-          onClick={onAdvanced}
-          style={{ color: "var(--warn)" }}
-        >
+        <button type="button" className="m act plainbtn" onClick={onAdvanced}>
           {t("sysRefRate")} <span className="mk">&raquo;</span>
         </button>
       ) : sysAudioDenied ? (
         <button
           type="button"
-          className="m setup plainbtn"
+          className="m act plainbtn"
           onClick={() => openUrl(SYS_AUDIO_PRIVACY_URL)}
-          style={{ color: "var(--warn)" }}
         >
           {t("sysAudioGrant")} <span className="mk">&raquo;</span>
         </button>
       ) : sysAudioUndet ? (
         <button
           type="button"
-          className="m setup plainbtn"
+          className="m act plainbtn"
           onClick={onProbeSystemAudio}
         >
           {t("sysAudioRequest")} <span className="mk">&raquo;</span>
         </button>
+      ) : statusKind === "warn" ? (
+        <button type="button" className="m act plainbtn" onClick={onCheckSetup}>
+          <ScrambleText text={t("checkSetup")} />
+        </button>
       ) : (
-        <span className="m">{unstable ? t("checkSetup") : t("stable")}</span>
+        <span className="m">
+          <ScrambleText text={t("stable")} />
+        </span>
       )}
     </div>
   );

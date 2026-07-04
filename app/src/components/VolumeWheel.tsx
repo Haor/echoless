@@ -20,9 +20,13 @@ function dbLabel(volume: number): string {
 export function VolumeWheel({
   volume,
   onChange,
+  invertWheel = false,
 }: {
   volume: number;
   onChange: (v: number) => void;
+  // C1:macOS 自然滚动下 deltaY 符号与传统滚轮相反 —— 由平台侧传入反转,
+  // 统一成「手势向上 = 音量增大」。
+  invertWheel?: boolean;
 }) {
   const vRef = useRef(volume);
   vRef.current = volume;
@@ -78,9 +82,9 @@ export function VolumeWheel({
       }}
       onWheel={(e) => {
         e.preventDefault();
-        acc.current += e.deltaY;
+        acc.current += invertWheel ? -e.deltaY : e.deltaY;
         if (Math.abs(acc.current) < SCROLL_THRESHOLD) return;
-        const dir = acc.current < 0 ? 1 : -1; // 向上滚 = 增大
+        const dir = acc.current < 0 ? 1 : -1; // 手势向上 = 增大
         acc.current = 0; // 每格只走 1,封顶速度
         const next = Math.max(VOL_MIN, Math.min(VOL_MAX, vRef.current + dir));
         if (next !== vRef.current) onChange(next);
