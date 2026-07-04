@@ -2156,6 +2156,7 @@ hr.hair {
   color: var(--t-faint);
   white-space: nowrap;
   user-select: none;
+  cursor: pointer; /* D2:点按 = 静音/恢复 */
 }
 .fbar .vol:hover {
   color: var(--t-soft);

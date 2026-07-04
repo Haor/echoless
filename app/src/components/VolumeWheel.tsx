@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { animate, scrambleText, utils } from "animejs";
 import { outputLevelToGain } from "../api";
+import { useI18n } from "../i18n";
 
 // 输出音量(最终送给虚拟麦克风的人声)。刻度 0-100:0=静音 / 50=原声(0dB) / 100=3x(+9.542dB)。
 // 鼠标悬停 + 滚轮调节。暂为前端 UI,后端对输出样本乘 output_gain 后即生效。
@@ -8,6 +9,8 @@ const VOL_MIN = 0;
 const VOL_MAX = 100;
 // 滚动放慢:累积 deltaY 到阈值才走 1 格(触控板连发也不会飞)。
 const SCROLL_THRESHOLD = 120;
+// D2 一键 mute:点按 toggle 0↔静音前音量(跨重启记忆)。
+const MUTE_MEM_KEY = "echoless.premuteVol.v1";
 
 // 悬停时旁边浮现的当前 dB(字符动画),随音量实时变。
 function dbLabel(volume: number): string {
@@ -77,9 +80,33 @@ export function VolumeWheel({
     if (hoverRef.current) showDb(false);
   }, [volume, showDb]);
 
+  const { t } = useI18n();
+
+  // D2:点按静音/恢复。静音前音量记进 localStorage,重启后仍可一键恢复。
+  const toggleMute = useCallback(() => {
+    if (vRef.current > 0) {
+      try {
+        localStorage.setItem(MUTE_MEM_KEY, String(vRef.current));
+      } catch {
+        /* 记忆失败不阻塞静音 */
+      }
+      onChange(0);
+    } else {
+      let mem = 50;
+      try {
+        mem = Number(localStorage.getItem(MUTE_MEM_KEY)) || 50;
+      } catch {
+        /* 读取失败回落原声 */
+      }
+      onChange(Math.max(1, Math.min(VOL_MAX, Math.round(mem))));
+    }
+  }, [onChange]);
+
   return (
     <span
       className="vol"
+      title={t("volMuteHint")}
+      onClick={toggleMute}
       onMouseEnter={() => {
         hoverRef.current = true;
         showDb(true);
