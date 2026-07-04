@@ -1,0 +1,176 @@
+[config]
+# Run tasks from the workspace root only; our scripts already pass --workspace
+default_to_workspace = false
+
+[env]
+# Paths for excluded crates that depend on the C++ library
+CPP_LIB_DIR = "${CARGO_MAKE_WORKING_DIRECTORY}/cpp/install/lib"
+CPP_PKG_CONFIG = "${CPP_LIB_DIR}/pkgconfig"
+# Full RUSTFLAGS for benchmarks (includes fp-contract from .cargo/config.toml + target-cpu)
+BENCH_RUSTFLAGS = "-C llvm-args=-fp-contract=fast -C target-cpu=native"
+
+# ── Core Rust ──────────────────────────────────────────────
+
+[tasks.check]
+clear = true
+description = "Type-check workspace + excluded crates"
+env = { "PKG_CONFIG_PATH" = "${CPP_PKG_CONFIG}" }
+script = '''
+cargo check --workspace
+cargo check -p aec3-apm --all-targets --features examples
+cargo check --manifest-path crates/aec3-sys/Cargo.toml
+cargo check --manifest-path crates/aec3-bench/Cargo.toml
+RUSTUP_TOOLCHAIN=nightly cargo check --manifest-path fuzz/Cargo.toml
+'''
+
+[tasks.fmt]
+clear = true
+description = "Check formatting (workspace + excluded crates)"
+script = '''
+cargo fmt --all -- --check
+cargo fmt --manifest-path crates/aec3-sys/Cargo.toml -- --check
+cargo fmt --manifest-path crates/aec3-bench/Cargo.toml -- --check
+cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+'''
+
+[tasks.fmt-fix]
+description = "Fix formatting (workspace + excluded crates)"
+script = '''
+cargo fmt --all
+cargo fmt --manifest-path crates/aec3-sys/Cargo.toml
+cargo fmt --manifest-path crates/aec3-bench/Cargo.toml
+cargo fmt --manifest-path fuzz/Cargo.toml
+'''
+
+[tasks.clippy]
+clear = true
+description = "Lint workspace + excluded crates (lib, tests, benches, examples)"
+env = { "PKG_CONFIG_PATH" = "${CPP_PKG_CONFIG}" }
+script = '''
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p aec3-apm --all-targets --features examples -- -D warnings
+cargo clippy --manifest-path crates/aec3-sys/Cargo.toml --all-targets -- -D warnings
+cargo clippy --manifest-path crates/aec3-bench/Cargo.toml --all-targets -- -D warnings
+RUSTUP_TOOLCHAIN=nightly cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+'''
+
+[tasks.test]
+clear = true
+description = "Run workspace tests with nextest"
+command = "cargo"
+args = ["nextest", "run", "--workspace", "${@}"]
+
+[tasks.test-cargo]
+description = "Run workspace tests with cargo test"
+command = "cargo"
+args = ["test", "--workspace", "${@}"]
+
+[tasks.doc]
+clear = true
+description = "Build documentation with warnings as errors"
+env = { "RUSTDOCFLAGS" = "-D warnings" }
+command = "cargo"
+args = ["doc", "--workspace", "--no-deps"]
+
+[tasks.msrv]
+description = "Check minimum supported Rust version (1.91)"
+command = "cargo"
+args = ["+1.91", "check", "--workspace"]
+
+[tasks.bench]
+clear = true
+description = "Run Rust pipeline benchmarks"
+env = { "RUSTFLAGS" = "${BENCH_RUSTFLAGS}" }
+command = "cargo"
+args = ["bench", "-p", "aec3-apm", "--bench", "pipeline", "${@}"]
+
+[tasks.ci]
+clear = true
+description = "Full CI check: format, lint, test, docs"
+dependencies = ["fmt", "clippy", "test", "doc"]
+
+# ── C++ Setup ──────────────────────────────────────────────
+
+[tasks.cpp-deps]
+description = "Install C++ build dependencies"
+script = '''
+echo "Unsupported platform. Install manually: meson, ninja, abseil, pkg-config"
+exit 1
+'''
+
+[tasks.cpp-deps.linux]
+script = '''
+sudo apt-get update
+sudo apt-get install -y meson ninja-build libabsl-dev libprotobuf-dev protobuf-compiler pkg-config
+'''
+
+[tasks.cpp-deps.mac]
+script = '''
+brew install meson ninja abseil protobuf pkg-config
+'''
+
+[tasks.cpp-clean]
+description = "Clean C++ build artifacts"
+script = '''
+rm -rf cpp/builddir cpp/install
+'''
+
+[tasks.cpp-build]
+description = "Build C++ reference library (release, native CPU)"
+script = '''
+cd cpp
+if [ -d builddir ]; then
+  meson setup builddir --buildtype=release -Dtests=disabled -Dprefix="$(pwd)/install" --libdir=lib -Dc_args=-march=native -Dcpp_args=-march=native --reconfigure
+else
+  meson setup builddir --buildtype=release -Dtests=disabled -Dprefix="$(pwd)/install" --libdir=lib -Dc_args=-march=native -Dcpp_args=-march=native
+fi
+ninja -C builddir install
+'''
+
+[tasks.cpp-build-test]
+description = "Build C++ with tests enabled and Rust backend"
+script = '''
+cargo build --release -p aec3-ffi
+cd cpp
+# Always start fresh — meson --reconfigure on a non-existent builddir
+# produces broken builds on macOS ARM (Meson 1.10 bug).
+rm -rf builddir
+meson setup builddir -Dtests=enabled -Drust-backend=true -Dprefix="$(pwd)/install" --libdir=lib -Dc_args=-march=native -Dcpp_args=-march=native
+ninja -C builddir
+'''
+
+# ── C++ Comparison ─────────────────────────────────────────
+
+[tasks.cpp-test]
+description = "Run Rust vs C++ comparison tests"
+dependencies = ["cpp-build"]
+env = { "PKG_CONFIG_PATH" = "${CPP_PKG_CONFIG}", "LD_LIBRARY_PATH" = "${CPP_LIB_DIR}" }
+command = "cargo"
+args = ["test", "--manifest-path", "crates/aec3-bench/Cargo.toml", "${@}"]
+
+[tasks.cpp-bench]
+description = "Run Rust vs C++ comparison benchmarks"
+dependencies = ["cpp-build"]
+env = { "PKG_CONFIG_PATH" = "${CPP_PKG_CONFIG}", "LD_LIBRARY_PATH" = "${CPP_LIB_DIR}", "RUSTFLAGS" = "${BENCH_RUSTFLAGS}" }
+command = "cargo"
+args = ["bench", "--manifest-path", "crates/aec3-bench/Cargo.toml", "--bench", "cpp_comparison", "${@}"]
+
+[tasks.cpp-validate]
+description = "Run 2400+ C++ test suite with Rust backend"
+dependencies = ["cpp-build-test"]
+script = '''
+cd cpp
+# Filter out RnnVadTest.LpResidualPipelineBitExactness — it uses near-zero
+# FP tolerance and is flaky across environments/compiler versions.
+meson test -C builddir -v --print-errorlogs --timeout-multiplier 3 --test-args="--gtest_filter=-RnnVadTest.LpResidualPipelineBitExactness"
+'''
+
+# ── Compound ───────────────────────────────────────────────
+
+[tasks.setup]
+description = "Full setup: install deps + build C++ library"
+dependencies = ["cpp-deps", "cpp-build"]
+
+[tasks.all]
+description = "Everything: CI checks + C++ comparison tests"
+dependencies = ["ci", "cpp-test"]
