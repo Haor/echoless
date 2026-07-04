@@ -1646,7 +1646,12 @@ float tb(vec2 p, float s) {
 }
 void main() {
   vec2 p = gl_FragCoord.xy * px;
-  gl_FragColor = vec4(tb(p, t), tb(p, t + 17.0), tb(p, t + 41.0), tb(p, t + 89.0));
+  vec3 rgb = vec3(tb(p, t), tb(p, t + 17.0), tb(p, t + 41.0));
+  float a = tb(p, t + 89.0);
+  // alpha 恒等折叠:multiply 下 (rgb, a) 与 (mix(1,rgb,a), 1) 逐像素等价。
+  // 输出全不透明,绕开 WKWebView 对 premultipliedAlpha:false 画布的
+  // unpremultiply 溢出(a→0 像素爆成高饱和彩点 = 椒盐,用户三轮反馈根源)。
+  gl_FragColor = vec4(mix(vec3(1.0), rgb, a), 1.0);
 }`;
 const NOISE_VS = `attribute vec2 a;
 void main() { gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -1660,8 +1665,7 @@ function TvNoise({ active }: { active: boolean }) {
     const canvas = ref.current;
     if (!canvas) return;
     const gl = canvas.getContext("webgl", {
-      alpha: true,
-      premultipliedAlpha: false, // RGBA 独立随机,预乘会导致色彩失真
+      alpha: false, // 输出全不透明(alpha 已折进颜色),跨引擎合成零歧义
       antialias: false,
       depth: false,
       stencil: false,
