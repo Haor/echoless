@@ -96,12 +96,12 @@ Tauri 2(已在用,启用 `tray-icon` feature):
 
 后端/产品向,与 UI 换皮正交。按价值排序:
 
-1. **D1 OFF = passthrough 穿透模式(高优先)**:现状 OFF 停掉整个 sidecar,虚拟麦无声,
-   对方以为麦坏了。目标:OFF 时保持 run、处理链热切 passthrough(近端直通虚拟麦);
-   「完全停机」降为次级操作(长按/菜单)。passthrough 处理器已存在(仅 probe 在用)。
-   ⚠️ **与 P1 有产品交叉**:v17 设计稿电源语义 = 整机停转(sysoff 调暗 + MONITOR HELD);
-   改三态(ON=AEC / OFF=穿透 / 全停)需重定开关交互与状态字 → **实现前需用户拍板**。
-   后端部分(热切 processor 或 passthrough 快速重启)可写成 Codex 任务规格。
+1. **D1 OFF = passthrough 穿透模式(高优先)— 决策已定(2026-07-04 用户拍板)**:
+   **不搞三态,OFF 即穿透**——关了用户麦克风必须还能用,「完全停机」不作为用户级操作(退出应用=停机)。
+   后端规格已写:`docs/codex-tasks/TASK_P8_OFF_PASSTHROUGH.md`(chain 级 bypass 热命令 + keep-warm
+   保收敛 + crossfade,不换处理器;等 P3 合入后开工)。
+   **P1 联动**:电源 OFF 的 UI 语义从「整机停转」改为「AEC 旁路」——sysoff 调暗保留,
+   srail 停机文案 MONITOR HELD → 直通语义(如 AEC BYPASS),前端 OFF 不再调 stop_run 而是 set_bypass。
 2. **D2 一键 mute**:记忆音量 toggle 0↔恢复,复用 `set_output_level` 实时通道,小活;
    UI 挂点等 P1 footer 定稿。
 3. **D6+D7+D8 localvqe 转 HF 下载 + 数据目录统一**(决策已定 2026-07-03):模型+native runtime
