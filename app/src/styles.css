@@ -150,20 +150,32 @@ body {
   animation-delay: 0s;
 }
 .tvnoise i:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: 0.075s;
 }
 .tvnoise i:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: 0.15s;
 }
 .tvnoise i:nth-child(4) {
+  animation-delay: 0.225s;
+}
+.tvnoise i:nth-child(5) {
+  animation-delay: 0.3s;
+}
+.tvnoise i:nth-child(6) {
+  animation-delay: 0.375s;
+}
+.tvnoise i:nth-child(7) {
   animation-delay: 0.45s;
+}
+.tvnoise i:nth-child(8) {
+  animation-delay: 0.525s;
 }
 @keyframes tvframe {
   0%,
-  24.99% {
+  12.49% {
     opacity: 1;
   }
-  25%,
+  12.5%,
   100% {
     opacity: 0;
   }

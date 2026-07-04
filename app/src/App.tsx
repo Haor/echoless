@@ -1618,29 +1618,33 @@ function useAppController() {
   );
 }
 
-// 动态底噪:一次性预渲染 4 帧噪声位图,CSS steps 轮播(合成器 opacity 切换)。
+// 动态底噪:一次性预渲染 8 帧噪声位图,CSS steps 轮播(合成器 opacity 切换)。
 // 替代设计稿的 feTurbulence + SMIL seed 动画 —— 那是整窗每帧 CPU 重算滤镜,
 // 实测把 WebKit GPU 进程推到 320% CPU(用户报告 2026-07-05)。
-// 位图取半分辨率平铺(噪点 ~2px,multiply α.5 下与滤镜版无感差异)。
+// 保真要点(第一版失真教训):
+//   · RGBA 四通道全随机 —— turbulence 的 alpha 也是噪声(平均半透明),
+//     全不透明灰度图会让 multiply 把整窗压成灰黑;
+//   · 1px 颗粒:512×512 原尺寸平铺,不缩放;
+//   · 8 帧 × 75ms ≈ 13fps,电视雪花的自然闪烁频率,不显卡顿。
 function TvNoise() {
   const [frames, setFrames] = useState<string[]>([]);
   useEffect(() => {
-    const w = 260;
-    const h = 160;
+    const w = 512;
+    const h = 512;
     const cv = document.createElement("canvas");
     cv.width = w;
     cv.height = h;
     const ctx = cv.getContext("2d");
     if (!ctx) return;
     const out: string[] = [];
-    for (let f = 0; f < 4; f++) {
+    for (let f = 0; f < 8; f++) {
       const img = ctx.createImageData(w, h);
-      for (let i = 0; i < img.data.length; i += 4) {
-        const v = (Math.random() * 256) | 0;
-        img.data[i] = v;
-        img.data[i + 1] = v;
-        img.data[i + 2] = v;
-        img.data[i + 3] = 255;
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        d[i] = (Math.random() * 256) | 0;
+        d[i + 1] = (Math.random() * 256) | 0;
+        d[i + 2] = (Math.random() * 256) | 0;
+        d[i + 3] = (Math.random() * 256) | 0;
       }
       ctx.putImageData(img, 0, 0);
       out.push(cv.toDataURL());
