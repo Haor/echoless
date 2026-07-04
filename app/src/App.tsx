@@ -1618,44 +1618,118 @@ function useAppController() {
   );
 }
 
-// 动态底噪:一次性预渲染 8 帧噪声位图,CSS steps 轮播(合成器 opacity 切换)。
-// 替代设计稿的 feTurbulence + SMIL seed 动画 —— 那是整窗每帧 CPU 重算滤镜,
-// 实测把 WebKit GPU 进程推到 320% CPU(用户报告 2026-07-05)。
-// 保真要点(第一版失真教训):
-//   · RGBA 四通道全随机 —— turbulence 的 alpha 也是噪声(平均半透明),
-//     全不透明灰度图会让 multiply 把整窗压成灰黑;
-//   · 1px 颗粒:512×512 原尺寸平铺,不缩放;
-//   · 8 帧 × 75ms ≈ 13fps,电视雪花的自然闪烁频率,不显卡顿。
+// 动态底噪 v3:WebGL fragment shader 白噪。
+// 演化史:feTurbulence + SMIL(设计稿原版)= WebKit 单线程 CPU 滤镜逐帧全窗重算,
+// 320% CPU;预渲染帧轮播 = 层切换边界亮度脉动(闪屏)+ 颗粒/暗度失真,废弃。
+// 「每像素独立随机」本就是 GPU fragment shader 的原生形态:每帧一次 draw call,
+// 视觉与 turbulence 白噪一致(1px 颗粒、RGBA 全随机 → multiply 不压暗),
+// 且是真 60fps 连续雪花,CPU 占用可忽略。
+const NOISE_FS = `precision highp float;
+uniform float t;
+float h(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+void main() {
+  vec2 p = gl_FragCoord.xy;
+  gl_FragColor = vec4(h(p + t), h(p + t + 17.0), h(p + t + 41.0), h(p + t + 89.0));
+}`;
+const NOISE_VS = `attribute vec2 a;
+void main() { gl_Position = vec4(a, 0.0, 1.0); }`;
+
 function TvNoise() {
-  const [frames, setFrames] = useState<string[]>([]);
+  const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    const w = 512;
-    const h = 512;
-    const cv = document.createElement("canvas");
-    cv.width = w;
-    cv.height = h;
-    const ctx = cv.getContext("2d");
-    if (!ctx) return;
-    const out: string[] = [];
-    for (let f = 0; f < 8; f++) {
-      const img = ctx.createImageData(w, h);
-      const d = img.data;
-      for (let i = 0; i < d.length; i += 4) {
-        d[i] = (Math.random() * 256) | 0;
-        d[i + 1] = (Math.random() * 256) | 0;
-        d[i + 2] = (Math.random() * 256) | 0;
-        d[i + 3] = (Math.random() * 256) | 0;
+    const canvas = ref.current;
+    if (!canvas) return;
+    const gl = canvas.getContext("webgl", {
+      alpha: true,
+      premultipliedAlpha: false, // RGBA 独立随机,预乘会导致色彩失真
+      antialias: false,
+      depth: false,
+      stencil: false,
+      powerPreference: "low-power",
+      preserveDrawingBuffer: true, // 截图/快照可读回;全屏重画场景无性能代价
+    });
+    if (!gl) return; // 无 WebGL:静默无噪点(氛围件,不值得再养 fallback)
+
+    const compile = (type: number, src: string) => {
+      const s = gl.createShader(type)!;
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      return s;
+    };
+    const prog = gl.createProgram()!;
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, NOISE_VS));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, NOISE_FS));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return;
+    gl.useProgram(prog);
+    // 全屏三角形
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 3, -1, -1, 3]),
+      gl.STATIC_DRAW,
+    );
+    const loc = gl.getAttribLocation(prog, "a");
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const tLoc = gl.getUniformLocation(prog, "t");
+
+    // 噪点按 CSS 像素网格(dpr=1),与 feTurbulence 的用户空间网格一致。
+    const fit = () => {
+      const w = Math.max(1, canvas.clientWidth | 0);
+      const h = Math.max(1, canvas.clientHeight | 0);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
       }
-      ctx.putImageData(img, 0, 0);
-      out.push(cv.toDataURL());
-    }
-    setFrames(out);
+    };
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0;
+    let seed = 2;
+    const draw = () => {
+      fit();
+      gl.uniform1f(tLoc, seed);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    };
+    const frame = () => {
+      raf = 0;
+      // t 保持小数值域(hash 的 sin 精度),循环推进
+      seed = (seed + 0.618) % 61.0;
+      draw();
+      if (!reduce && !document.hidden) raf = requestAnimationFrame(frame);
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(frame);
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (raf) cancelAnimationFrame(raf);
+        raf = 0;
+      } else schedule();
+    };
+    const ro = new ResizeObserver(() => {
+      draw(); // resize 立即补一帧,避免拉伸残影
+    });
+    ro.observe(canvas);
+    document.addEventListener("visibilitychange", onVisibility);
+    if (reduce) draw();
+    else schedule();
+    return () => {
+      // 不 loseContext:StrictMode 双挂载下同一 canvas 的 context 丢失后
+      // 无法复活(getContext 返回同一个已死实例),会让噪声永久空白。
+      // 组件与 App 同生命周期,context 随窗口销毁即可。
+      if (raf) cancelAnimationFrame(raf);
+      ro.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
   return (
     <div className="tvnoise" aria-hidden="true">
-      {frames.map((f, i) => (
-        <i key={i} style={{ backgroundImage: `url(${f})` }} />
-      ))}
+      <canvas ref={ref} />
     </div>
   );
 }
