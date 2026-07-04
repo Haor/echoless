@@ -9,8 +9,9 @@ permissions:
   contents: read
 
 env:
-  LOCALVQE_REF: de56a174d9662b65f404ec65ae8e4bc9712db0da
-  LOCALVQE_MODEL_REVISION: 5760d09ce556750f76c1251c024e4a8c37231591
+  # 35b116d:v1.4-AEC 支持(旧 runtime 载 v1.4 返回 null);ggml 静态链入,dylib 自包含
+  LOCALVQE_REF: 35b116d5eb059d552fa46fac3ce2963ed13ce153
+  LOCALVQE_MODEL_REVISION: 29ca38495cba9d6393a92a4dd890f28dd81f758d
 
 jobs:
   build:
