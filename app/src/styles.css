@@ -490,6 +490,7 @@ body {
 }
 .afield::placeholder {
   color: var(--t-faint);
+  text-transform: uppercase;
 }
 .afield.wide {
   width: 340px;
@@ -531,6 +532,7 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-transform: uppercase; /* 用户反馈:小写提示不符合全大写主题 */
 }
 /* 12 点进度:蜂鸣一声亮一个  ⚠ 问题 B7:与按钮/读数左缘对齐待调 */
 .pdots {
@@ -1005,6 +1007,7 @@ button.ecard:disabled {
   display: flex;
   gap: 8px;
   align-items: center;
+  text-transform: uppercase;
 }
 .espec .sep {
   color: var(--t-faint);
@@ -1041,6 +1044,7 @@ button.ecard:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  text-transform: uppercase;
 }
 .epair .mk {
   color: var(--t-faint);
@@ -1112,6 +1116,7 @@ button.ecard:disabled {
 }
 .cdetail.na {
   color: var(--t-faint);
+  text-transform: uppercase;
 }
 .cdetail.warn {
   color: var(--warn);
@@ -1938,6 +1943,7 @@ hr.hair {
   letter-spacing: 1.5px;
   background: transparent;
   font-family: var(--mono);
+  text-transform: uppercase;
 }
 .segg .b + .b {
   border-left: none;
