@@ -2,6 +2,9 @@
 //!
 //! 当前可用:`processors` / `devices` / `doctor audio` / `offline` / `run` / `nvafx doctor/install/download-install`。
 //! 实时主路径走 cpal;主线走经典 AEC3(aec3)保真,LocalVQE 作为独立可选处理器。
+// status JSON 的 `json!` 字段数(P4 aec3_delay_blocks + P8 bypassed 叠加)超过
+// serde_json 宏默认递归深度,提高上限。
+#![recursion_limit = "256"]
 
 mod audio_commands;
 mod cli;
