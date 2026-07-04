@@ -62,6 +62,9 @@ use echoless_core::{
 };
 use echoless_processors::{chain_from_nodes, ProcessorChain};
 
+const BYPASS_KEEP_WARM: bool = true;
+const BYPASS_CROSSFADE_MS: u32 = 15;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputChannelMode {
     MonoDownmix,
@@ -127,6 +130,58 @@ struct ProcessRuntime {
     diagnostics_status: Option<DiagnosticsStatusHandle>,
     diagnostic: Option<DiagnosticRecorder>,
     control: Option<Receiver<RuntimeControlEvent>>,
+}
+
+#[derive(Debug)]
+struct BypassCrossfade {
+    total_samples: usize,
+    position: usize,
+    from_bypassed: bool,
+    to_bypassed: bool,
+}
+
+impl BypassCrossfade {
+    fn new(total_samples: usize) -> Self {
+        Self {
+            total_samples,
+            position: total_samples,
+            from_bypassed: false,
+            to_bypassed: false,
+        }
+    }
+
+    fn start(&mut self, from_bypassed: bool, to_bypassed: bool) {
+        if from_bypassed == to_bypassed || self.total_samples == 0 {
+            self.position = self.total_samples;
+            self.from_bypassed = to_bypassed;
+            self.to_bypassed = to_bypassed;
+            return;
+        }
+        self.position = 0;
+        self.from_bypassed = from_bypassed;
+        self.to_bypassed = to_bypassed;
+    }
+
+    fn is_active(&self) -> bool {
+        self.position < self.total_samples
+    }
+
+    fn target_bypassed(&self) -> Option<bool> {
+        self.is_active().then_some(self.to_bypassed)
+    }
+
+    fn next_sample(&mut self) -> Option<(bool, bool, f32)> {
+        if !self.is_active() {
+            return None;
+        }
+        self.position += 1;
+        let alpha = (self.position as f32 / self.total_samples as f32).min(1.0);
+        let sample = (self.from_bypassed, self.to_bypassed, alpha);
+        if self.position >= self.total_samples {
+            self.position = self.total_samples;
+        }
+        Some(sample)
+    }
 }
 
 pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result<()> {
@@ -456,8 +511,11 @@ fn process_loop<M, R, O>(
     let mut mic_frame = vec![0.0f32; frame_size];
     let mut near = vec![0.0f32; frame_size];
     let mut far = vec![0.0f32; far_samples_per_frame];
+    let mut processed = vec![0.0f32; frame_size];
     let mut out = vec![0.0f32; frame_size];
     let mut near_delay = VecDeque::from(vec![0.0f32; runtime.near_delay_samples]);
+    let mut output_bypassed = runtime.bypassed;
+    let mut bypass_crossfade = BypassCrossfade::new(bypass_crossfade_samples(runtime.sample_rate));
     let mut stats = runtime.stats_interval.map(|interval| {
         RealtimeStats::new(RealtimeStatsConfig {
             interval,
@@ -494,6 +552,13 @@ fn process_loop<M, R, O>(
                 status_json: runtime.status_json,
             },
         );
+        let current_bypass_target = bypass_crossfade
+            .target_bypassed()
+            .unwrap_or(output_bypassed);
+        if runtime.bypassed != current_bypass_target {
+            bypass_crossfade.start(current_bypass_target, runtime.bypassed);
+            output_bypassed = runtime.bypassed;
+        }
 
         if mic_cons.occupied_len() < frame_size {
             thread::sleep(Duration::from_millis(1));
@@ -522,7 +587,23 @@ fn process_loop<M, R, O>(
             far.fill(0.0);
         }
 
-        chain.process(&near, &far, &mut out, frame_size as u32);
+        process_bypass_frame(
+            &mut chain,
+            BypassFrameInputs {
+                near: &near,
+                far: &far,
+                raw_near: &mic_frame,
+            },
+            BypassFrameOutputs {
+                processed: &mut processed,
+                out: &mut out,
+            },
+            BypassFrameConfig {
+                bypassed: runtime.bypassed,
+                keep_warm: BYPASS_KEEP_WARM,
+            },
+            &mut bypass_crossfade,
+        );
         apply_output_level(&mut out, runtime.output_level);
         let node_stats = chain.stats();
         let pushed = out_prod.push_slice(&out);
@@ -563,6 +644,81 @@ fn process_loop<M, R, O>(
         if let Some(stats) = stats.as_mut() {
             stats.observe(&sample);
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BypassFrameConfig {
+    bypassed: bool,
+    keep_warm: bool,
+}
+
+struct BypassFrameInputs<'a> {
+    near: &'a [f32],
+    far: &'a [f32],
+    raw_near: &'a [f32],
+}
+
+struct BypassFrameOutputs<'a> {
+    processed: &'a mut [f32],
+    out: &'a mut [f32],
+}
+
+fn bypass_crossfade_samples(sample_rate: u32) -> usize {
+    ((u64::from(sample_rate) * u64::from(BYPASS_CROSSFADE_MS) + 500) / 1000).max(1) as usize
+}
+
+fn process_bypass_frame(
+    chain: &mut ProcessorChain,
+    inputs: BypassFrameInputs<'_>,
+    outputs: BypassFrameOutputs<'_>,
+    config: BypassFrameConfig,
+    crossfade: &mut BypassCrossfade,
+) {
+    if should_process_for_bypass(config.bypassed, config.keep_warm, crossfade.is_active()) {
+        chain.process(
+            inputs.near,
+            inputs.far,
+            outputs.processed,
+            outputs.out.len() as u32,
+        );
+    }
+    write_bypass_output(
+        outputs.processed,
+        inputs.raw_near,
+        outputs.out,
+        config.bypassed,
+        crossfade,
+    );
+}
+
+fn should_process_for_bypass(bypassed: bool, keep_warm: bool, crossfade_active: bool) -> bool {
+    !bypassed || keep_warm || crossfade_active
+}
+
+fn write_bypass_output(
+    processed: &[f32],
+    raw_near: &[f32],
+    out: &mut [f32],
+    bypassed: bool,
+    crossfade: &mut BypassCrossfade,
+) {
+    for (index, sample) in out.iter_mut().enumerate() {
+        if let Some((from_bypassed, to_bypassed, alpha)) = crossfade.next_sample() {
+            let from = bypass_source_sample(processed, raw_near, index, from_bypassed);
+            let to = bypass_source_sample(processed, raw_near, index, to_bypassed);
+            *sample = from + (to - from) * alpha;
+        } else {
+            *sample = bypass_source_sample(processed, raw_near, index, bypassed);
+        }
+    }
+}
+
+fn bypass_source_sample(processed: &[f32], raw_near: &[f32], index: usize, bypassed: bool) -> f32 {
+    if bypassed {
+        raw_near.get(index).copied().unwrap_or(0.0)
+    } else {
+        processed.get(index).copied().unwrap_or(0.0)
     }
 }
 
@@ -912,7 +1068,405 @@ fn interpolated_sample(samples: &[f32], position: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+    use std::sync::atomic::AtomicUsize;
+
     use cpal::{DeviceDescriptionBuilder, DeviceType, InterfaceType};
+    use echoless_processors::{EchoProcessor, IoSpec, ProcessorStats};
+
+    struct CountingAllocator;
+
+    static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    thread_local! {
+        static COUNT_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+    }
+
+    #[global_allocator]
+    static GLOBAL: CountingAllocator = CountingAllocator;
+
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            count_allocation();
+            System.alloc(layout)
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            count_allocation();
+            System.alloc_zeroed(layout)
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            count_allocation();
+            System.realloc(ptr, layout, new_size)
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            System.dealloc(ptr, layout)
+        }
+    }
+
+    fn count_allocation() {
+        COUNT_ALLOCATIONS.with(|enabled| {
+            if enabled.get() {
+                ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+    }
+
+    fn allocation_count_during(f: impl FnOnce()) -> usize {
+        ALLOCATIONS.store(0, Ordering::SeqCst);
+        COUNT_ALLOCATIONS.with(|enabled| enabled.set(true));
+        f();
+        COUNT_ALLOCATIONS.with(|enabled| enabled.set(false));
+        ALLOCATIONS.load(Ordering::SeqCst)
+    }
+
+    struct InvertingProcessor;
+
+    impl EchoProcessor for InvertingProcessor {
+        fn name(&self) -> &'static str {
+            "invert"
+        }
+
+        fn io_spec(&self) -> IoSpec {
+            IoSpec {
+                sample_rate: 48_000,
+                near_channels: 1,
+                far_channels: 1,
+                algorithmic_latency_ms: 0.0,
+            }
+        }
+
+        fn configure(&mut self, _params: &toml::Table) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn process(&mut self, near: &[f32], _far: &[f32], out: &mut [f32], _frames: u32) {
+            for (input, output) in near.iter().copied().zip(out.iter_mut()) {
+                *output = -input;
+            }
+        }
+
+        fn stats(&self) -> ProcessorStats {
+            ProcessorStats::empty("invert")
+        }
+
+        fn reset(&mut self) {}
+    }
+
+    struct AdaptiveEchoSuppressor {
+        estimate: f32,
+        adaptation_rate: f32,
+    }
+
+    impl EchoProcessor for AdaptiveEchoSuppressor {
+        fn name(&self) -> &'static str {
+            "adaptive_echo_suppressor"
+        }
+
+        fn io_spec(&self) -> IoSpec {
+            IoSpec {
+                sample_rate: 48_000,
+                near_channels: 1,
+                far_channels: 1,
+                algorithmic_latency_ms: 0.0,
+            }
+        }
+
+        fn configure(&mut self, _params: &toml::Table) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn process(&mut self, near: &[f32], far: &[f32], out: &mut [f32], _frames: u32) {
+            let mut far_sq = 0.0f32;
+            let mut near_far = 0.0f32;
+            for (near_sample, far_sample) in near.iter().copied().zip(far.iter().copied()) {
+                far_sq += far_sample * far_sample;
+                near_far += near_sample * far_sample;
+            }
+            if far_sq > 1.0e-9 {
+                let observed_gain = near_far / far_sq;
+                self.estimate += self.adaptation_rate * (observed_gain - self.estimate);
+            }
+            for ((near_sample, far_sample), output) in near
+                .iter()
+                .copied()
+                .zip(far.iter().copied())
+                .zip(out.iter_mut())
+            {
+                *output = near_sample - self.estimate * far_sample;
+            }
+        }
+
+        fn stats(&self) -> ProcessorStats {
+            ProcessorStats::empty("adaptive_echo_suppressor")
+        }
+
+        fn reset(&mut self) {}
+    }
+
+    #[test]
+    fn bypass_outputs_raw_near_without_near_delay_and_keeps_output_level() {
+        let mut chain = ProcessorChain::new(48_000, 1);
+        chain.push(Box::new(InvertingProcessor));
+        let near_after_delay = [0.9, -0.9, 0.5, -0.5];
+        let raw_near = [0.1, -0.2, 0.25, -0.25];
+        let far = [0.0; 4];
+        let mut processed = [0.0; 4];
+        let mut out = [0.0; 4];
+        let mut crossfade = BypassCrossfade::new(4);
+
+        process_bypass_frame(
+            &mut chain,
+            BypassFrameInputs {
+                near: &near_after_delay,
+                far: &far,
+                raw_near: &raw_near,
+            },
+            BypassFrameOutputs {
+                processed: &mut processed,
+                out: &mut out,
+            },
+            BypassFrameConfig {
+                bypassed: true,
+                keep_warm: true,
+            },
+            &mut crossfade,
+        );
+        apply_output_level(&mut out, MAX_OUTPUT_LEVEL);
+
+        assert_eq!(processed, [-0.9, 0.9, -0.5, 0.5]);
+        approx_slice(&out, &[0.3, -0.6, 0.75, -0.75], 0.001);
+    }
+
+    #[test]
+    fn keep_warm_adapts_processor_during_bypass_before_restore() {
+        let warm = restore_rms_after_bypass(true);
+        let cold = restore_rms_after_bypass(false);
+
+        assert!(
+            warm < 0.03,
+            "keep-warm restore residual too high: {warm:.4}"
+        );
+        assert!(
+            cold > warm * 5.0,
+            "non-warm path should show a clear reconvergence gap: warm={warm:.4} cold={cold:.4}"
+        );
+    }
+
+    #[test]
+    fn bypass_crossfade_is_linear_across_adjacent_buffers() {
+        let processed = [0.0f32; 8];
+        let raw = [1.0f32; 8];
+        let mut out_a = [0.0f32; 4];
+        let mut out_b = [0.0f32; 4];
+        let mut crossfade = BypassCrossfade::new(8);
+        crossfade.start(false, true);
+
+        write_bypass_output(&processed, &raw, &mut out_a, true, &mut crossfade);
+        write_bypass_output(&processed, &raw, &mut out_b, true, &mut crossfade);
+
+        approx_eq(out_a[0], 0.125, 0.001);
+        approx_eq(out_a[3], 0.5, 0.001);
+        approx_eq(out_b[3], 1.0, 0.001);
+        let mut previous = 0.0;
+        for sample in out_a.into_iter().chain(out_b) {
+            assert!(
+                (sample - previous).abs() <= 0.126,
+                "crossfade adjacent step too large: previous={previous} sample={sample}"
+            );
+            previous = sample;
+        }
+    }
+
+    #[test]
+    fn bypass_selection_and_crossfade_allocate_no_heap() {
+        let near = [0.1f32; 16];
+        let far = [0.0f32; 16];
+        let raw = [0.2f32; 16];
+        let mut processed = [0.0f32; 16];
+        let mut out = [0.0f32; 16];
+        let mut chain = ProcessorChain::new(48_000, 1);
+        let mut inactive_crossfade = BypassCrossfade::new(16);
+        let mut active_crossfade = BypassCrossfade::new(16);
+        active_crossfade.start(false, true);
+
+        let allocations = allocation_count_during(|| {
+            process_bypass_frame(
+                &mut chain,
+                BypassFrameInputs {
+                    near: &near,
+                    far: &far,
+                    raw_near: &raw,
+                },
+                BypassFrameOutputs {
+                    processed: &mut processed,
+                    out: &mut out,
+                },
+                BypassFrameConfig {
+                    bypassed: true,
+                    keep_warm: false,
+                },
+                &mut inactive_crossfade,
+            );
+            process_bypass_frame(
+                &mut chain,
+                BypassFrameInputs {
+                    near: &near,
+                    far: &far,
+                    raw_near: &raw,
+                },
+                BypassFrameOutputs {
+                    processed: &mut processed,
+                    out: &mut out,
+                },
+                BypassFrameConfig {
+                    bypassed: true,
+                    keep_warm: false,
+                },
+                &mut active_crossfade,
+            );
+            apply_output_level(&mut out, MAX_OUTPUT_LEVEL);
+        });
+
+        assert_eq!(allocations, 0);
+    }
+
+    fn restore_rms_after_bypass(keep_warm: bool) -> f32 {
+        const FRAME: usize = 480;
+        let mut chain = ProcessorChain::new(48_000, 1);
+        chain.push(Box::new(AdaptiveEchoSuppressor {
+            estimate: 0.0,
+            adaptation_rate: 0.25,
+        }));
+        let mut near = [0.0f32; FRAME];
+        let mut far = [0.0f32; FRAME];
+        let mut processed = [0.0f32; FRAME];
+        let mut out = [0.0f32; FRAME];
+        let mut crossfade = BypassCrossfade::new(FRAME);
+        let mut frame_index = 0;
+
+        for _ in 0..80 {
+            fill_echo_frame(frame_index, 0.3, &mut far, &mut near);
+            process_bypass_frame(
+                &mut chain,
+                BypassFrameInputs {
+                    near: &near,
+                    far: &far,
+                    raw_near: &near,
+                },
+                BypassFrameOutputs {
+                    processed: &mut processed,
+                    out: &mut out,
+                },
+                BypassFrameConfig {
+                    bypassed: false,
+                    keep_warm,
+                },
+                &mut crossfade,
+            );
+            frame_index += 1;
+        }
+
+        crossfade.start(false, true);
+        for _ in 0..300 {
+            fill_echo_frame(frame_index, 0.8, &mut far, &mut near);
+            process_bypass_frame(
+                &mut chain,
+                BypassFrameInputs {
+                    near: &near,
+                    far: &far,
+                    raw_near: &near,
+                },
+                BypassFrameOutputs {
+                    processed: &mut processed,
+                    out: &mut out,
+                },
+                BypassFrameConfig {
+                    bypassed: true,
+                    keep_warm,
+                },
+                &mut crossfade,
+            );
+            frame_index += 1;
+        }
+
+        crossfade.start(true, false);
+        fill_echo_frame(frame_index, 0.8, &mut far, &mut near);
+        process_bypass_frame(
+            &mut chain,
+            BypassFrameInputs {
+                near: &near,
+                far: &far,
+                raw_near: &near,
+            },
+            BypassFrameOutputs {
+                processed: &mut processed,
+                out: &mut out,
+            },
+            BypassFrameConfig {
+                bypassed: false,
+                keep_warm,
+            },
+            &mut crossfade,
+        );
+        frame_index += 1;
+
+        fill_echo_frame(frame_index, 0.8, &mut far, &mut near);
+        process_bypass_frame(
+            &mut chain,
+            BypassFrameInputs {
+                near: &near,
+                far: &far,
+                raw_near: &near,
+            },
+            BypassFrameOutputs {
+                processed: &mut processed,
+                out: &mut out,
+            },
+            BypassFrameConfig {
+                bypassed: false,
+                keep_warm,
+            },
+            &mut crossfade,
+        );
+
+        rms(&out)
+    }
+
+    fn fill_echo_frame(frame_index: usize, gain: f32, far: &mut [f32], near: &mut [f32]) {
+        let start = frame_index * far.len();
+        for (index, (far_sample, near_sample)) in far.iter_mut().zip(near.iter_mut()).enumerate() {
+            let n = start + index;
+            let phase = n as f32 * 440.0 * std::f32::consts::TAU / 48_000.0;
+            *far_sample = 0.5 * phase.sin();
+            *near_sample = gain * *far_sample;
+        }
+    }
+
+    fn rms(samples: &[f32]) -> f32 {
+        let sum = samples.iter().map(|sample| sample * sample).sum::<f32>();
+        (sum / samples.len().max(1) as f32).sqrt()
+    }
+
+    fn approx_slice(actual: &[f32], expected: &[f32], epsilon: f32) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (actual - expected).abs() <= epsilon,
+                "sample {index}: actual={actual} expected={expected}"
+            );
+        }
+    }
+
+    fn approx_eq(actual: f32, expected: f32, epsilon: f32) {
+        assert!(
+            (actual - expected).abs() <= epsilon,
+            "actual={actual} expected={expected}"
+        );
+    }
 
     #[test]
     fn device_description_label_prefers_driver_detail() {
