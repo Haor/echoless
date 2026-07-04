@@ -134,7 +134,7 @@ body {
   pointer-events: none;
   z-index: 4;
   mix-blend-mode: multiply;
-  opacity: 0.5;
+  opacity: 0.4; /* 2026-07-05 用户定档:整体强度较设计稿 0.5 再收一档 */
   transition: opacity 0.6s ease; /* 与 sysoff 调光/crtoff 同速 */
 }
 .tvnoise canvas {

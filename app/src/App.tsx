@@ -1711,7 +1711,8 @@ function TvNoise({ active }: { active: boolean }) {
         canvas.height = h;
         gl.viewport(0, 0, w, h);
       }
-      gl.uniform1f(pxLoc, 1.15 / dpr);
+      // 1.35:较设计稿 baseFrequency 1.15 晶格更密 → 颗粒更细(用户定档)
+      gl.uniform1f(pxLoc, 1.35 / dpr);
     };
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     let raf = 0;
