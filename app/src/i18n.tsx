@@ -193,6 +193,10 @@ const D: Record<string, { en: string; zh: string }> = {
   micCopy: { en: "copy", zh: "复制" },
   micCopied: { en: "copied", zh: "已复制" },
   micReboot: { en: "Reboot to finish the virtual audio install.", zh: "重启以完成虚拟声卡安装。" },
+  micRebootTitle: {
+    en: "Driver installed · devices not active yet",
+    zh: "驱动已安装 · 设备尚未生效",
+  },
   micPermDenied: { en: "Microphone permission denied", zh: "麦克风权限被拒绝" },
   micPermHint: {
     en: "Echoless needs microphone access to capture your voice.",

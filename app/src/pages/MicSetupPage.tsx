@@ -28,15 +28,18 @@ interface Props {
   onRecheck: () => void;
 }
 
+// 别名容错(D4):候选已由后端按厂牌关键词过滤(vb-audio/cable/blackhole…),
+// 这里只负责分端 —— CABLE-A/B、Hi-Fi Cable 等变体都带 Input/Output 字样,
+// 不再认死「CABLE Input」全名。
 function pickOutput(d: DoctorAudio): DoctorCandidate | null {
   if (d.recommended_output) return d.recommended_output;
   const outs = d.candidate_outputs ?? [];
-  return outs.find((o) => /cable input/i.test(o.name)) ?? outs[0] ?? null;
+  return outs.find((o) => /input/i.test(o.name)) ?? outs[0] ?? null;
 }
 function pickAppMic(d: DoctorAudio): DoctorCandidate | null {
   if (d.recommended_app_mic) return d.recommended_app_mic;
   const ins = d.candidate_inputs ?? [];
-  return ins.find((i) => /cable output|blackhole/i.test(i.name)) ?? ins[0] ?? null;
+  return ins.find((i) => /output|blackhole/i.test(i.name)) ?? ins[0] ?? null;
 }
 
 export function MicSetupPage({
@@ -76,22 +79,31 @@ export function MicSetupPage({
   const permDenied = isMac && doctor?.permission_state === "denied";
   const permUndet = isMac && doctor?.permission_state === "undetermined";
 
+  // 显式状态机(D4):检测 → 引导下载(missing)→ 装后未生效提示重启(reboot)
+  // → 路由不完整(incomplete)→ 权限(mac)→ 完成。
   const state: MicState = !doctor
     ? "unknown"
-    : !installed
-      ? "missing"
-      : !routeReady
-        ? "incomplete"
-        : permDenied
-          ? "permission"
-          : "ready";
+    : routeReady
+      ? permDenied
+        ? "permission"
+        : "ready"
+      : doctor.needs_reboot
+        ? "reboot"
+        : !installed
+          ? "missing"
+          : "incomplete";
 
   // 阶梯节点状态
   const node = (key: "driver" | "route" | "perm" | "ready"): string => {
     const order = ["driver", "route", "perm", "ready"];
-    const idx = { missing: 0, incomplete: 1, permission: 2, ready: 3, unknown: 0 }[
-      state
-    ];
+    const idx = {
+      missing: 0,
+      reboot: 1,
+      incomplete: 1,
+      permission: 2,
+      ready: 3,
+      unknown: 0,
+    }[state];
     const i = order.indexOf(key);
     if (state === "ready") return "ok";
     if (i < idx) return "ok";
@@ -125,6 +137,20 @@ export function MicSetupPage({
             >
               {t("micOpenPrivacy")} <span className="mk">↗</span>
             </button>
+            <button type="button" className="dopen" onClick={onRecheck}>
+              {t("recheck")} <span className="mk">↻</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (state === "reboot") {
+      // Windows:驱动已落盘、端点还没出现 —— 只差重启,不再引导去下载页。
+      return (
+        <div className="wzcard">
+          <div className="wzh warn">{t("micRebootTitle")}</div>
+          <div className="wznote">{t("micReboot")}</div>
+          <div className="wzgo">
             <button type="button" className="dopen" onClick={onRecheck}>
               {t("recheck")} <span className="mk">↻</span>
             </button>
@@ -246,10 +272,13 @@ export function MicSetupPage({
           <i className="d" />
           {t("micNodeRoute")}
         </span>
-        <span className={`wznode ${node("perm")}`}>
-          <i className="d" />
-          {t("micNodePerm")}
-        </span>
+        {/* 权限节点仅 mac 有意义;Windows 后端权限态恒 unknown,不渲染死步骤 */}
+        {isMac && (
+          <span className={`wznode ${node("perm")}`}>
+            <i className="d" />
+            {t("micNodePerm")}
+          </span>
+        )}
         <span className={`wznode ${node("ready")}`}>
           <i className="d" />
           ready
