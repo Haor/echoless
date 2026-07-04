@@ -1618,26 +1618,35 @@ function useAppController() {
   );
 }
 
-// 动态底噪 v3:WebGL fragment shader 白噪。
-// 演化史:feTurbulence + SMIL(设计稿原版)= WebKit 单线程 CPU 滤镜逐帧全窗重算,
-// 320% CPU;预渲染帧轮播 = 层切换边界亮度脉动(闪屏)+ 颗粒/暗度失真,废弃。
-// 「每像素独立随机」本就是 GPU fragment shader 的原生形态:每帧一次 draw call,
-// 视觉与 turbulence 白噪一致(1px 颗粒、RGBA 全随机 → multiply 不压暗),
-// 且是真 60fps 连续雪花,CPU 占用可忽略。
+// 动态底噪 v4:WebGL 逐项复刻 feTurbulence(type=turbulence, baseFrequency=1.15,
+// numOctaves=1),每帧一次 draw call,CPU 归零(原版 SMIL 滤镜 = 320% CPU)。
+// 复刻要点(三轮反馈的最终结论):
+//   · value noise(晶格 + smoothstep 插值)= 平滑连续场 —— 质感的关键;
+//     逐像素独立 hash 是椒盐白噪,又硬又脏;
+//   · |2n-1| 折叠 = turbulence 的 |noise|,分布偏 0,白底上大多近乎透明;
+//   · px uniform = baseFrequency/dpr,晶格按 CSS 像素网格(与 SVG 滤镜一致)。
 const NOISE_FS = `precision highp float;
 uniform float t;
+uniform float px;
 float h(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
-// pow 偏斜:分布偏向 0(均值 ≈0.37),对齐 feTurbulence turbulence 模式的
-// |noise| 统计 —— 大部分像素近乎透明,白底上噪点稀疏不干扰阅读,暗底细质感
-// 保留;uniform 随机(均值 0.5)在亮块上会重成砂纸(用户反馈 2026-07-05)。
-float n(vec2 p, float s) {
-  return pow(h(p + s), 1.7);
+float vn(vec2 p, float s) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(h(i + s), h(i + s + vec2(1.0, 0.0)), u.x),
+    mix(h(i + s + vec2(0.0, 1.0)), h(i + s + vec2(1.0, 1.0)), u.x),
+    u.y
+  );
+}
+float tb(vec2 p, float s) {
+  return abs(vn(p, s) * 2.0 - 1.0);
 }
 void main() {
-  vec2 p = gl_FragCoord.xy;
-  gl_FragColor = vec4(n(p, t), n(p, t + 17.0), n(p, t + 41.0), n(p, t + 89.0));
+  vec2 p = gl_FragCoord.xy * px;
+  gl_FragColor = vec4(tb(p, t), tb(p, t + 17.0), tb(p, t + 41.0), tb(p, t + 89.0));
 }`;
 const NOISE_VS = `attribute vec2 a;
 void main() { gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -1685,9 +1694,10 @@ function TvNoise({ active }: { active: boolean }) {
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     const tLoc = gl.getUniformLocation(prog, "t");
+    const pxLoc = gl.getUniformLocation(prog, "px");
 
-    // 噪点按设备物理像素(feTurbulence 栅格化同此):retina 上必须乘 dpr,
-    // 否则颗粒被拉成 2×2,粗大显脏(用户对比图 2026-07-05)。
+    // 画布按设备物理像素渲染(retina 不糊),噪声晶格按 CSS 像素网格
+    // (px = baseFrequency / dpr)—— 两者同 feTurbulence 的栅格化行为。
     const fit = () => {
       const dpr = window.devicePixelRatio || 1;
       const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
@@ -1697,6 +1707,7 @@ function TvNoise({ active }: { active: boolean }) {
         canvas.height = h;
         gl.viewport(0, 0, w, h);
       }
+      gl.uniform1f(pxLoc, 1.15 / dpr);
     };
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     let raf = 0;

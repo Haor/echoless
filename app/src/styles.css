@@ -2318,9 +2318,16 @@ hr.hair {
   color: var(--t-soft);
 }
 .station .ico svg { width: 22px; height: 18px; }
-/* v17:OFF 时功能区可点击件降亮度,ON 渐变回正常(sysoff 类由 setState 驱动) */
-.zc .dd, .zc .segg { transition: opacity 0.6s ease; }
-.sysoff .zc .dd, .sysoff .zc .segg { opacity: 0.4; }
+/* v17:OFF 时功能区可点击件降亮度,ON 渐变回正常(sysoff 类由 setState 驱动)。
+   只调触发器,不调 .dd 容器 —— 否则打开的 dd-panel 一起半透明(用户截图 2026-07-05) */
+.zc .dd .dd-trigger,
+.zc .segg {
+  transition: opacity 0.6s ease;
+}
+.sysoff .zc .dd .dd-trigger,
+.sysoff .zc .segg {
+  opacity: 0.4;
+}
 /* D 仪器区 */
 .zd {
   grid-area: 3 / 1 / 4 / 3;
