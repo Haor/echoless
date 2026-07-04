@@ -23,6 +23,7 @@ pub(super) enum RuntimeControlCommand {
     },
     StopDiagnostics,
     SetOutputLevel(u32),
+    SetBypass(bool),
     SetNearDelayMs(u32),
     SetInitialDelayMs(i32),
     SetAec3Ns {
@@ -40,6 +41,7 @@ pub(super) const SUPPORTED_RUNTIME_CONTROLS: &[&str] = &[
     "start_diagnostics",
     "stop_diagnostics",
     "set_output_level",
+    "set_bypass",
     "set_near_delay_ms",
     "set_initial_delay_ms",
     "set_aec3_ns",
@@ -124,6 +126,13 @@ fn parse_runtime_control_command(line: &str) -> Result<RuntimeControlCommand> {
             }
             Ok(RuntimeControlCommand::SetOutputLevel(level as u32))
         }
+        "set_bypass" => {
+            let enabled = value
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .context("set_bypass requires boolean field `enabled`")?;
+            Ok(RuntimeControlCommand::SetBypass(enabled))
+        }
         "set_near_delay_ms" => {
             let delay_ms = value
                 .get("near_delay_ms")
@@ -202,6 +211,7 @@ pub(super) struct RuntimeControlContext<'a> {
     pub(super) near_delay_samples: &'a mut usize,
     pub(super) near_delay_buffer: &'a mut VecDeque<f32>,
     pub(super) output_level: &'a mut u32,
+    pub(super) bypassed: &'a mut bool,
     pub(super) status_json: bool,
 }
 
@@ -228,6 +238,7 @@ pub(super) fn handle_runtime_controls(
                         near_delay_samples: ctx.near_delay_samples,
                         near_delay_buffer: ctx.near_delay_buffer,
                         output_level: ctx.output_level,
+                        bypassed: ctx.bypassed,
                         status_json: ctx.status_json,
                     },
                 );
@@ -255,6 +266,7 @@ struct RuntimeControlCommandContext<'a> {
     near_delay_samples: &'a mut usize,
     near_delay_buffer: &'a mut VecDeque<f32>,
     output_level: &'a mut u32,
+    bypassed: &'a mut bool,
     status_json: bool,
 }
 
@@ -379,6 +391,19 @@ fn handle_runtime_control_command(
                     "type": "output_level_changed",
                     "output_level": level,
                     "output_gain_db": output_level_gain_db(level),
+                }),
+            );
+        }
+        RuntimeControlCommand::SetBypass(enabled) => {
+            *ctx.bypassed = enabled;
+            if let Some(stats) = ctx.stats {
+                stats.set_bypassed(enabled);
+            }
+            emit_runtime_json(
+                ctx.status_json,
+                json!({
+                    "type": "bypass_changed",
+                    "bypassed": enabled,
                 }),
             );
         }
@@ -587,6 +612,21 @@ mod tests {
             parse_runtime_control_command(r#"{"cmd":"set_output_level","level":101}"#).unwrap_err();
         assert!(err.to_string().contains("<= 100"));
 
+        let set_bypass =
+            parse_runtime_control_command(r#"{"cmd":"set_bypass","enabled":true}"#).unwrap();
+        assert!(matches!(set_bypass, RuntimeControlCommand::SetBypass(true)));
+
+        let clear_bypass =
+            parse_runtime_control_command(r#"{"cmd":"set_bypass","enabled":false}"#).unwrap();
+        assert!(matches!(
+            clear_bypass,
+            RuntimeControlCommand::SetBypass(false)
+        ));
+
+        let err =
+            parse_runtime_control_command(r#"{"cmd":"set_bypass","enabled":"yes"}"#).unwrap_err();
+        assert!(err.to_string().contains("boolean field `enabled`"));
+
         let set_delay =
             parse_runtime_control_command(r#"{"cmd":"set_near_delay_ms","near_delay_ms":25}"#)
                 .unwrap();
@@ -660,6 +700,7 @@ mod tests {
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"start_diagnostics"));
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"stop_diagnostics"));
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_output_level"));
+        assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_bypass"));
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_near_delay_ms"));
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_initial_delay_ms"));
         assert!(SUPPORTED_RUNTIME_CONTROLS.contains(&"set_aec3_ns"));

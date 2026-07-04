@@ -41,6 +41,7 @@ pub(crate) fn cmd_offline(a: OfflineArgs) -> Result<()> {
         reference_channels: ReferenceChannels::Mono,
         near_delay_ms: 0,
         output_level,
+        bypass: false,
         diagnostics: DiagnosticsConfig::default(),
         chain,
     };

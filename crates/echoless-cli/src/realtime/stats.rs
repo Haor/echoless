@@ -153,6 +153,7 @@ pub(super) struct RealtimeStats {
     near_delay_ms: u32,
     output_level: u32,
     output_gain_db: Option<f32>,
+    bypassed: bool,
     near_delay_buffered_samples: usize,
     algorithmic_latency_ms: f32,
     status_json: bool,
@@ -190,6 +191,7 @@ pub(super) struct RealtimeStatsConfig {
     pub(super) frame_ms: u32,
     pub(super) near_delay_ms: u32,
     pub(super) output_level: u32,
+    pub(super) bypassed: bool,
     pub(super) backend: String,
     pub(super) algorithmic_latency_ms: f32,
     pub(super) status_json: bool,
@@ -210,6 +212,7 @@ impl RealtimeStats {
             near_delay_ms: config.near_delay_ms,
             output_level: config.output_level,
             output_gain_db: output_level_gain_db(config.output_level),
+            bypassed: config.bypassed,
             near_delay_buffered_samples: 0,
             algorithmic_latency_ms: config.algorithmic_latency_ms,
             status_json: config.status_json,
@@ -254,6 +257,10 @@ impl RealtimeStats {
     pub(super) fn set_output_level(&mut self, output_level: u32) {
         self.output_level = output_level;
         self.output_gain_db = output_level_gain_db(output_level);
+    }
+
+    pub(super) fn set_bypassed(&mut self, bypassed: bool) {
+        self.bypassed = bypassed;
     }
 
     pub(super) fn set_near_delay_ms(&mut self, near_delay_ms: u32) {
@@ -397,6 +404,7 @@ impl RealtimeStats {
             "near_delay_buffered_samples": self.near_delay_buffered_samples,
             "output_level": self.output_level,
             "output_gain_db": self.output_gain_db,
+            "bypassed": self.bypassed,
             "mic_dbfs": rms_dbfs(self.near_sq, self.near_samples),
             "ref_dbfs": rms_dbfs(self.far_sq, self.far_samples),
             "out_dbfs": rms_dbfs(self.out_sq, self.out_samples),
@@ -467,6 +475,7 @@ mod tests {
             frame_ms: 10,
             near_delay_ms: 25,
             output_level: 75,
+            bypassed: true,
             backend: "localvqe".into(),
             algorithmic_latency_ms: 16.0,
             status_json: true,
@@ -494,6 +503,7 @@ mod tests {
         assert_eq!(value["near_delay_ms"], 25);
         assert_eq!(value["output_level"], 75);
         assert_eq!(value["output_gain_db"], output_level_gain_db(75).unwrap());
+        assert_eq!(value["bypassed"], true);
         assert_eq!(value["input_queue_latency_ms"], 10.0);
         assert_eq!(value["output_queue_latency_ms"], 50.0);
         assert_eq!(value["estimated_user_latency_ms"], 106.0);
@@ -523,5 +533,9 @@ mod tests {
         stats.set_near_delay_ms(40);
         let value = stats.status_value(stats.started + Duration::from_secs(3));
         assert_eq!(value["near_delay_ms"], 40);
+
+        stats.set_bypassed(false);
+        let value = stats.status_value(stats.started + Duration::from_secs(4));
+        assert_eq!(value["bypassed"], false);
     }
 }

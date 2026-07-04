@@ -176,6 +176,14 @@ fn validate_config_shape(value: &toml::Value) -> Vec<ConfigValidationError> {
             )),
         }
     }
+    if let Some(value) = table.get("bypass") {
+        if value.as_bool().is_none() {
+            errors.push(ConfigValidationError::new(
+                "bypass",
+                "bypass must be a boolean",
+            ));
+        }
+    }
     if let Some(value) = table.get("reference_channels") {
         match value.as_str() {
             Some(value) if matches!(value.to_ascii_lowercase().as_str(), "mono" | "stereo") => {}
@@ -674,7 +682,7 @@ fn toml_number_as_f64(value: &toml::Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use echoless_core::{default_near_delay_ms, default_output_level};
+    use echoless_core::{default_bypass, default_near_delay_ms, default_output_level};
 
     #[test]
     fn config_validation_accepts_default_aec3_baseline() {
@@ -709,6 +717,19 @@ mod tests {
         assert_eq!(cfg.output, "default");
         assert_eq!(cfg.near_delay_ms, default_near_delay_ms());
         assert_eq!(cfg.output_level, default_output_level());
+        assert_eq!(cfg.bypass, default_bypass());
+    }
+
+    #[test]
+    fn config_deserialization_accepts_initial_bypass() {
+        let cfg: PipelineConfig = toml::from_str(
+            r#"
+            bypass = true
+            "#,
+        )
+        .unwrap();
+
+        assert!(cfg.bypass);
     }
 
     #[test]
@@ -718,6 +739,7 @@ mod tests {
             mic = 1
             near_delay_ms = "bad"
             output_level = "loud"
+            bypass = "yes"
             reference_channels = "surround"
             diagnostics = "bad"
             chain = [{}]
@@ -734,6 +756,7 @@ mod tests {
         assert!(paths.contains(&"mic"));
         assert!(paths.contains(&"near_delay_ms"));
         assert!(paths.contains(&"output_level"));
+        assert!(paths.contains(&"bypass"));
         assert!(paths.contains(&"reference_channels"));
         assert!(paths.contains(&"diagnostics"));
         assert!(paths.contains(&"chain[0].kind"));

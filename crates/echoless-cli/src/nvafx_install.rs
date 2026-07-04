@@ -245,6 +245,7 @@ fn cmd_nvafx_offline(a: NvafxOfflineArgs) -> Result<()> {
         reference_channels: ReferenceChannels::Mono,
         near_delay_ms: 0,
         output_level: default_output_level(),
+        bypass: false,
         diagnostics: DiagnosticsConfig::default(),
         chain: vec![NodeConfig {
             kind: "nvidia_afx_aec".into(),

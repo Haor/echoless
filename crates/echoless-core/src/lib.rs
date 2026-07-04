@@ -53,6 +53,9 @@ fn default_output() -> String {
 pub fn default_output_level() -> u32 {
     DEFAULT_OUTPUT_LEVEL
 }
+pub fn default_bypass() -> bool {
+    false
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -112,6 +115,9 @@ pub struct PipelineConfig {
     /// Final output level after all processors. 0=mute, 50=unity, 100=3x gain.
     #[serde(default = "default_output_level")]
     pub output_level: u32,
+    /// Start realtime run in mic passthrough mode; processors may stay warm in realtime.
+    #[serde(default = "default_bypass")]
+    pub bypass: bool,
     /// Optional realtime diagnostic recordings.
     #[serde(default)]
     pub diagnostics: DiagnosticsConfig,
@@ -131,6 +137,7 @@ impl Default for PipelineConfig {
             reference_channels: default_reference_channels(),
             near_delay_ms: default_near_delay_ms(),
             output_level: default_output_level(),
+            bypass: default_bypass(),
             diagnostics: DiagnosticsConfig::default(),
             chain: Vec::new(),
         }
