@@ -630,13 +630,19 @@ function useAppController() {
             );
             return;
           }
-          // 诊断录制收尾:writer 已 finalize 文件。仅「录满 max_seconds」时
-          // 自动关开关 + 打开会话目录;stopped / run_exit / error 不弹目录。
+          // 诊断录制收尾:writer 已 finalize 文件。「录满 max_seconds」和
+          // 「手动关录制 stopped」都打开会话目录(录完 = 想看文件);
+          // run_exit / error 不弹(停机/出错时弹窗打扰)。
           if (ev.type === "diagnostics_done") {
             if (ev.reason === "max_seconds") {
               recRef.current = false;
               updateApp({ rec: false });
-              if (ev.session_dir) openPath(ev.session_dir).catch(() => {});
+            }
+            if (
+              (ev.reason === "max_seconds" || ev.reason === "stopped") &&
+              ev.session_dir
+            ) {
+              openPath(ev.session_dir).catch(() => {});
             }
             return;
           }
