@@ -42,7 +42,7 @@ interface Profile {
 }
 const PROFILES: Profile[] = [
   {
-    kind: "sonora_aec3",
+    kind: "aec3",
     name: "AEC3",
     tier: { en: "DEFAULT", zh: "默认" },
     echo: 9,
