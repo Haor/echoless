@@ -737,7 +737,7 @@ body {
   cursor: default;
 }
 .lvbox {
-  width: 42px;
+  width: 36px; /* v18:42→36,给 DEFAULT 行同时放下参数量腾预算 */
   flex: none;
   text-align: center;
   padding: 1px 0;
@@ -772,10 +772,10 @@ body {
   font-family: var(--mono);
   font-weight: 400;
   font-size: 7px;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px; /* v18:1→0.5,同上腾预算 */
   color: var(--ink);
   background: var(--paper); /* v3:DEFAULT 徽标=纸白贴纸 */
-  padding: 1px 4px;
+  padding: 1px 3px;
 }
 .lvmod.on .lvdef {
   background: var(--paper); /* v4.1:选中模型徽标=纸灰 */

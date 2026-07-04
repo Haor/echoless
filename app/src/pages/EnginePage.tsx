@@ -8,7 +8,6 @@ import type {
 } from "../types";
 import {
   downloadLocalvqeModel,
-  downloadLocalvqeNative,
   localvqeAssets,
   openPath,
   type LocalvqeAssets,
@@ -288,7 +287,6 @@ export function EnginePage({
   // Available LocalVQE models/native runtime.
   const [lvAssets, setLvAssets] = useState<LocalvqeAssets | null>(null);
   const [lvDl, setLvDl] = useState<string | null>(null);
-  const [lvNativeDl, setLvNativeDl] = useState(false);
   const [lvErr, setLvErr] = useState<string | null>(null);
   useEffect(() => {
     localvqeAssets().then(setLvAssets).catch(() => {});
@@ -306,18 +304,6 @@ export function EnginePage({
       setLvDl(null);
     }
   }
-  async function downloadNative() {
-    setLvNativeDl(true);
-    setLvErr(null);
-    try {
-      setLvAssets(await downloadLocalvqeNative());
-    } catch (e) {
-      setLvErr(String(e));
-    } finally {
-      setLvNativeDl(false);
-    }
-  }
-
   const proc = (k: string) => processors.find((p) => p.kind === k);
   // 开发态(dev)临时解开 NVAFX 平台/doctor 门槛,用于走通前端流程。
   const supported = (k: string) =>
@@ -353,14 +339,15 @@ export function EnginePage({
           >
             <span className={`lvbox ${found ? "ok" : "miss"}`}>{box}</span>
             <span className="lvver">{m.ver}</span>
-            {m.def && <i className="lvdef">{t("lvqeDefault")}</i>}
-            <span className="lvsp" />
-            {/* 默认行徽标占位,参数量不上行(列宽预算;详情在 title) */}
-            {!m.def && (
-              <span className="lvms">
-                <span className="lvp">{m.params}</span>
-              </span>
+            {m.def && (
+              <i className="lvdef" title={t("lvqeDefaultHint")}>
+                {t("lvqeDefault")}
+              </i>
             )}
+            <span className="lvsp" />
+            <span className="lvms">
+              <span className="lvp">{m.params}</span>
+            </span>
           </button>
         );
       })}
@@ -376,22 +363,9 @@ export function EnginePage({
         >
           {t("lvqeOpenDir")} <span className="mk">↗</span>
         </button>
-        {lvAssets && !lvAssets.native_ready && (
-          <button
-            type="button"
-            className="dopen"
-            disabled={lvNativeDl}
-            onClick={(e) => {
-              e.stopPropagation();
-              downloadNative();
-            }}
-            title={lvAssets.native_manifest?.message ?? lvAssets.native_dir ?? undefined}
-          >
-            {lvNativeDl ? t("lvqeDownloading") : t("lvqeGetRuntime")}{" "}
-            <span className="mk">↓</span>
-          </button>
-        )}
       </div>
+      {/* native runtime 随包分发(2026-07-05 定案),正常永远就绪;
+          这条 warn 只兜 dev 环境资源缺失的病态 case,不提供下载按钮 */}
       {lvAssets && !lvAssets.native_ready && (
         <div className="cdetail warn" title={lvAssets.native_dir ?? undefined}>
           {t("lvqeRuntimeMissing")}

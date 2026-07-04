@@ -93,7 +93,9 @@ const D: Record<string, { en: string; zh: string }> = {
   engPickModel: { en: "pick .gguf model…", zh: "选择 .gguf 模型…" },
   engModelReq: { en: "model required", zh: "需要模型文件" },
   // LocalVQE 模型列表
-  lvqeDefault: { en: "DEFAULT", zh: "默认" },
+  // 徽标重设计(2026-07-05):DEFAULT 全词太宽挤掉参数量 → 工程 BOM 的标准件记号 STD
+  lvqeDefault: { en: "STD", zh: "标配" },
+  lvqeDefaultHint: { en: "default model", zh: "默认模型" },
   lvqeDownload: { en: "download", zh: "下载" },
   lvqeDownloading: { en: "downloading…", zh: "下载中…" },
   lvqeUse: { en: "use", zh: "使用" },

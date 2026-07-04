@@ -20,6 +20,8 @@ const valueOf = (flag) => {
 const dev = has("--dev");
 const skipCliBuild = has("--skip-cli-build");
 const skipHelperBuild = has("--skip-helper-build");
+// 发布打包必须带上 LocalVQE native runtime(随包分发,2026-07-05 定案;模型走 HF 下载)。
+const requireLocalvqe = has("--require-localvqe-assets");
 const profile = dev ? "debug" : "release";
 
 function run(cmd, cmdArgs, options = {}) {
@@ -137,6 +139,28 @@ function existsFile(p) {
   return Boolean(p) && fs.existsSync(p) && fs.statSync(p).isFile();
 }
 
+function* walkFiles(root) {
+  if (!root || !fs.existsSync(root)) return;
+  const entries = fs.readdirSync(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const p = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkFiles(p);
+    } else if (entry.isFile()) {
+      yield p;
+    }
+  }
+}
+
+function firstFile(root, predicate) {
+  const matches = [];
+  for (const file of walkFiles(root)) {
+    if (predicate(file)) matches.push(file);
+  }
+  matches.sort();
+  return matches[0] ?? null;
+}
+
 function prepareCliSidecar(targetTriple) {
   if (!skipCliBuild) {
     const cargo = resolveTool("cargo");
@@ -185,11 +209,71 @@ function prepareProcessTapHelper() {
   );
 }
 
+function localvqeLibraryName(file) {
+  const name = path.basename(file);
+  if (process.platform === "win32") return name.toLowerCase() === "localvqe.dll";
+  if (process.platform === "darwin") return name.startsWith("liblocalvqe") && name.endsWith(".dylib");
+  return name.startsWith("liblocalvqe") && name.includes(".so");
+}
+
+function companionLibrary(file) {
+  const name = path.basename(file).toLowerCase();
+  if (process.platform === "win32") return name.endsWith(".dll");
+  return name.endsWith(".dylib") || name.includes(".so");
+}
+
+// LocalVQE native runtime 随包分发(模型不随包,走 HF 下载)。
+// 来源优先级:ECHOLESS_LOCALVQE_LIBRARY env → CI RUNNER_TEMP 构建产物 → 已在 resources 的现存副本。
+function prepareLocalvqeNative() {
+  const nativeDir = path.join(srcTauriDir, "resources", "localvqe", "native");
+  let library = existsFile(process.env.ECHOLESS_LOCALVQE_LIBRARY)
+    ? process.env.ECHOLESS_LOCALVQE_LIBRARY
+    : null;
+  if (!library && process.env.RUNNER_TEMP) {
+    library = firstFile(process.env.RUNNER_TEMP, localvqeLibraryName);
+  }
+  if (!library) {
+    library = firstFile(nativeDir, localvqeLibraryName);
+  }
+
+  if (!library) {
+    const message = "LocalVQE native library not found; bundled LocalVQE runtime will be absent";
+    if (requireLocalvqe) throw new Error(message);
+    console.warn(`asset warning: ${message}`);
+    return false;
+  }
+
+  ensureDir(nativeDir);
+  for (const file of fs.readdirSync(path.dirname(library)).map((name) => path.join(path.dirname(library), name))) {
+    if (existsFile(file) && companionLibrary(file)) {
+      copyFile(file, path.join(nativeDir, path.basename(file)));
+    }
+  }
+  return true;
+}
+
+function warnDegradedBundle() {
+  const banner = "=".repeat(72);
+  console.warn(`\n${banner}`);
+  console.warn("⚠  RELEASE BUNDLE WILL SHIP WITHOUT LOCALVQE NATIVE RUNTIME");
+  console.warn("   The packaged app will run, but enabling LocalVQE fails at runtime.");
+  console.warn("   Supply ECHOLESS_LOCALVQE_LIBRARY (or RUNNER_TEMP assets) and re-run");
+  console.warn("   with --require-localvqe-assets to fail fast on release builds.");
+  console.warn(`${banner}\n`);
+}
+
 function main() {
   const targetTriple = rustTargetTriple();
   console.log(`Preparing Tauri assets for ${targetTriple} (${profile})`);
   prepareCliSidecar(targetTriple);
   prepareProcessTapHelper();
+  const hasNative = prepareLocalvqeNative();
+  if (requireLocalvqe && !hasNative) {
+    throw new Error("LocalVQE native runtime is missing");
+  }
+  if (!dev && !hasNative) {
+    warnDegradedBundle();
+  }
 }
 
 try {

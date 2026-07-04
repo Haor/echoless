@@ -217,6 +217,31 @@ jobs:
           ECHOLESS_LOCALVQE_MODEL="${model}" \
             cargo test -p echoless-processors localvqe_ffi_smoke -- --ignored --nocapture
 
+      # native runtime 随包分发(2026-07-05 定案;模型不随包,走 HF 下载)
+      - name: Prepare Tauri LocalVQE native runtime
+        shell: bash
+        working-directory: app
+        run: |
+          set -euo pipefail
+          shared_build="${RUNNER_TEMP}/localvqe-shared-build"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            lib="${shared_build}/bin/Release/localvqe.dll"
+            if [[ ! -f "${lib}" ]]; then
+              echo "LocalVQE DLL not found at ${lib}" >&2
+              exit 1
+            fi
+            lib="$(cygpath -w "${lib}")"
+          else
+            lib="$(find "${shared_build}" -name 'liblocalvqe*.dylib' -print -quit)"
+            if [[ -z "${lib}" || ! -f "${lib}" ]]; then
+              echo "LocalVQE dylib not found under ${shared_build}" >&2
+              exit 1
+            fi
+          fi
+
+          ECHOLESS_LOCALVQE_LIBRARY="${lib}" \
+            pnpm prepare:tauri-assets --skip-cli-build --require-localvqe-assets
+
       - name: Tauri bundle smoke
         shell: bash
         working-directory: app

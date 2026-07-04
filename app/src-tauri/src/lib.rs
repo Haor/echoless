@@ -493,10 +493,25 @@ fn find_localvqe_library_in_dir(dir: &Path) -> Option<PathBuf> {
     matches.into_iter().next()
 }
 
-fn localvqe_library_path(_app: Option<&tauri::AppHandle>, cli: &Path) -> Option<PathBuf> {
+fn localvqe_library_path(app: Option<&tauri::AppHandle>, cli: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(p) = std::env::var("ECHOLESS_LOCALVQE_LIBRARY") {
         push_file_candidate(&mut candidates, PathBuf::from(p));
+    }
+
+    // 产品决策(2026-07-05 修正):native runtime 随包分发,只有模型走 HF 下载。
+    // 打包 Resource 目录 → dev 的 src-tauri/resources → 品牌数据根(下载兜底)。
+    if let Some(resource_native) = resource_path(app, "resources/localvqe/native") {
+        if let Some(path) = find_localvqe_library_in_dir(&resource_native) {
+            push_file_candidate(&mut candidates, path);
+        }
+    }
+    let manifest_native = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("localvqe")
+        .join("native");
+    if let Some(path) = find_localvqe_library_in_dir(&manifest_native) {
+        push_file_candidate(&mut candidates, path);
     }
 
     if let Some(path) = find_localvqe_library_in_dir(&localvqe_native_dir_path()) {
