@@ -115,11 +115,15 @@ Tauri 2(已在用,启用 `tray-icon` feature):
    保收敛 + crossfade,不换处理器;等 P3 合入后开工)。
    **P1 联动**:电源 OFF 的 UI 语义从「整机停转」改为「AEC 旁路」——sysoff 调暗保留,
    srail 停机文案 MONITOR HELD → 直通语义(如 AEC BYPASS),前端 OFF 不再调 stop_run 而是 set_bypass。
-2. **D2 一键 mute**:记忆音量 toggle 0↔恢复,复用 `set_output_level` 实时通道,小活;
-   UI 挂点等 P1 footer 定稿。
-3. **D6+D7+D8 localvqe 转 HF 下载 + 数据目录统一**(决策已定 2026-07-03):模型+native runtime
-   全走 HuggingFace,删随包资源;目录统一 `%LOCALAPPDATA%\Echoless\` 根。三条一起做,
-   实施要点见审计文档 D8 条目。
+2. **D2 一键 mute ✅ 已在 ui-refactor(2026-07-05)**:footer VOL 点按 toggle 0↔记忆值
+   (`echoless.premuteVol.v1`),静音态显示 VOL MUTE,键盘可达,复用实时 `set_output_level`。
+3. **D6+D7+D8 localvqe 转 HF 下载 + 数据目录统一 ✅ 已合入 main(2026-07-05,Codex d33f464)**:
+   新 `crates/echoless-paths` 品牌根(`ECHOLESS_DATA_ROOT` 可覆盖);模型+native 落
+   `<品牌根>/localvqe/{models,native}`,旧目录 gguf 一次性迁移;v1.3 入 GET 下载清单,
+   native 走 manifest 驱动下载(mac 14 个库已算 sha256 入清单,Win dll 占位 unpublished);
+   删随包资源与打包拷贝步骤。⚠️ **待人工**:上传 HF `LocalAI-io/LocalVQE`——模型
+   `localvqe-v1.3-4.8M-f32.gguf` + mac native 14 文件到 `native/aarch64-apple-darwin/`、
+   Windows `localvqe.dll` 到 `native/x86_64-pc-windows-msvc/`(上传后把清单 published 翻真)。
 4. **D4 Windows 虚拟麦向导闭环 ✅ 已在 ui-refactor(2026-07-05;待 Windows 真机走查)**:
    后端 needs_reboot 真值化(VB-CABLE 驱动残迹在 + 端点不在 = 装了没重启),向导加显式
    reboot 态、端点匹配放宽到 CABLE-A/B 等别名、Windows 隐藏死权限节点、dev 模拟可走查。
