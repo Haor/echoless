@@ -39,12 +39,14 @@
   EnginePage/AdvancedPage/MicSetupPage/RtxSetupPage/DiagnosticsPage 按 7 视图稿逐页对齐。
 - 同步决策清单以 overview.html 文件头注释为准(v3→v17 累计,含 B2/B4–B7/C2/C4/C6/A3 等顺手修复项)。
 
-## P2 — UI 修改意见稿重新甄别
+## P2 — UI 修改意见稿重新甄别 ✅ 已完成(2026-07-04)
 
-`docs/audit/UI_ISSUES_VERIFICATION_20260703.md`(29 条,基于旧 UI 截图核实):
-
-- 逐条判定:已被新设计稿吸收 / 仍然生效需要修 / 已失效(旧 UI 特有)。
-- 输出一份 triage 表附在该文档末尾,仍生效项并入 P1 执行。
+Triage 表已附在 `docs/audit/UI_ISSUES_VERIFICATION_20260703.md` 末尾。结论:
+- **已被设计稿吸收 8 条**(B2/B4/B5/B6/B7/C2 + A3/C6 的样式文案部分):P1 照稿实现即消。
+- **P1 逻辑随迁 9+ 条**(A2 自环排除、A4 防抖、B1 尺寸、B3 背景色、B8 RECHECK 传参、
+  C1 滚轮归一、C3 减参、C5 去重复、C4 Hint 补全、A6 文案):**换皮不自动解决,P1 checklist 必带**。
+- **后端/产品项 10 条** → 新增 P8。
+- C6 的「0ms 歧义」会随 P4 的 probe 公式改动自然消失,P1 文案按 P4 新语义写。
 
 ## P3 — Vendor 重构:sonora 内化改名(Codex)
 
@@ -89,6 +91,27 @@ Tauri 2(已在用,启用 `tray-icon` feature):
 - 文档整理:`docs/audit/` 下多份一次性 PLAN/PROGRESS 已完成的归档或删除。
 - CI:`.github/workflows/build.yml` 在 UI 重构后确认 DMG/NSIS 产物与 smoke 脚本仍过。
 - i18n:新 UI 文案军规化后同步 `app/src/i18n.tsx` 中英词条。
+
+## P8 — 审计遗留功能项(2026-07-04 从 29 条 triage 补录,此前未入 backlog)
+
+后端/产品向,与 UI 换皮正交。按价值排序:
+
+1. **D1 OFF = passthrough 穿透模式(高优先)**:现状 OFF 停掉整个 sidecar,虚拟麦无声,
+   对方以为麦坏了。目标:OFF 时保持 run、处理链热切 passthrough(近端直通虚拟麦);
+   「完全停机」降为次级操作(长按/菜单)。passthrough 处理器已存在(仅 probe 在用)。
+   ⚠️ **与 P1 有产品交叉**:v17 设计稿电源语义 = 整机停转(sysoff 调暗 + MONITOR HELD);
+   改三态(ON=AEC / OFF=穿透 / 全停)需重定开关交互与状态字 → **实现前需用户拍板**。
+   后端部分(热切 processor 或 passthrough 快速重启)可写成 Codex 任务规格。
+2. **D2 一键 mute**:记忆音量 toggle 0↔恢复,复用 `set_output_level` 实时通道,小活;
+   UI 挂点等 P1 footer 定稿。
+3. **D6+D7+D8 localvqe 转 HF 下载 + 数据目录统一**(决策已定 2026-07-03):模型+native runtime
+   全走 HuggingFace,删随包资源;目录统一 `%LOCALAPPDATA%\Echoless\` 根。三条一起做,
+   实施要点见审计文档 D8 条目。
+4. **D4 Windows 虚拟麦向导闭环**:显式状态机(检测→引导下载→装后未生效提示重启→完成),
+   名字匹配加别名容错。
+5. **D5 LocalVQE stats 接线**(小活):`localvqe.rs::stats()` 返回真实 errors/diverged。
+6. **A1 权限横幅根治**:helper 加轻量 TCC 预检,返回真实 granted/denied/undetermined。
+7. **A5 Process Tap 采样率解锁**:helper 上报实际采样率,Rust 侧 tap 流插重采样器。
 
 ## 建议节拍
 

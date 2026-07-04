@@ -288,9 +288,55 @@
 
 ---
 
-## 建议处理顺序
+## 建议处理顺序(2026-07-03 原稿,已被下方 triage 取代)
 
 1. **一行/纯文案即可修**:B1(min size)、B3(背景色)、B5(颜色+文案)、C2(requires 隐藏)。
 2. **高价值小改**:C1(mac 滚轮)、A2(ref 排除自家输出)、B2+C3(高级页滚动 + 减参,连带解 B4)、C6(probe 文案 + Windows 回填)。
 3. **中等改动**:A1(真实权限检查)、A3(Windows ref 收敛)、A4(状态迟滞)、D5(LocalVQE stats 接线)、B8(runtime 检查区)。
 4. **需产品/后端设计**:D1(OFF 穿透)、D2(mute)、D4(Windows 向导闭环)、D6+D7+D8(localvqe 全面转 HF 下载 + 数据目录统一到 `Echoless` 根,三条一起做)、A5/A6(tap 重采样 + 16k 标识)。
+
+---
+
+## Triage:29 条 vs phase-2 UI 重构设计稿(2026-07-04)
+
+对照基准:`AEC/Design/overview.html` **v17 定稿**(其文件头注释记录了 v3→v17 全部设计决策,
+其中 v8 明确「顺手修复」了 B2/B7/C2/C4/C6/A3,累计含 B4/B5/B6 共 9 条审计项)。
+判定图例:🎨 **已被设计稿吸收**(P1 照稿实现即消) · 🔧 **仍生效**(逻辑/后端问题,换皮不解决,需单独落实) · ⚫ 关闭。
+
+| # | 问题 | 判定 | 去向与说明 |
+|---|---|---|---|
+| A1 | 权限横幅每次开屏 | 🔧 | **P8**(后端 TCC 真实预检,与 UI 无关) |
+| A2 | BlackHole 自环 | 🔧 | **P1 逻辑随迁**:availRefs 过滤排除当前 selOutput,纯前端逻辑,新 UI 实现设备下拉时带上 |
+| A3 | Win ref 列出全部设备 | 🎨+🔧 | 设计稿 v8 已定收敛目标态;过滤**逻辑**在 P1 实现(system+none+虚拟回环,物理端点折叠) |
+| A4 | 状态标签抽搐 | 🔧 | **P1 逻辑随迁**:runtimeTelemetry 加 2-3s 稳定窗/连续 N 帧滞后;新 UI 状态盒有 scramble 动画,但底层翻转不防抖照样闪 |
+| A5 | Process Tap 仅 48k | 🔧 | **P8**(后端:helper 上报实际采样率 + tap 流重采样) |
+| A6 | 16↔48 自适配标识 | 🔧 | **P1 文案项**:LocalVQE 卡片写「16k(管线自动 48↔16 适配)」;可复用 `.rsmp` badge |
+| B1 | 窗口可拉低于默认 | 🔧 | **P1**:新 UI 定稿尺寸后 `min_inner_size = 默认`(设计稿画布 1080×680 vs 现 1040×640,P1 需先定终值) |
+| B2 | 高级页参数溢出 | 🎨 | v9.1 已去 `.apright min-height:92px` 预留、页面可滚;配合 C3 减参,P1 照稿实现 |
+| B3 | resize 白边 | 🔧 | **P1**:builder 加 `.background_color(...)`,值用新色板底色(暖碳黑 #131312 系,不再是 #08090b) |
+| B4 | model 输入框截断 | 🎨 | v3.1 已修(wide 340px);P1 照稿 |
+| B5 | NVAFX pair 黄色/Win·only | 🎨 | v3 已修(中性色 + "Win only");P1 照稿 |
+| B6 | hero 状态行层级过高 | 🎨 | v7 已调暗调小;P1 照稿 |
+| B7 | RUN PROBE 方块位置 | 🎨 | v8/v9 probe 区重做(12 点定时进度、dopen padding 0);P1 照稿 |
+| B8 | NVAFX runtime 检查区 | 🎨+🔧 | 样式随新稿重做;**RECHECK 传参与 title 不一致**是逻辑 bug,P1 随迁修 |
+| B9 | 圆形箭头浮层 | ⚫ | 截图伪影,关闭 |
+| C1 | mac 自然滚动方向反 | 🔧 | **P1 逻辑随迁**:VolumeWheel 符号归一化(新 UI 保留滚轮调音量交互) |
+| C2 | gate 阈值恒显示 | 🎨 | 设计决策=gate OFF 时**调暗**(v8,非 requires 隐藏);P1 照稿 |
+| C3 | localvqe 参数太多 | 🔧 | **P1 逻辑随迁**:backendParams 过滤掉 model/library/backend/device(设计稿页面布局按减参后排的) |
+| C4 | Hint 缺意义+推荐 | 🎨+🔧 | v8 补了部分;**完整推荐语要在 P1 的 i18n 词条里逐个补全**(C3/C5 隐藏后数量大减) |
+| C5 | NVAFX runtime_dir 重复暴露 | 🔧 | **P1 逻辑随迁**:高级页 NVAFX 分组滤掉 runtime_dir(引擎页已有完整 UI);model_path/use_default_gpu/disable_cuda_graph 隐藏 |
+| C6 | 「无需修正·0ms」歧义 + Win 不回填 | 🎨+🔧 | 文案 v8 已改;**P4 的 probe 公式改动会让推荐值永远 ≥ 平台偏置,「0ms」场景自然消失**——P1 文案须按 P4 新语义写(「正 lag 由 AEC3 追踪;负向余量 D ms 已生效」);Windows 回填 initial_delay_ms 放宽 → 随 P4 一并确认安全性 |
+| D1 | **OFF 应为 passthrough** | 🔧 | **之前未被任何任务覆盖,2026-07-04 补录为 P8 首项**。与 P1 有产品交叉:v17 设计稿 OFF=整机停转语义(sysoff 调暗 + MONITOR HELD),若改三态(ON=AEC / OFF=穿透 / 长按=全停),电源开关与状态字语义要重定 → **实现前需用户拍板三态交互**,详见 P8 |
+| D2 | 一键 mute | 🔧 | **P8**(小活:记忆音量 toggle 0↔恢复,复用 set_output_level 实时通道;UI 挂点等 P1 footer 定稿) |
+| D3 | 左上角返回 | 🔧 | **P1 决策项**:新 UI 导航结构(footer <<< + Esc)照旧,左上 AppIcon 是否加返回由 P1 定稿时顺手定 |
+| D4 | Win 虚拟麦向导 | 🔧 | **P8**(显式状态机:检测→引导下载→装后未生效提示重启→完成;名字匹配加别名) |
+| D5 | LocalVQE stats 未接线 | 🔧 | **P8**(小活:localvqe.rs stats() 返回真实 errors/diverged) |
+| D6 | 随包 v1.3 不在目录 | 🔧 | **P8**(随 D8 一并消失) |
+| D7 | 数据目录不一致 | 🔧 | **P8**(统一 `%LOCALAPPDATA%\Echoless\` 根) |
+| D8 | localvqe 转 HF 下载 | 🔧 | **P8**(决策已定 2026-07-03,实施要点见 D8 条目) |
+
+**统计**:已吸收(照稿实现即消)8 条;逻辑随迁(P1 实现时必须带上,换皮不自动解决)9 条;
+后端/产品项(P8)10 条;随 P4 消解 1 条(C6 部分);关闭 1 条(B9)。
+
+**P1 逻辑随迁清单**(照稿画皮时容易漏的,实现 checklist):A2 自环排除、A4 防抖、B1 尺寸锁定、
+B3 背景色、B8 RECHECK 传参、C1 滚轮归一、C3 减参过滤、C5 去重复字段、C4 Hint 推荐语补全、A6 文案。
