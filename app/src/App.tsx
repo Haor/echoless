@@ -1677,10 +1677,12 @@ function TvNoise() {
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     const tLoc = gl.getUniformLocation(prog, "t");
 
-    // 噪点按 CSS 像素网格(dpr=1),与 feTurbulence 的用户空间网格一致。
+    // 噪点按设备物理像素(feTurbulence 栅格化同此):retina 上必须乘 dpr,
+    // 否则颗粒被拉成 2×2,粗大显脏(用户对比图 2026-07-05)。
     const fit = () => {
-      const w = Math.max(1, canvas.clientWidth | 0);
-      const h = Math.max(1, canvas.clientHeight | 0);
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
