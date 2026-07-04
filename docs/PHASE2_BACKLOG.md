@@ -27,9 +27,16 @@
 - P3/P4 验收由 Claude 复核:P3 全仓 grep 无 `sonora` 残留 + 兼容别名测试;
   P4 回归 = 非平稳激励 + >60s 长跑(顺带验证 internal map §11.6 退化疑云)。
 
-## P1 — UI 重构(主工作树)
+## P1 — UI 重构(主工作树)🟡 主体已落地(2026-07-04)
 
-按 `Design/overview.html`(v17 定稿)重构整个前端:
+已完成(commit bb4d304..9688da2):styles.css 全量替换(本地变量字体 Martian Mono/Archivo)、
+plate 四区 overview、tvnoise/字标 crton·crtoff/sysoff、srail 两列、footer SHT+UPTIME、
+逻辑随迁 A2/A4/B8/C1/C3/C5/C4/C6/A6 + B1(min=1040×640)/B3(builder 底色)、
+浏览器预览 shim + `?view=&dev=&os=` 直链、六视图截图对照设计稿核过。
+**剩余**:① OFF→`set_bypass` 前端接线 + srail 文案改直通语义(等 P8-D1 后端合入);
+② 真机(tauri dev / Windows 构建)回归 + i18n 中文排版检查;③ 像素级微调(如有)。
+
+原始范围备忘——按 `Design/overview.html`(v17 定稿)重构整个前端:
 
 - `app/src/styles.css` 全量替换为设计稿 CSS(harness 段忽略),包括:暖碳黑色板、
   橙 #ff7235 唯一强调色、Martian Mono + Archivo(wdth 轴)字体、坐标纸网格+动态噪点、
