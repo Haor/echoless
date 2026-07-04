@@ -1607,9 +1607,9 @@ function useAppController() {
         <RuntimeFooterBars telRef={telRef} powerOn={powerOn} />
       </footer>
 
-      {/* v10 动态底噪(性能版:预渲染帧轮播,见 TvNoise 注释) */}
-      <TvNoise />
-      {/* v6 VHS 亮带(性能版:transform 合成器动画) */}
+      {/* v10 动态底噪(WebGL shader,见 TvNoise 注释);OFF 时随 sysoff 渐隐停走 */}
+      <TvNoise active={uiOn} />
+      {/* v6 VHS 亮带(transform 合成器动画);OFF 时随 sysoff 渐隐暂停 */}
       <div className="vhs" aria-hidden="true">
         <i className="band" />
         <i className="line" />
@@ -1629,15 +1629,24 @@ uniform float t;
 float h(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
+// pow 偏斜:分布偏向 0(均值 ≈0.37),对齐 feTurbulence turbulence 模式的
+// |noise| 统计 —— 大部分像素近乎透明,白底上噪点稀疏不干扰阅读,暗底细质感
+// 保留;uniform 随机(均值 0.5)在亮块上会重成砂纸(用户反馈 2026-07-05)。
+float n(vec2 p, float s) {
+  return pow(h(p + s), 1.7);
+}
 void main() {
   vec2 p = gl_FragCoord.xy;
-  gl_FragColor = vec4(h(p + t), h(p + t + 17.0), h(p + t + 41.0), h(p + t + 89.0));
+  gl_FragColor = vec4(n(p, t), n(p, t + 17.0), n(p, t + 41.0), n(p, t + 89.0));
 }`;
 const NOISE_VS = `attribute vec2 a;
 void main() { gl_Position = vec4(a, 0.0, 1.0); }`;
 
-function TvNoise() {
+function TvNoise({ active }: { active: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const scheduleRef = useRef<() => void>(() => {});
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -1702,11 +1711,14 @@ function TvNoise() {
       // t 保持小数值域(hash 的 sin 精度),循环推进
       seed = (seed + 0.618) % 61.0;
       draw();
-      if (!reduce && !document.hidden) raf = requestAnimationFrame(frame);
+      // OFF(穿透/停机)时停走:动效只属于活着的系统;CSS 同步渐隐
+      if (!reduce && !document.hidden && activeRef.current)
+        raf = requestAnimationFrame(frame);
     };
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(frame);
     };
+    scheduleRef.current = schedule;
     const onVisibility = () => {
       if (document.hidden) {
         if (raf) cancelAnimationFrame(raf);
@@ -1727,8 +1739,12 @@ function TvNoise() {
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
+      scheduleRef.current = () => {};
     };
   }, []);
+  useEffect(() => {
+    if (active) scheduleRef.current(); // 重新上电 → 恢复走噪
+  }, [active]);
   return (
     <div className="tvnoise" aria-hidden="true">
       <canvas ref={ref} />

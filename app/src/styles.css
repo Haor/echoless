@@ -135,11 +135,22 @@ body {
   z-index: 4;
   mix-blend-mode: multiply;
   opacity: 0.5;
+  transition: opacity 0.6s ease; /* 与 sysoff 调光/crtoff 同速 */
 }
 .tvnoise canvas {
   width: 100%;
   height: 100%;
   display: block;
+}
+/* OFF(穿透/停机):CRT 噪与 VHS 熄灭 —— 动效只属于活着的系统 */
+.window.sysoff > .tvnoise {
+  opacity: 0;
+}
+.window.sysoff > .vhs {
+  opacity: 0;
+}
+.window.sysoff .vhs i {
+  animation-play-state: paused;
 }
 .window > * {
   position: relative;
@@ -154,6 +165,7 @@ body {
   z-index: 3;
   pointer-events: none;
   overflow: hidden;
+  transition: opacity 0.6s ease;
 }
 .vhs i {
   position: absolute;

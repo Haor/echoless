@@ -18,6 +18,8 @@ export const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
 }) {
   const live = useRuntimeLive();
   const { t } = useI18n();
+  // OFF(穿透/停机):波形改灰,信号仍在流动(mic 活着)但退出视觉主角。
+  const dimmed = statusKind === "bypass" || statusKind === "stopped";
   return (
     <div className="sig">
       <div className="h">
@@ -41,6 +43,7 @@ export const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
               active={powerOn}
               revision={live.seq}
               phase={0}
+              dimmed={dimmed}
             />
             <span className="db">
               {dash(live.mic)} <i>dBFS</i>
@@ -54,6 +57,7 @@ export const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
               active={powerOn}
               revision={live.seq}
               phase={2.1}
+              dimmed={dimmed}
             />
             <span className="db">
               {dash(live.ref)} <i>dBFS</i>
@@ -70,6 +74,7 @@ export const RuntimeSignalPanel = memo(function RuntimeSignalPanel({
               active={powerOn}
               revision={live.seq}
               phase={4.2}
+              dimmed={dimmed}
             />
             <span className="db">
               {dash(live.out)} <i>dBFS</i>

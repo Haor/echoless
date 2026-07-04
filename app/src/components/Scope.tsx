@@ -28,24 +28,32 @@ function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
 }
 
+// OFF(穿透/停机)态的波形灰(--t-mut 系):功能照常,视觉降级。
+const DIM_COL = "118, 117, 112";
+
 export function Scope({
   traceKey,
   telRef,
   active,
   revision,
   phase,
+  dimmed = false,
 }: {
   traceKey: TraceKey;
   telRef: MutableRefObject<Telemetry>;
   active: boolean;
   revision: number;
   phase: number;
+  // true = 波形改灰色低亮(OFF 直通中仍在流动,但退出视觉主角)
+  dimmed?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeRef = useRef(active);
+  const dimmedRef = useRef(dimmed);
   const scheduleRef = useRef<() => void>(() => {});
 
   activeRef.current = active;
+  dimmedRef.current = dimmed;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -156,7 +164,9 @@ export function Scope({
         x.quadraticCurveTo(pts[i][0], pts[i][1], xc, yc);
       }
       x.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
-      x.strokeStyle = `rgba(${g.col},${tel.on ? 0.95 : 0.45})`;
+      x.strokeStyle = dimmedRef.current
+        ? `rgba(${DIM_COL},${tel.on ? 0.6 : 0.4})`
+        : `rgba(${g.col},${tel.on ? 0.95 : 0.45})`;
       x.lineWidth = g.lw;
       x.lineCap = "round";
       x.lineJoin = "round";
@@ -216,7 +226,7 @@ export function Scope({
 
   useEffect(() => {
     scheduleRef.current();
-  }, [active, revision]);
+  }, [active, revision, dimmed]);
 
   return <canvas ref={canvasRef} data-w={traceKey} />;
 }
