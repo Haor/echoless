@@ -123,8 +123,10 @@ body {
     transparent 1px 4px
   ); /* v10:静态噪点层移除,由 .tvnoise 动态底噪取代 */
 }
-/* v10:动态底噪 —— brasshands.com 原实现照抄(feTurbulence seed 0→100 循环,
-   multiply 叠加;z=4 在 VHS 之上) */
+/* v10 动态底噪的性能改造(2026-07-05):设计稿的 feTurbulence + SMIL seed 动画
+   = 每帧对整窗重算滤镜,实测把 WebKit GPU 进程推到 320% CPU。
+   改为 4 帧预渲染噪声位图(TvNoise 组件生成)+ steps 轮播,
+   合成器只做 opacity 切换,零逐帧计算,视觉等价(multiply α.5 下无感差异)。 */
 .window > .tvnoise {
   /* 高优先级选择器:必须压过后方的 .window > * (position:relative),
      否则它会变成 grid 第四行挤坏布局 */
@@ -135,51 +137,84 @@ body {
   mix-blend-mode: multiply;
   opacity: 0.5;
 }
-.tvnoise svg {
-  width: 100%;
-  height: 100%;
-  display: block;
+.tvnoise i {
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat;
+  opacity: 0;
+  animation: tvframe 0.6s steps(1, end) infinite;
+}
+/* reduced-motion(动画全禁)时首帧回落基础 opacity:静态噪点仍在 */
+.tvnoise i:nth-child(1) {
+  opacity: 1;
+  animation-delay: 0s;
+}
+.tvnoise i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.tvnoise i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.tvnoise i:nth-child(4) {
+  animation-delay: 0.45s;
+}
+@keyframes tvframe {
+  0%,
+  24.99% {
+    opacity: 1;
+  }
+  25%,
+  100% {
+    opacity: 0;
+  }
 }
 .window > * {
   position: relative;
   z-index: 1;
 }
-/* v6:VHS 双层(240px 宽带 + 2px 细线,异速下滚),α 压到 0.03 以下不抢视线 */
-.window::after {
-  content: "";
+/* v6 VHS 双层(240px 宽带 + 2px 细线,异速下滚),α 压到 0.03 以下不抢视线。
+   2026-07-05 性能改造:background-position 动画每帧走主线程 repaint 全窗,
+   改实体层 transform(合成器加速);位移量对齐原实现(band 1120px / line 1440px 每 16s)。 */
+.window > .vhs {
   position: absolute;
   inset: 0;
   z-index: 3;
   pointer-events: none;
-  background-image:
-    linear-gradient(
-      180deg,
-      transparent 0%,
-      rgba(255, 255, 255, 0.012) 30%,
-      rgba(255, 255, 255, 0.028) 50%,
-      rgba(255, 255, 255, 0.012) 70%,
-      transparent 100%
-    ),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px);
-  background-size:
-    100% 240px,
-    100% 2px;
-  background-repeat: no-repeat;
-  background-position:
-    0 -240px,
-    0 -40px;
-  animation: vhsroll 16s linear infinite;
+  overflow: hidden;
 }
-@keyframes vhsroll {
-  from {
-    background-position:
-      0 -240px,
-      0 -40px;
-  }
+.vhs i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+.vhs .band {
+  top: -240px;
+  height: 240px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.012) 30%,
+    rgba(255, 255, 255, 0.028) 50%,
+    rgba(255, 255, 255, 0.012) 70%,
+    transparent 100%
+  );
+  animation: vhsband 16s linear infinite;
+}
+.vhs .line {
+  top: -40px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.035);
+  animation: vhsline 16s linear infinite;
+}
+@keyframes vhsband {
   to {
-    background-position:
-      0 880px,
-      0 1400px;
+    transform: translateY(1120px);
+  }
+}
+@keyframes vhsline {
+  to {
+    transform: translateY(1440px);
   }
 }
 

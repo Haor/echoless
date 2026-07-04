@@ -1607,34 +1607,51 @@ function useAppController() {
         <RuntimeFooterBars telRef={telRef} powerOn={powerOn} />
       </footer>
 
-      {/* v10:动态底噪 —— brasshands 原实现(feTurbulence seed 0→100 循环,multiply) */}
-      <div className="tvnoise" aria-hidden="true">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="100%"
-          height="100%"
-          preserveAspectRatio="none"
-        >
-          <filter id="tvnoise-f" x="0%" y="0%" width="100%" height="100%">
-            <feTurbulence
-              type="turbulence"
-              baseFrequency="1.15"
-              numOctaves="1"
-              seed="2"
-              stitchTiles="stitch"
-            >
-              <animate
-                attributeName="seed"
-                from="0"
-                to="100"
-                dur="2.6666666666666665s"
-                repeatCount="indefinite"
-              />
-            </feTurbulence>
-          </filter>
-          <rect width="100%" height="100%" filter="url(#tvnoise-f)" />
-        </svg>
+      {/* v10 动态底噪(性能版:预渲染帧轮播,见 TvNoise 注释) */}
+      <TvNoise />
+      {/* v6 VHS 亮带(性能版:transform 合成器动画) */}
+      <div className="vhs" aria-hidden="true">
+        <i className="band" />
+        <i className="line" />
       </div>
+    </div>
+  );
+}
+
+// 动态底噪:一次性预渲染 4 帧噪声位图,CSS steps 轮播(合成器 opacity 切换)。
+// 替代设计稿的 feTurbulence + SMIL seed 动画 —— 那是整窗每帧 CPU 重算滤镜,
+// 实测把 WebKit GPU 进程推到 320% CPU(用户报告 2026-07-05)。
+// 位图取半分辨率平铺(噪点 ~2px,multiply α.5 下与滤镜版无感差异)。
+function TvNoise() {
+  const [frames, setFrames] = useState<string[]>([]);
+  useEffect(() => {
+    const w = 260;
+    const h = 160;
+    const cv = document.createElement("canvas");
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    const out: string[] = [];
+    for (let f = 0; f < 4; f++) {
+      const img = ctx.createImageData(w, h);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = (Math.random() * 256) | 0;
+        img.data[i] = v;
+        img.data[i + 1] = v;
+        img.data[i + 2] = v;
+        img.data[i + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      out.push(cv.toDataURL());
+    }
+    setFrames(out);
+  }, []);
+  return (
+    <div className="tvnoise" aria-hidden="true">
+      {frames.map((f, i) => (
+        <i key={i} style={{ backgroundImage: `url(${f})` }} />
+      ))}
     </div>
   );
 }
