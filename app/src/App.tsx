@@ -299,10 +299,36 @@ function initSelection(): SelectionState {
   };
 }
 
+// 浏览器预览直达(设计稿 hash 直链的 app 版):?view=advanced&dev=1&os=win。
+// Tauri 里没有 query,恒回落初始值。
+function initAppState(): AppState {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const v = q.get("view");
+    const views: View[] = [
+      "overview",
+      "engine",
+      "advanced",
+      "diagnostics",
+      "rtxsetup",
+      "micsetup",
+    ];
+    return {
+      ...INITIAL_APP_STATE,
+      view: views.includes(v as View) ? (v as View) : "overview",
+      dev: q.has("dev"),
+      devWin: q.get("os") === "win",
+    };
+  } catch {
+    return INITIAL_APP_STATE;
+  }
+}
+
 function useAppController() {
   const [appState, updateApp] = useReducer(
     patchReducer<AppState>,
-    INITIAL_APP_STATE,
+    undefined,
+    initAppState,
   );
   const [selection, updateSelection] = useReducer(
     patchReducer<SelectionState>,

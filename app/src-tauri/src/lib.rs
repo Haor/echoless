@@ -1119,13 +1119,16 @@ pub fn run() {
             stop_run
         ])
         .setup(|app| {
-            // 默认打开基线 1040×640(布局按此定稿);可缩放,设合理 min/max 防止过小/过大破版。
+            // 默认打开基线 1040×640(v17 设计稿画布,布局按此定稿);
+            // B1:min 锁到默认尺寸 —— plate 分格在更小窗口必然破版。
+            // B3:builder 背景色 = 新色板 --bg #1d1d1b,resize 瞬间不露白边。
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Echoless")
                     .inner_size(1040.0, 640.0)
-                    .min_inner_size(960.0, 600.0)
+                    .min_inner_size(1040.0, 640.0)
                     .max_inner_size(1600.0, 1100.0)
+                    .background_color(tauri::window::Color(0x1d, 0x1d, 0x1b, 0xff))
                     .resizable(true)
                     .visible(true);
 
