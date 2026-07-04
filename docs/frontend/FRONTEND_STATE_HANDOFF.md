@@ -155,6 +155,27 @@ pnpm tauri build
 - 就绪判定唯一真源:`nvafx doctor --json` 的 `ok`/`checks`;配置应用前先 `config validate`。
 - 窗口高度锁 600、宽度区间内可调;长文本截断不外溢(桌面 app 无滚动条)。
 
+## 9. Windows tray preference contract
+
+Rust/Tauri side exposes `set_tray_prefs` for the frontend preference UI:
+
+| Tauri command | Frontend invoke payload | Effect |
+|---|---|---|
+| `set_tray_prefs` | `{ minimizeToTray: boolean, closeToTray: boolean }` | Syncs Windows-only tray behavior preferences into Rust state. |
+
+Frontend persistence key: `echoless.trayPrefs.v1`.
+
+Persisted JSON shape:
+
+```json
+{
+  "minimizeToTray": false,
+  "closeToTray": false
+}
+```
+
+Startup contract: read `echoless.trayPrefs.v1` in the frontend startup effect and invoke `set_tray_prefs`; invoke it again whenever either preference changes. Rust defaults to `false/false`, so behavior remains the existing direct-close path until the frontend pushes persisted preferences. Non-Windows platforms ignore these preferences and keep the current window behavior.
+
 ## 下一会话建议
 - 用真实 CI LocalVQE 产物 / Windows 机器跑 `pnpm prepare:tauri-assets --require-localvqe-assets`
   后做 Tauri bundle 端到端联调。
