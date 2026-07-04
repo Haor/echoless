@@ -217,44 +217,6 @@ jobs:
           ECHOLESS_LOCALVQE_MODEL="${model}" \
             cargo test -p echoless-processors localvqe_ffi_smoke -- --ignored --nocapture
 
-      - name: Prepare Tauri LocalVQE assets
-        shell: bash
-        working-directory: app
-        run: |
-          set -euo pipefail
-          shared_build="${RUNNER_TEMP}/localvqe-shared-build"
-          regression_build="${RUNNER_TEMP}/localvqe-regression-build"
-          model_name="localvqe-v1.3-4.8M-f32.gguf"
-          model="${regression_build}/bench_assets/${model_name}"
-          if [[ ! -f "${model}" ]]; then
-            model="$(find "${regression_build}" -name "${model_name}" -print -quit)"
-          fi
-          if [[ -z "${model}" || ! -f "${model}" ]]; then
-            echo "LocalVQE model not found under ${regression_build}" >&2
-            exit 1
-          fi
-
-          if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            shared_dir="${shared_build}/bin/Release"
-            lib="${shared_dir}/localvqe.dll"
-            if [[ ! -f "${lib}" ]]; then
-              echo "LocalVQE DLL not found at ${lib}" >&2
-              exit 1
-            fi
-            lib="$(cygpath -w "${lib}")"
-            model="$(cygpath -w "${model}")"
-          else
-            lib="$(find "${shared_build}" -name 'liblocalvqe*.dylib' -print -quit)"
-            if [[ -z "${lib}" || ! -f "${lib}" ]]; then
-              echo "LocalVQE dylib not found under ${shared_build}" >&2
-              exit 1
-            fi
-          fi
-
-          ECHOLESS_LOCALVQE_LIBRARY="${lib}" \
-          ECHOLESS_LOCALVQE_MODEL="${model}" \
-            pnpm prepare:tauri-assets --skip-cli-build --require-localvqe-assets
-
       - name: Tauri bundle smoke
         shell: bash
         working-directory: app
@@ -272,35 +234,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shared_build="${RUNNER_TEMP}/localvqe-shared-build"
-          regression_build="${RUNNER_TEMP}/localvqe-regression-build"
-          model_name="localvqe-v1.3-4.8M-f32.gguf"
-          model="${regression_build}/bench_assets/${model_name}"
-          if [[ ! -f "${model}" ]]; then
-            model="$(find "${regression_build}" -name "${model_name}" -print -quit)"
-          fi
-          if [[ -z "${model}" || ! -f "${model}" ]]; then
-            echo "LocalVQE model not found under ${regression_build}" >&2
-            exit 1
-          fi
-
-          mkdir -p dist/models
-          cp "${model}" dist/models/
+          mkdir -p dist
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
-            shared_dir="${shared_build}/bin/Release"
             cp target/release/echoless.exe dist/
             cp configs/example.toml dist/
-            cp "${shared_dir}"/*.dll dist/
             powershell -NoLogo -NoProfile -Command \
               "Compress-Archive -Path dist/* -DestinationPath echoless-${{ matrix.package }}-${{ runner.arch }}.zip -Force"
           else
             cp target/release/echoless dist/
             cp configs/example.toml dist/
-            find "${shared_build}" \( -name '*.dylib' -o -name '*.so' \) -exec cp -P {} dist/ \;
             tar -czf "echoless-${{ matrix.package }}-${{ runner.arch }}.tar.gz" -C dist .
           fi
 
-      - name: Packaged macOS LocalVQE smoke
+      - name: Packaged macOS CLI smoke
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -310,65 +256,8 @@ jobs:
           rm -rf "${smoke_dir}"
           mkdir -p "${smoke_dir}"
           tar -xzf "${package}" -C "${smoke_dir}"
-
-          python3 - <<'PY'
-          import math
-          import struct
-          import wave
-
-          rate = 48000
-          seconds = 2
-          frames = rate * seconds
-          reference = []
-          mic = []
-          for n in range(frames):
-              t = n / rate
-              far = 0.20 * math.sin(2 * math.pi * 440 * t)
-              near = 0.08 * math.sin(2 * math.pi * 180 * t) if 0.55 <= t <= 1.55 else 0.0
-              delayed = reference[n - 960] * 0.35 if n >= 960 else 0.0
-              reference.append(far)
-              mic.append(max(-1.0, min(1.0, near + delayed)))
-
-          for name, data in (("smoke_ref.wav", reference), ("smoke_mic.wav", mic)):
-              with wave.open(name, "wb") as wav:
-                  wav.setnchannels(1)
-                  wav.setsampwidth(2)
-                  wav.setframerate(rate)
-                  wav.writeframes(
-                      b"".join(
-                          struct.pack("<h", int(max(-1.0, min(1.0, sample)) * 32767))
-                          for sample in data
-                      )
-                  )
-          PY
-
-          cat > "${smoke_dir}/localvqe-smoke.toml" <<'TOML'
-          mic = "smoke_mic.wav"
-          reference = "smoke_ref.wav"
-          output = "smoke_localvqe_out.wav"
-          sample_rate = 48000
-          frame_ms = 10
-          reference_channels = "mono"
-
-          [[chain]]
-          kind = "localvqe"
-          model = "models/localvqe-v1.3-4.8M-f32.gguf"
-          library = "./liblocalvqe.0.1.0.dylib"
-          threads = 2
-          noise_gate = false
-          TOML
-
-          mv smoke_mic.wav smoke_ref.wav "${smoke_dir}/"
           cd "${smoke_dir}"
           ./echoless processors
-          DYLD_LIBRARY_PATH="${PWD}:${DYLD_LIBRARY_PATH:-}" \
-          DYLD_FALLBACK_LIBRARY_PATH="${PWD}:${DYLD_FALLBACK_LIBRARY_PATH:-}" \
-            ./echoless offline \
-              --config localvqe-smoke.toml \
-              --mic smoke_mic.wav \
-              --reference smoke_ref.wav \
-              --out smoke_localvqe_out.wav
-          test -s smoke_localvqe_out.wav
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

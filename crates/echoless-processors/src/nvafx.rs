@@ -486,30 +486,8 @@ pub fn resolve_runtime_dir(override_dir: Option<&Path>) -> (PathBuf, String) {
         return (PathBuf::from(dir), DEFAULT_ENV_VAR.to_string());
     }
 
-    #[cfg(windows)]
-    {
-        let base = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        (
-            base.join("Echoless").join("nvafx").join(SDK_VERSION),
-            "%LOCALAPPDATA%".to_string(),
-        )
-    }
-
-    #[cfg(not(windows))]
-    {
-        let base = env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| {
-                env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
-            })
-            .unwrap_or_else(|| PathBuf::from("."));
-        (
-            base.join("Echoless").join("nvafx").join(SDK_VERSION),
-            "unsupported-platform-default".to_string(),
-        )
-    }
+    let (base, source) = echoless_paths::brand_data_root();
+    (base.join("nvafx").join(SDK_VERSION), source)
 }
 
 fn resolve_runtime_selection(

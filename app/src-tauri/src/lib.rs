@@ -493,23 +493,13 @@ fn find_localvqe_library_in_dir(dir: &Path) -> Option<PathBuf> {
     matches.into_iter().next()
 }
 
-fn localvqe_library_path(app: Option<&tauri::AppHandle>, cli: &Path) -> Option<PathBuf> {
+fn localvqe_library_path(_app: Option<&tauri::AppHandle>, cli: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(p) = std::env::var("ECHOLESS_LOCALVQE_LIBRARY") {
         push_file_candidate(&mut candidates, PathBuf::from(p));
     }
 
-    if let Some(resource_native) = resource_path(app, "resources/localvqe/native") {
-        if let Some(path) = find_localvqe_library_in_dir(&resource_native) {
-            push_file_candidate(&mut candidates, path);
-        }
-    }
-
-    let manifest_native = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("resources")
-        .join("localvqe")
-        .join("native");
-    if let Some(path) = find_localvqe_library_in_dir(&manifest_native) {
+    if let Some(path) = find_localvqe_library_in_dir(&localvqe_native_dir_path()) {
         push_file_candidate(&mut candidates, path);
     }
 
@@ -749,7 +739,7 @@ async fn probe_delay(
     .map_err(|e| format!("probe task join failed: {e}"))?
 }
 
-// ---- LocalVQE 模型管理(打包默认模型 + 从官方 HF repo 下载选择) ----
+// ---- LocalVQE model/native management: brand data root + HF downloads ----
 const LOCALVQE_HF_REVISION: &str = "5760d09ce556750f76c1251c024e4a8c37231591";
 
 #[derive(Clone, Copy)]
@@ -757,6 +747,20 @@ struct LocalVqeModelPin {
     filename: &'static str,
     sha256: &'static str,
     size: u64,
+}
+
+#[derive(Clone, Copy)]
+struct LocalVqeNativeAssetPin {
+    filename: &'static str,
+    sha256: Option<&'static str>,
+    size: Option<u64>,
+}
+
+struct LocalVqeNativePackage {
+    platform: &'static str,
+    published: bool,
+    message: Option<&'static str>,
+    assets: &'static [LocalVqeNativeAssetPin],
 }
 
 const LOCALVQE_MODEL_PINS: &[LocalVqeModelPin] = &[
@@ -782,6 +786,87 @@ const LOCALVQE_MODEL_PINS: &[LocalVqeModelPin] = &[
     },
 ];
 
+const LOCALVQE_NATIVE_MACOS_AARCH64: &[LocalVqeNativeAssetPin] = &[
+    LocalVqeNativeAssetPin {
+        filename: "libggml.dylib",
+        sha256: Some("ec33d4cde840497601643752cd99f072c420c939939c8b1a15b6cfeecca42b19"),
+        size: Some(60_208),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml.0.dylib",
+        sha256: Some("ec33d4cde840497601643752cd99f072c420c939939c8b1a15b6cfeecca42b19"),
+        size: Some(60_208),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml.0.9.8.dylib",
+        sha256: Some("ec33d4cde840497601643752cd99f072c420c939939c8b1a15b6cfeecca42b19"),
+        size: Some(60_208),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-base.dylib",
+        sha256: Some("ddec56414496958956a54dfcbbaf64b489a24fba53b66ca7d4ab7244f47c4fe6"),
+        size: Some(653_416),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-base.0.dylib",
+        sha256: Some("ddec56414496958956a54dfcbbaf64b489a24fba53b66ca7d4ab7244f47c4fe6"),
+        size: Some(653_416),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-base.0.9.8.dylib",
+        sha256: Some("ddec56414496958956a54dfcbbaf64b489a24fba53b66ca7d4ab7244f47c4fe6"),
+        size: Some(653_416),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-blas.so",
+        sha256: Some("57edda37be99962bd2a4d4cc8c8d02dfe0f31ed201a9397d8a3205b677091a21"),
+        size: Some(58_704),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-cpu-apple_m1.so",
+        sha256: Some("25da7e004481d351620a1b53a0d731e1cf04620918ea787bbdea9620834d6c5b"),
+        size: Some(812_280),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-cpu-apple_m2_m3.so",
+        sha256: Some("35322ebf4e452f30d98647bc669070e858c43b6468277534e2ab53880a343b9e"),
+        size: Some(812_280),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-cpu-apple_m4.so",
+        sha256: Some("8118f000d4fa3651b4f25af98ca883da67fda412e380a43cc5e4e895330558aa"),
+        size: Some(812_280),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "libggml-metal.so",
+        sha256: Some("395f5d33aa533a047c301686aac66276addf22522a630ee1c26f542589fc494a"),
+        size: Some(798_672),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "liblocalvqe.dylib",
+        sha256: Some("6d7b7e722c0030a0bb4ee35d31d541b4e908c5c9e1251925a3f02724625942e5"),
+        size: Some(99_392),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "liblocalvqe.0.dylib",
+        sha256: Some("6d7b7e722c0030a0bb4ee35d31d541b4e908c5c9e1251925a3f02724625942e5"),
+        size: Some(99_392),
+    },
+    LocalVqeNativeAssetPin {
+        filename: "liblocalvqe.0.1.0.dylib",
+        sha256: Some("6d7b7e722c0030a0bb4ee35d31d541b4e908c5c9e1251925a3f02724625942e5"),
+        size: Some(99_392),
+    },
+];
+
+const LOCALVQE_NATIVE_WINDOWS_UNPUBLISHED: &[LocalVqeNativeAssetPin] = &[LocalVqeNativeAssetPin {
+    filename: "localvqe.dll",
+    sha256: None,
+    size: None,
+}];
+
+const LOCALVQE_NATIVE_UNSUPPORTED: &[LocalVqeNativeAssetPin] = &[];
+
 fn localvqe_model_pin(filename: &str) -> Option<&'static LocalVqeModelPin> {
     LOCALVQE_MODEL_PINS
         .iter()
@@ -805,36 +890,74 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn verify_localvqe_model_file(path: &Path, pin: &LocalVqeModelPin) -> Result<(), String> {
+fn verify_pinned_file(
+    path: &Path,
+    expected_sha256: &str,
+    expected_size: u64,
+    label: &str,
+) -> Result<(), String> {
     let size = std::fs::metadata(path)
-        .map_err(|e| format!("读取模型文件信息失败: {}: {e}", path.display()))?
+        .map_err(|e| format!("读取文件信息失败: {}: {e}", path.display()))?
         .len();
-    if size != pin.size {
+    if size != expected_size {
         return Err(format!(
-            "LocalVQE 模型大小不匹配: file={}, actual={}, expected={}",
+            "{label}大小不匹配: file={}, actual={}, expected={}",
             path.display(),
             size,
-            pin.size
+            expected_size
         ));
     }
     let actual = sha256_file(path)?;
-    if !actual.eq_ignore_ascii_case(pin.sha256) {
+    if !actual.eq_ignore_ascii_case(expected_sha256) {
         return Err(format!(
-            "LocalVQE 模型 SHA256 不匹配: file={}, actual={}, expected={}",
+            "{label} SHA256 不匹配: file={}, actual={}, expected={}",
             path.display(),
             actual,
-            pin.sha256
+            expected_sha256
         ));
     }
     Ok(())
 }
 
-/// 下载模型的本地目录:<app_local_data>/localvqe/models(自动创建)。
-fn localvqe_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let base = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
-    let dir = base.join("localvqe").join("models");
+fn verify_localvqe_model_file(path: &Path, pin: &LocalVqeModelPin) -> Result<(), String> {
+    verify_pinned_file(path, pin.sha256, pin.size, "LocalVQE 模型")
+}
+
+fn verify_localvqe_native_file(path: &Path, pin: &LocalVqeNativeAssetPin) -> Result<(), String> {
+    let sha256 = pin
+        .sha256
+        .ok_or_else(|| format!("LocalVQE native asset {} has no SHA256 pin", pin.filename))?;
+    let size = pin
+        .size
+        .ok_or_else(|| format!("LocalVQE native asset {} has no size pin", pin.filename))?;
+    verify_pinned_file(path, sha256, size, "LocalVQE native runtime")
+}
+
+fn localvqe_data_dir_path() -> PathBuf {
+    let (base, _) = echoless_paths::brand_data_root();
+    base.join("localvqe")
+}
+
+fn localvqe_models_dir_path() -> PathBuf {
+    localvqe_data_dir_path().join("models")
+}
+
+fn localvqe_native_dir_path() -> PathBuf {
+    localvqe_data_dir_path().join("native")
+}
+
+fn localvqe_native_dir() -> Result<PathBuf, String> {
+    let dir = localvqe_native_dir_path();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // 目录说明:用户手动放入的 .gguf 与应用内下载的模型都落在这里,引擎页自动检测。
+    Ok(dir)
+}
+
+/// Local directory for downloaded models: <brand data root>/localvqe/models.
+fn localvqe_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = localvqe_models_dir_path();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    migrate_legacy_localvqe_models(app, &dir);
+    // User-supplied and in-app downloaded .gguf files both live here.
     let readme = dir.join("README.txt");
     if !readme.exists() {
         let _ = std::fs::write(
@@ -850,7 +973,45 @@ fn localvqe_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn collect_gguf(dir: &Path, source: &str, out: &mut Vec<Value>) {
+fn migrate_legacy_localvqe_models(app: &tauri::AppHandle, dest_dir: &Path) {
+    let Ok(legacy_base) = app.path().app_local_data_dir() else {
+        return;
+    };
+    let legacy_dir = legacy_base.join("localvqe").join("models");
+    if legacy_dir == dest_dir || !legacy_dir.is_dir() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(&legacy_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("gguf") {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        let dest = dest_dir.join(name);
+        if dest.exists() {
+            continue;
+        }
+        if let Err(rename_err) = std::fs::rename(&path, &dest) {
+            if let Err(copy_err) =
+                std::fs::copy(&path, &dest).and_then(|_| std::fs::remove_file(&path))
+            {
+                eprintln!(
+                    "LocalVQE legacy model migration skipped: {} -> {}: rename={rename_err}; copy={copy_err}",
+                    path.display(),
+                    dest.display()
+                );
+            }
+        }
+    }
+}
+
+fn collect_gguf(dir: &Path) -> Vec<Value> {
+    let mut models = Vec::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
             let p = e.path();
@@ -858,17 +1019,21 @@ fn collect_gguf(dir: &Path, source: &str, out: &mut Vec<Value>) {
                 continue;
             }
             if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                if out.iter().any(|m| m["filename"] == name) {
-                    continue; // 下载目录优先,避免与打包资源重名重复
-                }
-                out.push(serde_json::json!({
+                models.push(serde_json::json!({
                     "filename": name,
                     "path": p.to_string_lossy(),
-                    "source": source,
+                    "source": "downloaded",
                 }));
             }
         }
     }
+    models.sort_by(|a, b| {
+        a["filename"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(b["filename"].as_str().unwrap_or_default())
+    });
+    models
 }
 
 fn collect_native_files(dir: &Path) -> Vec<String> {
@@ -887,29 +1052,80 @@ fn collect_native_files(dir: &Path) -> Vec<String> {
     files
 }
 
-/// 列出可用 LocalVQE 模型(下载目录 + 打包资源里的 .gguf),供引擎页选择。
+fn current_localvqe_native_package() -> LocalVqeNativePackage {
+    if TAURI_TARGET_TRIPLE == "aarch64-apple-darwin" {
+        return LocalVqeNativePackage {
+            platform: TAURI_TARGET_TRIPLE,
+            published: true,
+            message: None,
+            assets: LOCALVQE_NATIVE_MACOS_AARCH64,
+        };
+    }
+    if cfg!(windows) {
+        return LocalVqeNativePackage {
+            platform: TAURI_TARGET_TRIPLE,
+            published: false,
+            message: Some(
+                "LocalVQE Windows native runtime has not been published yet; upload localvqe.dll or set ECHOLESS_LOCALVQE_LIBRARY.",
+            ),
+            assets: LOCALVQE_NATIVE_WINDOWS_UNPUBLISHED,
+        };
+    }
+    LocalVqeNativePackage {
+        platform: TAURI_TARGET_TRIPLE,
+        published: false,
+        message: Some("LocalVQE native runtime is not published for this platform."),
+        assets: LOCALVQE_NATIVE_UNSUPPORTED,
+    }
+}
+
+fn localvqe_native_asset_url(
+    package: &LocalVqeNativePackage,
+    asset: &LocalVqeNativeAssetPin,
+) -> String {
+    format!(
+        "https://huggingface.co/LocalAI-io/LocalVQE/resolve/{LOCALVQE_HF_REVISION}/native/{}/{}",
+        package.platform, asset.filename
+    )
+}
+
+fn localvqe_native_manifest_value(native_dir: &Path) -> Value {
+    let package = current_localvqe_native_package();
+    let assets: Vec<Value> = package
+        .assets
+        .iter()
+        .map(|asset| {
+            json!({
+                "filename": asset.filename,
+                "url": localvqe_native_asset_url(&package, asset),
+                "sha256": asset.sha256,
+                "size": asset.size,
+                "published": package.published && asset.sha256.is_some() && asset.size.is_some(),
+            })
+        })
+        .collect();
+    json!({
+        "repo": "LocalAI-io/LocalVQE",
+        "revision": LOCALVQE_HF_REVISION,
+        "platform": package.platform,
+        "published": package.published,
+        "message": package.message,
+        "native_dir": native_dir.to_string_lossy(),
+        "assets": assets,
+    })
+}
+
+/// List available LocalVQE models from the single local model directory.
 #[tauri::command]
 fn localvqe_assets(app: tauri::AppHandle) -> Result<Value, String> {
     let dir = localvqe_models_dir(&app)?;
-    let mut models: Vec<Value> = vec![];
-    collect_gguf(&dir, "downloaded", &mut models);
-    if let Ok(res) = app.path().resolve(
-        "resources/localvqe/models",
-        tauri::path::BaseDirectory::Resource,
-    ) {
-        collect_gguf(&res, "bundled", &mut models);
-    }
+    let models = collect_gguf(&dir);
+    let native_dir = localvqe_native_dir()?;
     let cli = echoless_bin(Some(&app)).ok();
     let library = cli
         .as_deref()
         .and_then(|path| localvqe_library_path(Some(&app), path));
-    let native_dir = library
-        .as_ref()
-        .and_then(|path| path.parent().map(Path::to_path_buf));
-    let native_files = native_dir
-        .as_deref()
-        .map(collect_native_files)
-        .unwrap_or_default();
+    let native_files = collect_native_files(&native_dir);
     let process_tap_helper = cli
         .as_deref()
         .and_then(|path| process_tap_helper_bin(Some(&app), path));
@@ -918,8 +1134,9 @@ fn localvqe_assets(app: tauri::AppHandle) -> Result<Value, String> {
         "models": models,
         "native_ready": library.is_some(),
         "library_path": library.map(|p| p.to_string_lossy().to_string()),
-        "native_dir": native_dir.map(|p| p.to_string_lossy().to_string()),
+        "native_dir": native_dir.to_string_lossy(),
         "native_files": native_files,
+        "native_manifest": localvqe_native_manifest_value(&native_dir),
         "cli_path": cli.map(|p| p.to_string_lossy().to_string()),
         "process_tap_helper_path": process_tap_helper.map(|p| p.to_string_lossy().to_string()),
     }))
@@ -976,6 +1193,74 @@ fn download_localvqe_model_blocking(
     }
     std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// Download the current platform LocalVQE native runtime into the brand data root.
+#[tauri::command]
+async fn download_localvqe_native(app: tauri::AppHandle) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || download_localvqe_native_blocking(&app))
+        .await
+        .map_err(|e| format!("download LocalVQE native task join failed: {e}"))?
+}
+
+fn download_localvqe_native_blocking(app: &tauri::AppHandle) -> Result<Value, String> {
+    let package = current_localvqe_native_package();
+    if !package.published {
+        return Err(package
+            .message
+            .unwrap_or("LocalVQE native runtime is not published for this platform.")
+            .to_string());
+    }
+    let dir = localvqe_native_dir()?;
+    for asset in package.assets {
+        let dest = dir.join(asset.filename);
+        if dest.exists() {
+            match verify_localvqe_native_file(&dest, asset) {
+                Ok(()) => continue,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&dest);
+                }
+            }
+        }
+
+        let tmp = dir.join(format!("{}.part", asset.filename));
+        let _ = std::fs::remove_file(&tmp);
+        let url = localvqe_native_asset_url(&package, asset);
+        let mut curl = Command::new("curl");
+        curl.args(["-fL", "--retry", "2", "-o"]).arg(&tmp).arg(&url);
+        let out = command_output_with_timeout(
+            &mut curl,
+            MODEL_DOWNLOAD_TIMEOUT,
+            "LocalVQE native download",
+        )?;
+        if !out.status.success() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!(
+                "下载失败({url}): {}",
+                command_status_error("curl", &out)
+            ));
+        }
+        if let Err(err) = verify_localvqe_native_file(&tmp, asset) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(err);
+        }
+        std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+    }
+
+    if find_localvqe_library_in_dir(&dir).is_none() {
+        return Err(format!(
+            "LocalVQE native runtime downloaded but no platform library was found in {}",
+            dir.display()
+        ));
+    }
+
+    let manifest = localvqe_native_manifest_value(&dir);
+    let manifest_path = dir.join("localvqe-native-manifest.json");
+    let _ = std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?,
+    );
+    localvqe_assets(app.clone())
 }
 
 /// NVIDIA AFX / RTX AEC 引擎就绪探针。
@@ -1357,6 +1642,7 @@ pub fn run() {
             probe_delay,
             localvqe_assets,
             download_localvqe_model,
+            download_localvqe_native,
             nvafx_doctor,
             nvafx_install,
             nvafx_download_install,

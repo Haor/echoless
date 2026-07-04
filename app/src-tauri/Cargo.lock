@@ -777,6 +777,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 name = "echoless-app"
 version = "0.1.0"
 dependencies = [
+ "echoless-paths",
  "serde",
  "serde_json",
  "sha2",
@@ -785,6 +786,10 @@ dependencies = [
  "tauri-plugin-decorum",
  "tauri-plugin-dialog",
 ]
+
+[[package]]
+name = "echoless-paths"
+version = "0.1.0"
 
 [[package]]
 name = "embed-resource"

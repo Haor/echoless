@@ -8,13 +8,14 @@ import type {
 } from "../types";
 import {
   downloadLocalvqeModel,
+  downloadLocalvqeNative,
   localvqeAssets,
   openPath,
   type LocalvqeAssets,
 } from "../api";
 import { useI18n } from "../i18n";
 
-// LocalVQE 官方模型(HF repo)。default=随 app 打包的默认模型。
+// Official LocalVQE models from HF. The default is recommended, not bundled.
 const LVQE_MODELS: {
   file: string;
   ver: string;
@@ -279,9 +280,10 @@ export function EnginePage({
 }: Props) {
   const { t, lang } = useI18n();
 
-  // LocalVQE 可用模型(下载目录 + 打包资源);选中 localvqe 时拉取。
+  // Available LocalVQE models/native runtime.
   const [lvAssets, setLvAssets] = useState<LocalvqeAssets | null>(null);
   const [lvDl, setLvDl] = useState<string | null>(null);
+  const [lvNativeDl, setLvNativeDl] = useState(false);
   const [lvErr, setLvErr] = useState<string | null>(null);
   useEffect(() => {
     localvqeAssets().then(setLvAssets).catch(() => {});
@@ -297,6 +299,17 @@ export function EnginePage({
       setLvErr(String(e));
     } finally {
       setLvDl(null);
+    }
+  }
+  async function downloadNative() {
+    setLvNativeDl(true);
+    setLvErr(null);
+    try {
+      setLvAssets(await downloadLocalvqeNative());
+    } catch (e) {
+      setLvErr(String(e));
+    } finally {
+      setLvNativeDl(false);
     }
   }
 
@@ -357,6 +370,21 @@ export function EnginePage({
         >
           {t("lvqeOpenDir")} <span className="mk">↗</span>
         </button>
+        {lvAssets && !lvAssets.native_ready && (
+          <button
+            type="button"
+            className="dopen"
+            disabled={lvNativeDl}
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadNative();
+            }}
+            title={lvAssets.native_manifest?.message ?? lvAssets.native_dir ?? undefined}
+          >
+            {lvNativeDl ? t("lvqeDownloading") : t("lvqeGetRuntime")}{" "}
+            <span className="mk">↓</span>
+          </button>
+        )}
       </div>
       {lvAssets && !lvAssets.native_ready && (
         <div className="cdetail warn" title={lvAssets.native_dir ?? undefined}>

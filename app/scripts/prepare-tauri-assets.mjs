@@ -20,7 +20,6 @@ const valueOf = (flag) => {
 const dev = has("--dev");
 const skipCliBuild = has("--skip-cli-build");
 const skipHelperBuild = has("--skip-helper-build");
-const requireLocalvqe = has("--require-localvqe-assets");
 const profile = dev ? "debug" : "release";
 
 function run(cmd, cmdArgs, options = {}) {
@@ -138,28 +137,6 @@ function existsFile(p) {
   return Boolean(p) && fs.existsSync(p) && fs.statSync(p).isFile();
 }
 
-function* walkFiles(root) {
-  if (!root || !fs.existsSync(root)) return;
-  const entries = fs.readdirSync(root, { withFileTypes: true });
-  for (const entry of entries) {
-    const p = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      yield* walkFiles(p);
-    } else if (entry.isFile()) {
-      yield p;
-    }
-  }
-}
-
-function firstFile(root, predicate) {
-  const matches = [];
-  for (const file of walkFiles(root)) {
-    if (predicate(file)) matches.push(file);
-  }
-  matches.sort();
-  return matches[0] ?? null;
-}
-
 function prepareCliSidecar(targetTriple) {
   if (!skipCliBuild) {
     const cargo = resolveTool("cargo");
@@ -208,109 +185,11 @@ function prepareProcessTapHelper() {
   );
 }
 
-function prepareLocalvqeModel() {
-  const modelName = "localvqe-v1.3-4.8M-f32.gguf";
-  const dest = path.join(srcTauriDir, "resources", "localvqe", "models", modelName);
-  const candidates = [
-    process.env.ECHOLESS_LOCALVQE_MODEL,
-    process.env.LOCALVQE_MODEL,
-    process.env.RUNNER_TEMP
-      ? path.join(
-          process.env.RUNNER_TEMP,
-          "localvqe-regression-build",
-          "bench_assets",
-          modelName,
-        )
-      : null,
-    dest,
-  ].filter(Boolean);
-
-  let model = candidates.find(existsFile) ?? null;
-  if (!model && process.env.RUNNER_TEMP) {
-    model = firstFile(process.env.RUNNER_TEMP, (file) => path.basename(file) === modelName);
-  }
-
-  if (!model) {
-    const message = `LocalVQE model ${modelName} not found; bundled model will be absent`;
-    if (requireLocalvqe) throw new Error(message);
-    console.warn(`asset warning: ${message}`);
-    return false;
-  }
-
-  copyFile(model, dest);
-  return true;
-}
-
-function localvqeLibraryName(file) {
-  const name = path.basename(file);
-  if (process.platform === "win32") return name.toLowerCase() === "localvqe.dll";
-  if (process.platform === "darwin") return name.startsWith("liblocalvqe") && name.endsWith(".dylib");
-  return name.startsWith("liblocalvqe") && name.includes(".so");
-}
-
-function companionLibrary(file) {
-  const name = path.basename(file).toLowerCase();
-  if (process.platform === "win32") return name.endsWith(".dll");
-  return name.endsWith(".dylib") || name.includes(".so");
-}
-
-function prepareLocalvqeNative() {
-  const nativeDir = path.join(srcTauriDir, "resources", "localvqe", "native");
-  let library = existsFile(process.env.ECHOLESS_LOCALVQE_LIBRARY)
-    ? process.env.ECHOLESS_LOCALVQE_LIBRARY
-    : null;
-  if (!library && process.env.RUNNER_TEMP) {
-    library = firstFile(process.env.RUNNER_TEMP, localvqeLibraryName);
-  }
-  if (!library) {
-    library = firstFile(nativeDir, localvqeLibraryName);
-  }
-
-  if (!library) {
-    const message = "LocalVQE native library not found; bundled LocalVQE runtime will be absent";
-    if (requireLocalvqe) throw new Error(message);
-    console.warn(`asset warning: ${message}`);
-    return false;
-  }
-
-  ensureDir(nativeDir);
-  for (const file of fs.readdirSync(path.dirname(library)).map((name) => path.join(path.dirname(library), name))) {
-    if (existsFile(file) && companionLibrary(file)) {
-      copyFile(file, path.join(nativeDir, path.basename(file)));
-    }
-  }
-  return true;
-}
-
-function warnDegradedBundle(hasModel, hasNative) {
-  const missing = [];
-  if (!hasModel) missing.push("model (.gguf)");
-  if (!hasNative) missing.push("native runtime (liblocalvqe + ggml backends)");
-  const banner = "=".repeat(72);
-  console.warn(`\n${banner}`);
-  console.warn("⚠  RELEASE BUNDLE WILL SHIP WITHOUT LOCALVQE");
-  console.warn(`   missing: ${missing.join(", ")}`);
-  console.warn("   The packaged app will run, but enabling LocalVQE fails at runtime.");
-  console.warn("   For a release build, supply ECHOLESS_LOCALVQE_MODEL / ECHOLESS_LOCALVQE_LIBRARY");
-  console.warn("   (or RUNNER_TEMP assets) and re-run with --require-localvqe-assets to fail fast.");
-  console.warn(`${banner}\n`);
-}
-
 function main() {
   const targetTriple = rustTargetTriple();
   console.log(`Preparing Tauri assets for ${targetTriple} (${profile})`);
   prepareCliSidecar(targetTriple);
   prepareProcessTapHelper();
-  const hasModel = prepareLocalvqeModel();
-  const hasNative = prepareLocalvqeNative();
-  if (requireLocalvqe && (!hasModel || !hasNative)) {
-    throw new Error("LocalVQE assets are incomplete");
-  }
-  // 非 dev(发布打包)且缺 LocalVQE 资产时,不再静默产出退化包:打印醒目 banner。
-  // 仍保持退出码 0 以不破坏"只想打包测试 UI"的流程;发布请用 --require-localvqe-assets。
-  if (!dev && (!hasModel || !hasNative)) {
-    warnDegradedBundle(hasModel, hasNative);
-  }
 }
 
 try {

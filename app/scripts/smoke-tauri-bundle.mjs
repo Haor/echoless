@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,8 +14,6 @@ const valueOf = (flag) => {
   const i = args.indexOf(flag);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
 };
-
-const LOCALVQE_MODEL_NAME = "localvqe-v1.3-4.8M-f32.gguf";
 
 function existsFile(p) {
   return Boolean(p) && fs.existsSync(p) && fs.statSync(p).isFile();
@@ -203,69 +200,7 @@ function installedAppLayout(installDir) {
 
 function discoverResourcesDir(root) {
   const direct = path.join(root, "resources");
-  if (existsDir(direct)) return direct;
-  const model = firstFile(root, (file) => path.basename(file) === LOCALVQE_MODEL_NAME);
-  if (!model) return direct;
-  const modelsDir = path.dirname(model);
-  const localvqeDir = path.dirname(modelsDir);
-  return path.basename(localvqeDir).toLowerCase() === "localvqe"
-    ? path.dirname(localvqeDir)
-    : direct;
-}
-
-function localvqeLibraryName(file) {
-  const name = path.basename(file);
-  if (process.platform === "win32") return name.toLowerCase() === "localvqe.dll";
-  if (process.platform === "darwin") return name.startsWith("liblocalvqe") && name.endsWith(".dylib");
-  return name.startsWith("liblocalvqe") && name.includes(".so");
-}
-
-function writeSyntheticWav(file, samples, rate) {
-  const dataBytes = samples.length * 2;
-  const buffer = Buffer.alloc(44 + dataBytes);
-  buffer.write("RIFF", 0);
-  buffer.writeUInt32LE(36 + dataBytes, 4);
-  buffer.write("WAVE", 8);
-  buffer.write("fmt ", 12);
-  buffer.writeUInt32LE(16, 16);
-  buffer.writeUInt16LE(1, 20);
-  buffer.writeUInt16LE(1, 22);
-  buffer.writeUInt32LE(rate, 24);
-  buffer.writeUInt32LE(rate * 2, 28);
-  buffer.writeUInt16LE(2, 32);
-  buffer.writeUInt16LE(16, 34);
-  buffer.write("data", 36);
-  buffer.writeUInt32LE(dataBytes, 40);
-  samples.forEach((sample, i) => {
-    const clamped = Math.max(-1, Math.min(1, sample));
-    buffer.writeInt16LE(Math.round(clamped * 32767), 44 + i * 2);
-  });
-  fs.writeFileSync(file, buffer);
-}
-
-function makeSmokeWavs(dir) {
-  const rate = 48000;
-  const seconds = 2;
-  const frames = rate * seconds;
-  const ref = new Array(frames);
-  const mic = new Array(frames);
-  for (let n = 0; n < frames; n += 1) {
-    const t = n / rate;
-    const far = 0.2 * Math.sin(2 * Math.PI * 440 * t);
-    const near = t >= 0.55 && t <= 1.55 ? 0.08 * Math.sin(2 * Math.PI * 180 * t) : 0;
-    const echo = n >= 960 ? ref[n - 960] * 0.35 : 0;
-    ref[n] = far;
-    mic[n] = near + echo;
-  }
-  const micPath = path.join(dir, "smoke_mic.wav");
-  const refPath = path.join(dir, "smoke_ref.wav");
-  writeSyntheticWav(micPath, mic, rate);
-  writeSyntheticWav(refPath, ref, rate);
-  return { micPath, refPath };
-}
-
-function tomlString(value) {
-  return JSON.stringify(value);
+  return direct;
 }
 
 function run(cmd, cmdArgs, options = {}) {
@@ -304,67 +239,12 @@ function smoke() {
     }
   }
 
-  const localvqeRoot = path.join(layout.resources, "localvqe");
-  const model = path.join(localvqeRoot, "models", LOCALVQE_MODEL_NAME);
-  const nativeDir = path.join(localvqeRoot, "native");
-  const library = firstFile(nativeDir, localvqeLibraryName);
-  assertFile(model, "LocalVQE bundled model");
-  assertFile(library, "LocalVQE native library");
-
   const processors = run(layout.cli, ["processors", "--json"], { capture: true });
   const manifest = JSON.parse(processors.stdout);
   if (!manifest.processors?.some((p) => p.kind === "localvqe")) {
     throw new Error("processor manifest does not include localvqe");
   }
 
-  const smokeDir = fs.mkdtempSync(path.join(os.tmpdir(), "echoless-tauri-bundle-smoke-"));
-  const { micPath, refPath } = makeSmokeWavs(smokeDir);
-  const outPath = path.join(smokeDir, "smoke_localvqe_out.wav");
-  const configPath = path.join(smokeDir, "localvqe-bundle-smoke.toml");
-  fs.writeFileSync(
-    configPath,
-    [
-      `mic = ${tomlString(micPath)}`,
-      `reference = ${tomlString(refPath)}`,
-      `output = ${tomlString(outPath)}`,
-      "sample_rate = 48000",
-      "frame_ms = 10",
-      'reference_channels = "mono"',
-      "",
-      "[[chain]]",
-      'kind = "localvqe"',
-      `model = ${tomlString(model)}`,
-      `library = ${tomlString(library)}`,
-      "threads = 1",
-      "noise_gate = false",
-      "",
-    ].join("\n"),
-  );
-
-  const env = { ...process.env, ECHOLESS_LOCALVQE_LIBRARY: library };
-  const pathKey = process.platform === "win32" ? "PATH" : "PATH";
-  env[pathKey] = [nativeDir, env[pathKey]].filter(Boolean).join(path.delimiter);
-  env.LD_LIBRARY_PATH = [nativeDir, env.LD_LIBRARY_PATH].filter(Boolean).join(path.delimiter);
-  env.DYLD_LIBRARY_PATH = [nativeDir, env.DYLD_LIBRARY_PATH].filter(Boolean).join(path.delimiter);
-  env.DYLD_FALLBACK_LIBRARY_PATH = [nativeDir, env.DYLD_FALLBACK_LIBRARY_PATH]
-    .filter(Boolean)
-    .join(path.delimiter);
-
-  run(layout.cli, [
-    "offline",
-    "--config",
-    configPath,
-    "--mic",
-    micPath,
-    "--reference",
-    refPath,
-    "--out",
-    outPath,
-  ], { env });
-  const outStat = fs.statSync(outPath);
-  if (outStat.size <= 44) throw new Error(`LocalVQE output is empty: ${outPath}`);
-
-  console.log(`bundle-smoke: localvqe output=${outPath}`);
   console.log("bundle-smoke: ok");
 }
 

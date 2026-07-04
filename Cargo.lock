@@ -500,11 +500,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "echoless-paths"
+version = "0.1.0"
+
+[[package]]
 name = "echoless-processors"
 version = "0.1.0"
 dependencies = [
  "aec3-apm",
  "anyhow",
+ "echoless-paths",
  "libloading",
  "rubato",
  "serde",

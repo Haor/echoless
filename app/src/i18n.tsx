@@ -99,6 +99,7 @@ const D: Record<string, { en: string; zh: string }> = {
   lvqeCustom: { en: "pick local .gguf…", zh: "选本地 .gguf…" },
   lvqeGet: { en: "GET", zh: "下载" },
   lvqeOpenDir: { en: "open model folder", zh: "打开模型目录" },
+  lvqeGetRuntime: { en: "GET runtime", zh: "下载运行库" },
   lvqeSource: { en: "official repo", zh: "官方 repo" },
   lvqeRuntimeMissing: {
     en: "native runtime missing",
