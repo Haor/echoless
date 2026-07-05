@@ -127,6 +127,14 @@ function copyFile(src, dest) {
     console.log(`asset: ${path.relative(repoRoot, dest)} already present`);
     return;
   }
+  // 内容相同就不动:mac 上二进制字节稳定 = 代码签名哈希稳定 = TCC 授权存活。
+  if (fs.existsSync(dest) && fs.readFileSync(src).equals(fs.readFileSync(dest))) {
+    console.log(`asset: ${path.relative(repoRoot, dest)} unchanged`);
+    return;
+  }
+  // 必须换新 inode(先删再拷):就地覆盖已签名的 Mach-O 会让内核签名缓存失配,
+  // 下次 exec 直接 SIGKILL(2026-07-05 实证:helper 被杀、无 stderr)。
+  fs.rmSync(dest, { force: true });
   fs.copyFileSync(src, dest);
   if (process.platform !== "win32") {
     const mode = fs.statSync(src).mode;
