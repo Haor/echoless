@@ -48,8 +48,10 @@ which measurably improves long-session stability on loopback-style paths.
 
 ### LocalVQE (neural, experimental)
 
-[LocalVQE](https://huggingface.co/LocalAI-io/LocalVQE) (Apache-2.0, by Richard
-Palethorpe and Claude) is a family of compact neural models for echo
+[LocalVQE](https://github.com/localai-org/LocalVQE) provides the Apache-2.0
+runtime code; its official models are published separately on
+[Hugging Face](https://huggingface.co/LocalAI-io/LocalVQE). By Richard
+Palethorpe and Claude, LocalVQE is a family of compact neural models for echo
 cancellation, noise suppression and dereverberation of 16 kHz speech, running
 in real time on ordinary CPUs. It is a streaming, CPU-tuned derivative of
 Microsoft's **DeepVQE** at roughly a tenth of the parameter count. Echoless
@@ -171,8 +173,9 @@ DeepVQE paper:
   [WebRTC project](https://webrtc.org)'s audio processing module, via the
   [sonora](https://github.com/dignifiedquire/sonora) Rust port (fully
   internalized) — BSD-3-Clause ([aec3/LICENSE](aec3/LICENSE)).
-- **LocalVQE** models and runtime are Apache-2.0, © Richard Palethorpe and
-  Claude (Anthropic). Not for emergency or safety-critical use (see the
+- **LocalVQE** runtime code and models are Apache-2.0, © Richard Palethorpe
+  and Claude (Anthropic). Not for emergency or safety-critical use (see the
+  [code repository](https://github.com/localai-org/LocalVQE) and
   [model card](https://huggingface.co/LocalAI-io/LocalVQE)).
 - **NVAFX** uses the NVIDIA Maxine Audio Effects SDK under the
   [NVIDIA SDK License](https://developer.nvidia.com/downloads/maxine-sdk-license);
