@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  type Dispatch,
+  type MutableRefObject,
+} from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -283,6 +291,15 @@ type EngineState = {
   params: Record<string, unknown>;
 };
 
+type Override = Partial<{
+  mic: string;
+  output: string;
+  reference: string;
+  kind: string;
+  pipeline: PipelineCfg;
+  params: Record<string, unknown>;
+}>;
+
 type Patch<T> = Partial<T> | ((state: T) => T);
 
 function patchReducer<T>(state: T, patch: Patch<T>): T {
@@ -414,122 +431,30 @@ function initAppState(): AppState {
   }
 }
 
-function useAppController() {
-  const [appState, updateApp] = useReducer(
-    patchReducer<AppState>,
-    undefined,
-    initAppState,
-  );
+type DeviceEnumerationDeps = {
+  doctorRef: MutableRefObject<DoctorAudio | null>;
+  powerOnRef: MutableRefObject<boolean>;
+  telRef: MutableRefObject<Telemetry>;
+  applyChangeRef: MutableRefObject<(next: Override) => void>;
+  updateApp: Dispatch<Patch<AppState>>;
+  noteError: (err: string | null) => void;
+};
+
+function useDeviceEnumeration({
+  doctorRef,
+  powerOnRef,
+  telRef,
+  applyChangeRef,
+  updateApp,
+  noteError,
+}: DeviceEnumerationDeps) {
   const [selection, updateSelection] = useReducer(
     patchReducer<SelectionState>,
     undefined,
     initSelection,
   );
-  const [engineState, updateEngine] = useReducer(
-    patchReducer<EngineState>,
-    undefined,
-    initEngineState,
-  );
-  const {
-    platform,
-    devices,
-    processors,
-    powerOn,
-    busy,
-    err,
-    view,
-    doctor,
-    nvafx,
-    nvafxBusy,
-    dev,
-    devRtxState,
-    devMicState,
-    devPlatform,
-    io,
-    rec,
-    bypassed,
-    bypassPending,
-    diagSeconds,
-    diagDir,
-  } = appState;
-  const { selInput, selOutput, reference } = selection;
-  const { kind, pipeline, params } = engineState;
-
-  const telRef = useRef<Telemetry>({ mic: -120, ref: -120, out: -120, on: false });
-  // 当前 run 实际生效的参考源(由 started 给出),供 status 判断是否 Process Tap。
-  const refSourceRef = useRef<string | null>(null);
-  const cliVersionRef = useRef<string | null>(null);
-  const runControlsRef = useRef<Set<string> | null>(null);
-  // 子进程最近一条 stderr 日志(用于在非预期退出时报错)。
-  const lastLogRef = useRef<string>("");
-  const powerOnRef = useRef(powerOn);
-  powerOnRef.current = powerOn;
-  const probeBorrowedRunRef = useRef(false);
-  // 供 refreshDevices(mount 时创建的稳定回调)读到最新选择 / 触发最新 applyChange,
-  // 避免闭包里的陈旧 selection 把用户后来改过的设备写回 toml。
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
-  const applyChangeRef = useRef(applyChange);
-  applyChangeRef.current = applyChange;
-  const doctorRef = useRef(doctor);
-  doctorRef.current = doctor;
-  const pipelineRef = useRef(pipeline);
-  pipelineRef.current = pipeline;
-  const paramsRef = useRef(params);
-  paramsRef.current = params;
-  // 记住每个引擎的参数(如 LocalVQE 选的模型),切换引擎再切回来不丢。跨重启持久化。
-  const paramsByKind = useRef<Record<string, Record<string, unknown>>>(
-    SAVED_ENGINE.paramsByKind ?? {},
-  );
-  const recRef = useRef(rec);
-  recRef.current = rec;
-  const diagSecondsRef = useRef(diagSeconds);
-  diagSecondsRef.current = diagSeconds;
-  const diagDirRef = useRef(diagDir);
-  diagDirRef.current = diagDir;
-  const { t } = useI18n();
-
-  const noteError = useCallback((err: string | null) => {
-    updateApp({ err });
-  }, []);
-
-  const gotoView = useCallback((view: View) => {
-    updateApp({ view });
-  }, []);
-
-  const chooseDevRtxState = useCallback((devRtxState: RtxState) => {
-    updateApp({ devRtxState });
-  }, []);
-
-  const chooseDevMicState = useCallback((devMicState: MicState) => {
-    updateApp({ devMicState });
-  }, []);
-
-  const kindRef = useRef(kind);
-  kindRef.current = kind;
-
-  const hasRunControl = useCallback((cmd: string): boolean => {
-    return runControlsRef.current?.has(cmd) ?? false;
-  }, []);
-
-  const reportMissingRunControl = useCallback((cmd: string) => {
-    noteError(
-      `CLI ${cliVersionRef.current ?? "unknown"} does not support runtime control "${cmd}". Rebuild or replace the bundled echoless CLI.`,
-    );
-  }, [noteError]);
-
-  // 录制就地起停命令(运行中改录制态用 stdin,不重启 run)。
-  const startDiag = useCallback(() => {
-    if (!hasRunControl("start_diagnostics")) {
-      reportMissingRunControl("start_diagnostics");
-      return;
-    }
-    if (diagDirRef.current) {
-      startDiagnostics(diagDirRef.current, diagSecondsRef.current).catch((e) =>
-        noteError(String(e)),
-      );
-    }
-  }, [hasRunControl, noteError, reportMissingRunControl]);
 
   const refreshDevices = useCallback(() => {
     listDevices()
@@ -585,7 +510,135 @@ function useAppController() {
         }
       })
       .catch((e) => noteError(String(e)));
+  }, [applyChangeRef, doctorRef, noteError, powerOnRef, telRef, updateApp]);
+
+  useEffect(() => {
+    saveDeviceSelection({
+      input: selection.selInput,
+      output: selection.selOutput,
+      reference: selection.reference,
+    });
+  }, [selection.selInput, selection.selOutput, selection.reference]);
+
+  return { selection, updateSelection, refreshDevices };
+}
+
+function useAppController() {
+  const [appState, updateApp] = useReducer(
+    patchReducer<AppState>,
+    undefined,
+    initAppState,
+  );
+  const [engineState, updateEngine] = useReducer(
+    patchReducer<EngineState>,
+    undefined,
+    initEngineState,
+  );
+  const {
+    platform,
+    devices,
+    processors,
+    powerOn,
+    busy,
+    err,
+    view,
+    doctor,
+    nvafx,
+    nvafxBusy,
+    dev,
+    devRtxState,
+    devMicState,
+    devPlatform,
+    io,
+    rec,
+    bypassed,
+    bypassPending,
+    diagSeconds,
+    diagDir,
+  } = appState;
+  const { kind, pipeline, params } = engineState;
+
+  const telRef = useRef<Telemetry>({ mic: -120, ref: -120, out: -120, on: false });
+  // 当前 run 实际生效的参考源(由 started 给出),供 status 判断是否 Process Tap。
+  const refSourceRef = useRef<string | null>(null);
+  const cliVersionRef = useRef<string | null>(null);
+  const runControlsRef = useRef<Set<string> | null>(null);
+  // 子进程最近一条 stderr 日志(用于在非预期退出时报错)。
+  const lastLogRef = useRef<string>("");
+  const powerOnRef = useRef(powerOn);
+  powerOnRef.current = powerOn;
+  const probeBorrowedRunRef = useRef(false);
+  const applyChangeRef = useRef(applyChange);
+  applyChangeRef.current = applyChange;
+  const doctorRef = useRef(doctor);
+  doctorRef.current = doctor;
+  const pipelineRef = useRef(pipeline);
+  pipelineRef.current = pipeline;
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
+  // 记住每个引擎的参数(如 LocalVQE 选的模型),切换引擎再切回来不丢。跨重启持久化。
+  const paramsByKind = useRef<Record<string, Record<string, unknown>>>(
+    SAVED_ENGINE.paramsByKind ?? {},
+  );
+  const recRef = useRef(rec);
+  recRef.current = rec;
+  const diagSecondsRef = useRef(diagSeconds);
+  diagSecondsRef.current = diagSeconds;
+  const diagDirRef = useRef(diagDir);
+  diagDirRef.current = diagDir;
+  const { t } = useI18n();
+
+  const noteError = useCallback((err: string | null) => {
+    updateApp({ err });
+  }, []);
+
+  const { selection, updateSelection, refreshDevices } = useDeviceEnumeration({
+    doctorRef,
+    powerOnRef,
+    telRef,
+    applyChangeRef,
+    updateApp,
+    noteError,
+  });
+  const { selInput, selOutput, reference } = selection;
+
+  const gotoView = useCallback((view: View) => {
+    updateApp({ view });
+  }, []);
+
+  const chooseDevRtxState = useCallback((devRtxState: RtxState) => {
+    updateApp({ devRtxState });
+  }, []);
+
+  const chooseDevMicState = useCallback((devMicState: MicState) => {
+    updateApp({ devMicState });
+  }, []);
+
+  const kindRef = useRef(kind);
+  kindRef.current = kind;
+
+  const hasRunControl = useCallback((cmd: string): boolean => {
+    return runControlsRef.current?.has(cmd) ?? false;
+  }, []);
+
+  const reportMissingRunControl = useCallback((cmd: string) => {
+    noteError(
+      `CLI ${cliVersionRef.current ?? "unknown"} does not support runtime control "${cmd}". Rebuild or replace the bundled echoless CLI.`,
+    );
   }, [noteError]);
+
+  // 录制就地起停命令(运行中改录制态用 stdin,不重启 run)。
+  const startDiag = useCallback(() => {
+    if (!hasRunControl("start_diagnostics")) {
+      reportMissingRunControl("start_diagnostics");
+      return;
+    }
+    if (diagDirRef.current) {
+      startDiagnostics(diagDirRef.current, diagSecondsRef.current).catch((e) =>
+        noteError(String(e)),
+      );
+    }
+  }, [hasRunControl, noteError, reportMissingRunControl]);
 
   // 平台 + 设备/处理器枚举 + 事件订阅
   useEffect(() => {
@@ -817,14 +870,6 @@ function useAppController() {
     return () => window.removeEventListener("keydown", onKey);
   }, [gotoView, view]);
 
-  useEffect(() => {
-    saveDeviceSelection({
-      input: selInput,
-      output: selOutput,
-      reference,
-    });
-  }, [selInput, selOutput, reference]);
-
   // 桌面 app:禁用 Tab 键焦点移动(避免按钮出现键盘选中框)。
   useEffect(() => {
     const onTab = (e: KeyboardEvent) => {
@@ -946,15 +991,6 @@ function useAppController() {
     if (k === "nvidia_afx_aec") return dev || Boolean(nvafx?.ok);
     return true;
   }
-
-  type Override = Partial<{
-    mic: string;
-    output: string;
-    reference: string;
-    kind: string;
-    pipeline: PipelineCfg;
-    params: Record<string, unknown>;
-  }>;
 
   function currentToml(over?: Override) {
     return buildConfigToml({
