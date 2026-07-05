@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::env;
-use std::fs::{create_dir_all, File};
+use std::fs::{create_dir_all, remove_dir_all, rename, File};
 use std::io::{copy, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -408,8 +408,10 @@ fn install_nvafx_runtime(
 ) -> Result<echoless_processors::nvafx::DoctorReport> {
     let (runtime_dir, runtime_dir_source) =
         echoless_processors::nvafx::resolve_runtime_dir(request.runtime_dir);
-    create_dir_all(&runtime_dir)
-        .with_context(|| format!("创建 runtime 目录失败: {}", runtime_dir.display()))?;
+    if let Some(parent) = runtime_dir.parent() {
+        create_dir_all(parent)
+            .with_context(|| format!("创建 runtime 父目录失败: {}", parent.display()))?;
+    }
 
     let common_expected = request
         .common_sha256
@@ -432,14 +434,18 @@ fn install_nvafx_runtime(
 
     install_log(
         request.log_to_stderr,
-        format!("解压 common runtime 到 {}", runtime_dir.display()),
+        format!(
+            "解压 common runtime 到 staging 后切换 {}",
+            runtime_dir.display()
+        ),
     );
-    extract_zip(request.common_zip, &runtime_dir)?;
+    let staging_dir = unique_install_staging_dir(&runtime_dir)?;
+    extract_zip(request.common_zip, &staging_dir)?;
     install_log(
         request.log_to_stderr,
-        format!("解压 model 到 {}", runtime_dir.display()),
+        format!("解压 model 到 staging: {}", staging_dir.display()),
     );
-    extract_zip(request.model_zip, &runtime_dir)?;
+    extract_zip(request.model_zip, &staging_dir)?;
 
     let installed_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -456,15 +462,23 @@ fn install_nvafx_runtime(
         "model_sha256": model_hash,
         "install_source": request.install_source,
     });
-    let manifest_path = runtime_dir.join("echoless-runtime-install-manifest.json");
+    let manifest_path = staging_dir.join("echoless-runtime-install-manifest.json");
     let mut file = File::create(&manifest_path)
         .with_context(|| format!("写入安装 manifest 失败: {}", manifest_path.display()))?;
     file.write_all(serde_json::to_string_pretty(&manifest)?.as_bytes())?;
     file.write_all(b"\n")?;
+    drop(file);
+
+    replace_dir_with_staging(&runtime_dir, &staging_dir)?;
 
     install_log(
         request.log_to_stderr,
-        format!("安装 manifest: {}", manifest_path.display()),
+        format!(
+            "安装 manifest: {}",
+            runtime_dir
+                .join("echoless-runtime-install-manifest.json")
+                .display()
+        ),
     );
     echoless_processors::nvafx::doctor_report(Some(&runtime_dir))
 }
@@ -629,16 +643,34 @@ fn download_file(url: &str, dest: &Path, label: &str, log_to_stderr: bool) -> Re
         create_dir_all(parent)
             .with_context(|| format!("创建下载目录失败: {}", parent.display()))?;
     }
+    let tmp = dest.with_extension(format!(
+        "{}part",
+        dest.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| format!("{ext}."))
+            .unwrap_or_default()
+    ));
+    let _ = std::fs::remove_file(&tmp);
     install_log(log_to_stderr, format!("下载 {label}: {url}"));
-    match download_with_powershell(url, dest) {
-        Ok(()) => Ok(()),
+    match download_with_powershell(url, &tmp) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(dest);
+            rename(&tmp, dest).with_context(|| {
+                format!("提交下载文件失败: {} -> {}", tmp.display(), dest.display())
+            })
+        }
         Err(power_shell_err) => {
+            let _ = std::fs::remove_file(&tmp);
             install_log(
                 log_to_stderr,
                 format!("PowerShell 下载失败,尝试 curl.exe: {power_shell_err:#}"),
             );
-            download_with_curl(url, dest)
-                .with_context(|| format!("PowerShell 下载也失败: {power_shell_err:#}"))
+            download_with_curl(url, &tmp)
+                .with_context(|| format!("PowerShell 下载也失败: {power_shell_err:#}"))?;
+            let _ = std::fs::remove_file(dest);
+            rename(&tmp, dest).with_context(|| {
+                format!("提交下载文件失败: {} -> {}", tmp.display(), dest.display())
+            })
         }
     }
 }
@@ -830,6 +862,62 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+fn unique_install_staging_dir(runtime_dir: &Path) -> Result<PathBuf> {
+    let parent = runtime_dir
+        .parent()
+        .with_context(|| format!("runtime 目录缺少父目录: {}", runtime_dir.display()))?;
+    let name = runtime_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("nvafx-runtime");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("系统时间早于 UNIX_EPOCH")?
+        .as_nanos();
+    let staging = parent.join(format!("{name}.installing-{}-{nanos}", std::process::id()));
+    if staging.exists() {
+        remove_dir_all(&staging)
+            .with_context(|| format!("清理旧 staging 目录失败: {}", staging.display()))?;
+    }
+    create_dir_all(&staging)
+        .with_context(|| format!("创建 staging 目录失败: {}", staging.display()))?;
+    Ok(staging)
+}
+
+fn replace_dir_with_staging(runtime_dir: &Path, staging_dir: &Path) -> Result<()> {
+    let backup_dir = runtime_dir.with_extension(format!(
+        "previous-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("系统时间早于 UNIX_EPOCH")?
+            .as_nanos()
+    ));
+    let had_previous = runtime_dir.exists();
+    if had_previous {
+        rename(runtime_dir, &backup_dir).with_context(|| {
+            format!(
+                "移动旧 runtime 目录失败: {} -> {}",
+                runtime_dir.display(),
+                backup_dir.display()
+            )
+        })?;
+    }
+    if let Err(err) = rename(staging_dir, runtime_dir) {
+        if had_previous {
+            let _ = rename(&backup_dir, runtime_dir);
+        }
+        bail!(
+            "提交 runtime staging 目录失败: {} -> {}: {err}",
+            staging_dir.display(),
+            runtime_dir.display()
+        );
+    }
+    if had_previous {
+        let _ = remove_dir_all(backup_dir);
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_nvafx_constraints(cfg: &PipelineConfig) -> Result<()> {
     if !cfg.chain.iter().any(|node| node.kind == "nvidia_afx_aec") {
         return Ok(());
@@ -1001,5 +1089,30 @@ mod tests {
         assert_eq!(actual, expected);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn replace_dir_with_staging_swaps_runtime_tree() {
+        let root = env::temp_dir().join(format!(
+            "echoless-nvafx-staging-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let runtime = root.join("runtime");
+        let staging = unique_install_staging_dir(&runtime).unwrap();
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::write(runtime.join("old.txt"), b"old").unwrap();
+        std::fs::write(staging.join("new.txt"), b"new").unwrap();
+
+        replace_dir_with_staging(&runtime, &staging).unwrap();
+
+        assert!(!staging.exists());
+        assert!(!runtime.join("old.txt").exists());
+        assert_eq!(std::fs::read(runtime.join("new.txt")).unwrap(), b"new");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
