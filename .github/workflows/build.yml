@@ -114,13 +114,16 @@ jobs:
         run: |
           set -euo pipefail
           cargo audit
-          # app/src-tauri 的两条 ignore 均为 tauri v2 Linux GTK3/托盘图标栈锁死的
-          # 传递依赖(仅 Linux 目标编译,mac/win 构建不含);等 tauri 上游升级后移除:
-          #   RUSTSEC-2024-0429  glib 0.18(VariantStrIter unsound)
-          #   RUSTSEC-2026-0186  memmap2 0.5.10(linicon 托盘图标链)
+          # app/src-tauri 的 ignore 均为 tauri v2 锁死的传递依赖,等上游升级后移除:
+          #   RUSTSEC-2024-0429  glib 0.18(VariantStrIter unsound;仅 Linux 目标编译)
+          #   RUSTSEC-2026-0186  memmap2 0.5.10(linicon 托盘图标链;仅 Linux)
+          #   RUSTSEC-2026-0194/0195  quick-xml 0.39(DoS 类解析问题;补丁在 0.41,
+          #     tauri 系 pin ^0.39,无法本地升级)
           (cd app/src-tauri && cargo audit \
             --ignore RUSTSEC-2024-0429 \
-            --ignore RUSTSEC-2026-0186)
+            --ignore RUSTSEC-2026-0186 \
+            --ignore RUSTSEC-2026-0194 \
+            --ignore RUSTSEC-2026-0195)
           (cd aec3 && cargo audit)
 
       - name: LocalVQE C API regression
