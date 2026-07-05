@@ -541,40 +541,24 @@ export function AdvancedPage({
             />
           </span>
         </div>
-        {/* P5 前端侧:托盘偏好(仅 Windows;Rust 端非 Windows 强制 false) */}
+        {/* P5 前端侧:托盘偏好(仅 Windows;Rust 端非 Windows 强制 false)。
+            只留「关闭到托盘」一个开关 —— 最小化到托盘退役(用户定案 2026-07-05) */}
         {platform === "windows" && (
-          <>
-            <div className="arow">
-              <Hint text={t("trayMinimizeHint")}>
-                <span className="alabel">{t("trayMinimize")}</span>
-              </Hint>
-              <span className="aval">
-                <SegButtons
-                  value={trayPrefs.minimizeToTray ? "on" : "off"}
-                  options={[
-                    { value: "on", label: "ON" },
-                    { value: "off", label: "OFF" },
-                  ]}
-                  onChange={(v) => onTrayPrefs({ minimizeToTray: v === "on" })}
-                />
-              </span>
-            </div>
-            <div className="arow">
-              <Hint text={t("trayCloseHint")}>
-                <span className="alabel">{t("trayClose")}</span>
-              </Hint>
-              <span className="aval">
-                <SegButtons
-                  value={trayPrefs.closeToTray ? "on" : "off"}
-                  options={[
-                    { value: "on", label: "ON" },
-                    { value: "off", label: "OFF" },
-                  ]}
-                  onChange={(v) => onTrayPrefs({ closeToTray: v === "on" })}
-                />
-              </span>
-            </div>
-          </>
+          <div className="arow">
+            <Hint text={t("trayCloseHint")}>
+              <span className="alabel">{t("trayClose")}</span>
+            </Hint>
+            <span className="aval">
+              <SegButtons
+                value={trayPrefs.closeToTray ? "on" : "off"}
+                options={[
+                  { value: "on", label: "ON" },
+                  { value: "off", label: "OFF" },
+                ]}
+                onChange={(v) => onTrayPrefs({ closeToTray: v === "on" })}
+              />
+            </span>
+          </div>
         )}
       </div>
     </div>

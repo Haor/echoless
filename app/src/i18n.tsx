@@ -263,12 +263,7 @@ const D: Record<string, { en: string; zh: string }> = {
   probeFilled: { en: "filled into Near Delay", zh: "已填入近端延迟" },
   probeInit: { en: "init", zh: "初始延迟" },
 
-  // Session · Windows 托盘偏好(P5)
-  trayMinimize: { en: "Minimize to Tray", zh: "最小化到托盘" },
-  trayMinimizeHint: {
-    en: "Minimizing hides the window into the system tray; audio keeps running.",
-    zh: "最小化时窗口收进系统托盘,音频链路不中断。",
-  },
+  // Session · Windows 托盘偏好(P5;只留「关闭到托盘」,最小化开关退役 2026-07-05)
   trayClose: { en: "Close to Tray", zh: "关闭到托盘" },
   trayCloseHint: {
     en: "Closing hides to tray instead of quitting. Quit via tray menu.",

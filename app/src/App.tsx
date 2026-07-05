@@ -93,18 +93,17 @@ const REQUIRED_RUN_CONTROLS = [
 const DEVICE_SELECTION_KEY = "echoless.deviceSelection.v1";
 
 // Windows 托盘偏好(P5 契约):持久化在前端,启动/变更时推给 Rust。
+// UI 只留「关闭到托盘」一个开关(用户定案 2026-07-05:符合一般使用习惯);
+// 最小化到托盘退役,Rust 端恒收 false(旧存档里的 minimizeToTray 忽略)。
 const TRAY_PREFS_KEY = "echoless.trayPrefs.v1";
-export type TrayPrefsState = { minimizeToTray: boolean; closeToTray: boolean };
+export type TrayPrefsState = { closeToTray: boolean };
 function readTrayPrefs(): TrayPrefsState {
   try {
     const raw = localStorage.getItem(TRAY_PREFS_KEY);
     const p = raw ? JSON.parse(raw) : null;
-    return {
-      minimizeToTray: Boolean(p?.minimizeToTray),
-      closeToTray: Boolean(p?.closeToTray),
-    };
+    return { closeToTray: Boolean(p?.closeToTray) };
   } catch {
-    return { minimizeToTray: false, closeToTray: false };
+    return { closeToTray: false };
   }
 }
 
@@ -402,7 +401,7 @@ function initAppState(): AppState {
     return {
       ...INITIAL_APP_STATE,
       view: views.includes(v as View) ? (v as View) : "overview",
-      dev: q.has("dev"),
+      dev: import.meta.env.DEV && q.has("dev"),
       devWin: q.get("os") === "win",
     };
   } catch {
@@ -823,7 +822,10 @@ function useAppController() {
   }, []);
 
   // 开发态快捷键:按 ~ 切换(在输入框里则正常输入,不触发)。
+  // 仅 dev 构建存在:正式包 import.meta.env.DEV=false,快捷键与 dev 模式
+  // 一并从产物里消失(?dev=1 直链在 Tauri 里本就没有 query,双保险)。
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     const onTilde = (e: KeyboardEvent) => {
       if (e.key !== "~") return;
       const el = document.activeElement;
@@ -837,6 +839,7 @@ function useAppController() {
 
   // 开发态下按 `(同一物理键不按 Shift)在 Windows / macOS 模拟平台间切换。
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     const onBacktick = (e: KeyboardEvent) => {
       if (e.key !== "`") return;
       const el = document.activeElement;
@@ -1346,9 +1349,7 @@ function useAppController() {
     } catch {
       /* 持久化失败不阻塞 */
     }
-    setTrayPrefs(trayPrefs.minimizeToTray, trayPrefs.closeToTray).catch(
-      () => {},
-    );
+    setTrayPrefs(false, trayPrefs.closeToTray).catch(() => {});
   }, [trayPrefs]);
 
   // zmeta 版本号(tauri.conf.json 为源)。
