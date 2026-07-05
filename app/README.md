@@ -45,11 +45,11 @@ pnpm tauri build        # 打包
 
 平台由 `get_platform` 命令返回,前端切 `.window.mac` / `.window.win`。
 
-## 已知 TODO
+## 当前边界
 
 - **真实波形**:目前三路示波是 dBFS 包络驱动的合成曲线(`Scope.tsx`)。后端若在 status event 加入 `mic_wave/ref_wave/out_wave`(降采样 peak/RMS 数组),`Scope` 已前向兼容,会自动改画真实波形。
 - **macOS 红绿灯垂直居中**:当前用 Overlay 默认位置。需要 inset 时接 `tauri-plugin-decorum` 的 `set_traffic_lights_inset` 或 trafficlights-positioner。
-- **sidecar 打包**:dev 走相对路径;`tauri build` 需把 `echoless` 配成 `externalBin` 并由 `ECHOLESS_BIN` 注入路径。
-- **虚拟声卡引导**:等后端 `doctor audio --json`(检测 VB-CABLE/BlackHole 安装态)。
-- **Advanced / Diagnostics**:页面待设计(footer 入口已占位)。
-- LocalVQE / RTX 选中后需各自必填参数(model 路径等),当前仅 AEC3 全链路打通。
+- **sidecar 打包**:`tauri.conf.json` 已声明 `externalBin` 和 bundle resources;本地打包前仍需先构建 release CLI 并运行 `pnpm prepare:tauri-assets`。
+- **虚拟声卡引导**:Mic Setup 已接入 `doctor audio --json` 检测与平台提示;驱动安装仍由用户完成。
+- **Advanced / Diagnostics**:页面已可用;新增诊断字段时同步更新 `types.ts` 与页面显示。
+- **LocalVQE / RTX**:LocalVQE 模型下载/选择与 RTX runtime 安装向导已接入,但仍依赖对应平台原生资产可用。
