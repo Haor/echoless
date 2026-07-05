@@ -10,6 +10,17 @@ import type {
   RunEvent,
   ValidateResult,
 } from "./types";
+import {
+  setAec3AgcControlLine,
+  setAec3NsControlLine,
+  setBypassControlLine,
+  setInitialDelayMsControlLine,
+  setLocalvqeNoiseGateControlLine,
+  setNearDelayMsControlLine,
+  setOutputLevelControlLine,
+  startDiagnosticsControlLine,
+  stopDiagnosticsControlLine,
+} from "./runtimeControls";
 
 export function getPlatform(): Promise<Platform> {
   return invoke<Platform>("get_platform");
@@ -148,44 +159,32 @@ export function startDiagnostics(
   recordDir: string,
   maxSeconds: number | null,
 ): Promise<void> {
-  return sendRunControl(
-    JSON.stringify({
-      cmd: "start_diagnostics",
-      record_dir: recordDir,
-      max_seconds: maxSeconds,
-    }),
-  );
+  return sendRunControl(startDiagnosticsControlLine(recordDir, maxSeconds));
 }
 export function stopDiagnostics(): Promise<void> {
-  return sendRunControl(JSON.stringify({ cmd: "stop_diagnostics" }));
+  return sendRunControl(stopDiagnosticsControlLine());
 }
 // 运行中实时改输出电平(0-100),逐 buffer 生效、零掉音。仅在 run 存活时调用。
 export function setOutputLevel(level: number): Promise<void> {
-  return sendRunControl(JSON.stringify({ cmd: "set_output_level", level }));
+  return sendRunControl(setOutputLevelControlLine(level));
 }
 // 运行中实时改近端对齐延迟(ms),只调整处理线程里的 delay buffer,不重启 run。
 export function setNearDelayMs(nearDelayMs: number): Promise<void> {
-  return sendRunControl(
-    JSON.stringify({ cmd: "set_near_delay_ms", near_delay_ms: nearDelayMs }),
-  );
+  return sendRunControl(setNearDelayMsControlLine(nearDelayMs));
 }
 export function setInitialDelayMs(initialDelayMs: number): Promise<void> {
-  return sendRunControl(
-    JSON.stringify({ cmd: "set_initial_delay_ms", initial_delay_ms: initialDelayMs }),
-  );
+  return sendRunControl(setInitialDelayMsControlLine(initialDelayMs));
 }
 export function setAec3Ns(ns: boolean, nsLevel: string): Promise<void> {
-  return sendRunControl(
-    JSON.stringify({ cmd: "set_aec3_ns", ns, ns_level: nsLevel }),
-  );
+  return sendRunControl(setAec3NsControlLine(ns, nsLevel));
 }
 export function setAec3Agc(agc: boolean): Promise<void> {
-  return sendRunControl(JSON.stringify({ cmd: "set_aec3_agc", agc }));
+  return sendRunControl(setAec3AgcControlLine(agc));
 }
 // P8-D1:穿透开关(OFF = mic 原样直通虚拟麦)。chain 级 bypass,AEC 保温,
 // 15ms crossfade;运行中实时生效。
 export function setBypass(enabled: boolean): Promise<void> {
-  return sendRunControl(JSON.stringify({ cmd: "set_bypass", enabled }));
+  return sendRunControl(setBypassControlLine(enabled));
 }
 // Windows 托盘偏好(P5 契约):
 // 启动时与每次变更时同步到 Rust;非 Windows 平台后端忽略。
@@ -197,11 +196,7 @@ export function setLocalvqeNoiseGate(
   noiseGateThresholdDbfs: number,
 ): Promise<void> {
   return sendRunControl(
-    JSON.stringify({
-      cmd: "set_localvqe_noise_gate",
-      noise_gate: noiseGate,
-      noise_gate_threshold_dbfs: noiseGateThresholdDbfs,
-    }),
+    setLocalvqeNoiseGateControlLine(noiseGate, noiseGateThresholdDbfs),
   );
 }
 

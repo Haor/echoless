@@ -90,17 +90,9 @@ import {
   resetRuntimeLive,
   setDiagnosticsSessionDir,
 } from "./runtimeTelemetry";
+import { REQUIRED_RUN_CONTROLS } from "./runtimeControls";
 
 const appWindow = getCurrentWindow();
-const REQUIRED_RUN_CONTROLS = [
-  "start_diagnostics",
-  "stop_diagnostics",
-  "set_output_level",
-  "set_near_delay_ms",
-  "set_initial_delay_ms",
-  "set_aec3_ns",
-  "set_aec3_agc",
-];
 
 const DEVICE_SELECTION_KEY = "echoless.deviceSelection.v1";
 
