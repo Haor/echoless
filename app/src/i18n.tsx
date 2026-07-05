@@ -181,6 +181,15 @@ const D: Record<string, { en: string; zh: string }> = {
   micPickInApp: { en: "In your call app pick mic:", zh: "在通话软件里把麦克风选成:" },
   micMissing: { en: "Virtual audio not installed", zh: "未安装虚拟声卡" },
   micInstallHint: { en: "Install a virtual audio device:", zh: "安装一个虚拟声卡:" },
+  micLinuxMissing: { en: "PipeWire null sink not found", zh: "未检测到 PipeWire null sink" },
+  micLinuxInstallHint: {
+    en: "Create the Echoless null sink in a terminal:",
+    zh: "在终端创建 Echoless null sink:",
+  },
+  micLinuxMonitorHint: {
+    en: 'In GNOME/KDE sound settings and your call app, choose "Monitor of Echoless-Output" as the microphone.',
+    zh: '在 GNOME/KDE 声音设置与通话软件里,把麦克风选成 "Monitor of Echoless-Output"。',
+  },
   micRebootAfter: { en: "reboot after install", zh: "装完需重启" },
   micIncomplete: { en: "Route incomplete", zh: "路由不完整" },
   micIncompleteHint: {

@@ -513,18 +513,20 @@ export function AdvancedPage({
         {backendParams.map(([key, spec]) => arow(key, key, spec))}
       </div>
 
-      <ProbeSection
-        platform={platform}
-        kind={kind}
-        pipeline={pipeline}
-        onPipeline={onPipeline}
-        onParam={onParam}
-        mic={mic}
-        reference={reference}
-        output={output}
-        running={running}
-        onSetRun={onSetRun}
-      />
+      {platform !== "linux" && (
+        <ProbeSection
+          platform={platform}
+          kind={kind}
+          pipeline={pipeline}
+          onPipeline={onPipeline}
+          onParam={onParam}
+          mic={mic}
+          reference={reference}
+          output={output}
+          running={running}
+          onSetRun={onSetRun}
+        />
+      )}
 
       <div className="asec">{t("secSession")}</div>
       <div className="acols">

@@ -17,6 +17,9 @@ const MIC_PRIVACY_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
 // mac 上路由只露一端,多半是 CoreAudio 没刷新 —— 重启它再 recheck。
 const MAC_RESTART_CMD = "sudo killall coreaudiod";
+const LINUX_NULL_SINK_CMD =
+  "pactl load-module module-null-sink sink_name=echoless_out sink_properties=device.description=Echoless-Output";
+const LINUX_MONITOR_MIC = "Monitor of Echoless-Output";
 
 interface Props {
   doctor: DoctorAudio | null;
@@ -53,9 +56,9 @@ export function MicSetupPage({
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
-  function copyCmd() {
+  function copyText(text: string) {
     navigator.clipboard
-      ?.writeText(MAC_RESTART_CMD)
+      ?.writeText(text)
       .then(() => {
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1200);
@@ -68,30 +71,43 @@ export function MicSetupPage({
   const micDev = doctor ? pickAppMic(doctor) : null;
 
   const routeReady =
-    doctor?.virtual_route_ready ??
-    ((doctor?.candidate_outputs.length ?? 0) > 0 &&
-      (doctor?.candidate_inputs.length ?? 0) > 0);
+    platform === "linux"
+      ? Boolean(doctor?.virtual_output_detected)
+      : (doctor?.virtual_route_ready ??
+        ((doctor?.candidate_outputs.length ?? 0) > 0 &&
+          (doctor?.candidate_inputs.length ?? 0) > 0));
   const installed = doctor
-    ? doctor.install_status !== "missing" ||
-      (doctor.candidate_outputs.length + doctor.candidate_inputs.length > 0)
+    ? platform === "linux"
+      ? doctor.virtual_output_detected
+      : doctor.install_status !== "missing" ||
+        (doctor.candidate_outputs.length + doctor.candidate_inputs.length > 0)
     : false;
   const isMac = platform === "macos";
+  const isLinux = platform === "linux";
   const permDenied = isMac && doctor?.permission_state === "denied";
   const permUndet = isMac && doctor?.permission_state === "undetermined";
+  const micName = isLinux ? (micDev?.name ?? LINUX_MONITOR_MIC) : (micDev?.name ?? "—");
+  const devStates = isLinux
+    ? MIC_DEV_STATES.filter((s) => s === "missing" || s === "ready")
+    : MIC_DEV_STATES;
 
   // 显式状态机(D4):检测 → 引导下载(missing)→ 装后未生效提示重启(reboot)
   // → 路由不完整(incomplete)→ 权限(mac)→ 完成。
   const state: MicState = !doctor
     ? "unknown"
-    : routeReady
-      ? permDenied
-        ? "permission"
-        : "ready"
-      : doctor.needs_reboot
-        ? "reboot"
-        : !installed
-          ? "missing"
-          : "incomplete";
+    : isLinux
+      ? routeReady
+        ? "ready"
+        : "missing"
+      : routeReady
+        ? permDenied
+          ? "permission"
+          : "ready"
+        : doctor.needs_reboot
+          ? "reboot"
+          : !installed
+            ? "missing"
+            : "incomplete";
 
   // 阶梯节点状态
   const node = (key: "driver" | "route" | "perm" | "ready"): string => {
@@ -118,7 +134,7 @@ export function MicSetupPage({
           <div className="wzh ok">✓ {t("micReady")}</div>
           <div className="wznote">
             {t("micPickInApp")}{" "}
-            <b style={{ color: "var(--live)" }}>{micDev?.name ?? "—"}</b>
+            <b style={{ color: "var(--live)" }}>{micName}</b>
           </div>
           {permUndet && <div className="wznote">{t("micPermUndet")}</div>}
         </div>
@@ -172,7 +188,11 @@ export function MicSetupPage({
           {isMac && (
             <div className="wzcmd">
               <code>{MAC_RESTART_CMD}</code>
-              <button type="button" className="dopen" onClick={copyCmd}>
+              <button
+                type="button"
+                className="dopen"
+                onClick={() => copyText(MAC_RESTART_CMD)}
+              >
                 {copied ? t("micCopied") : t("micCopy")}{" "}
                 <span className="mk">⧉</span>
               </button>
@@ -194,6 +214,30 @@ export function MicSetupPage({
       );
     }
     // missing / unknown
+    if (isLinux) {
+      return (
+        <div className="wzcard">
+          <div className="wzh warn">{t("micLinuxMissing")}</div>
+          <div className="wznote">{t("micLinuxInstallHint")}</div>
+          <div className="wzcmd">
+            <code>{LINUX_NULL_SINK_CMD}</code>
+            <button
+              type="button"
+              className="dopen"
+              onClick={() => copyText(LINUX_NULL_SINK_CMD)}
+            >
+              {copied ? t("micCopied") : t("micCopy")} <span className="mk">⧉</span>
+            </button>
+          </div>
+          <div className="wznote">{t("micLinuxMonitorHint")}</div>
+          <div className="wzgo">
+            <button type="button" className="dopen" onClick={onRecheck}>
+              {t("recheck")} <span className="mk">↻</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="wzcard">
         <div className="wzh warn">{t("micMissing")}</div>
@@ -232,7 +276,7 @@ export function MicSetupPage({
       {dev && (
         <div className="devbar">
           <span className="dvk">DEV · simulate</span>
-          {MIC_DEV_STATES.map((s) => (
+          {devStates.map((s) => (
             <button
               type="button"
               key={s}
@@ -255,7 +299,7 @@ export function MicSetupPage({
           <span className="mnote">{t("micSetAsOutput")}</span>
         </div>
         <div className="mrow">
-          <span className="mfrom">{micDev?.name ?? "—"}</span>
+          <span className="mfrom">{micName}</span>
           <span className="marrow">→</span>
           <span className="mdev">{t("micCallApp")}</span>
           <span className="mnote hl">{t("micPickHere")}</span>
@@ -268,11 +312,13 @@ export function MicSetupPage({
           <i className="d" />
           {t("micNodeDriver")}
         </span>
-        <span className={`wznode ${node("route")}`}>
-          <i className="d" />
-          {t("micNodeRoute")}
-        </span>
-        {/* 权限节点仅 mac 有意义;Windows 后端权限态恒 unknown,不渲染死步骤 */}
+        {!isLinux && (
+          <span className={`wznode ${node("route")}`}>
+            <i className="d" />
+            {t("micNodeRoute")}
+          </span>
+        )}
+        {/* 权限节点仅 mac 有意义;Windows/Linux 后端权限态恒 unknown,不渲染死步骤 */}
         {isMac && (
           <span className={`wznode ${node("perm")}`}>
             <i className="d" />

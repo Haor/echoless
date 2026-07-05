@@ -22,6 +22,7 @@ export const MIC_DEV_STATES: MicState[] = [
 
 // macOS:BlackHole 同名设备同时作为 output / input 出现(环回)。
 // Windows:VB-CABLE 的输入/输出端名字不同(CABLE Input ↔ CABLE Output)。
+// Linux:PipeWire/PulseAudio null-sink 写入端 + monitor source 作为通话软件 mic。
 function cables(platform: Platform): { out: DoctorCandidate; mic: DoctorCandidate } {
   if (platform === "windows") {
     return {
@@ -41,6 +42,24 @@ function cables(platform: Platform): { out: DoctorCandidate; mic: DoctorCandidat
       },
     };
   }
+  if (platform === "linux") {
+    return {
+      out: {
+        index: 3,
+        kind: "output",
+        name: "Echoless-Output",
+        selector: "3",
+        stable_id: "echoless-out",
+      },
+      mic: {
+        index: 4,
+        kind: "input",
+        name: "Monitor of Echoless-Output",
+        selector: "4",
+        stable_id: "echoless-monitor",
+      },
+    };
+  }
   return {
     out: { index: 3, kind: "output", name: "BlackHole 2ch", selector: "3", stable_id: "bh-out" },
     mic: { index: 4, kind: "input", name: "BlackHole 2ch", selector: "4", stable_id: "bh-in" },
@@ -52,6 +71,7 @@ export function simMicDoctor(
   platform: Platform = "macos",
 ): DoctorAudio {
   const isWin = platform === "windows";
+  const isLinux = platform === "linux";
   const { out, mic } = cables(platform);
   const base: DoctorAudio = {
     ok: false,
@@ -59,17 +79,24 @@ export function simMicDoctor(
     virtual_output_detected: false,
     candidate_inputs: [],
     candidate_outputs: [],
-    recommended_driver: isWin ? "vb-cable" : "blackhole-2ch",
+    recommended_driver: isWin
+      ? "vb-cable"
+      : isLinux
+        ? "pipewire-null-sink"
+        : "blackhole-2ch",
     install_status: "missing",
     needs_reboot: false,
-    // Windows 当前后端不暴露麦权限态;mac 才有 granted/denied/undetermined。
-    permission_state: isWin ? "unknown" : "granted",
+    // Windows/Linux 当前后端不暴露麦权限态;mac 才有 granted/denied/undetermined。
+    permission_state: isWin || isLinux ? "unknown" : "granted",
+    system_audio_permission: isLinux ? "unknown" : undefined,
     reference_sources: [],
     virtual_route_ready: false,
     route_status: "missing",
     recommended_output: null,
     recommended_app_mic: null,
   };
+
+  if (isLinux && state !== "ready") return base;
 
   switch (state) {
     case "ready":
@@ -80,7 +107,8 @@ export function simMicDoctor(
         candidate_outputs: [out],
         candidate_inputs: [mic],
         install_status: "installed",
-        permission_state: isWin ? "unknown" : "granted",
+        permission_state: isWin || isLinux ? "unknown" : "granted",
+        system_audio_permission: isLinux ? "unknown" : base.system_audio_permission,
         virtual_route_ready: true,
         route_status: "ready",
         recommended_output: out,
