@@ -25,6 +25,8 @@ use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEve
 #[cfg(target_os = "macos")]
 use tauri_plugin_decorum::WebviewWindowExt;
 
+const STREAM_TAIL_LIMIT_BYTES: usize = 4096;
+
 /// 运行中的 echoless run 子进程 + 它专属的「正在被主动停止」标记。
 /// 每个子进程独立持有 stopping flag,其 stdout reader 退出时据此判断本次退出是
 /// 主动停/重启(intentional)还是子进程自己崩了(crash),供前端区分。
@@ -625,6 +627,38 @@ fn parse_json_output(label: &str, out: Output) -> Result<Value, String> {
     serde_json::from_str(&stdout).map_err(|e| format!("parse json failed: {e}; raw: {stdout}"))
 }
 
+#[derive(Debug, PartialEq)]
+enum JsonlLineEvent {
+    Empty,
+    Json(Value),
+    Unparsed(String),
+}
+
+fn parse_jsonl_line_event(line: &str) -> JsonlLineEvent {
+    if line.trim().is_empty() {
+        return JsonlLineEvent::Empty;
+    }
+    match serde_json::from_str::<Value>(line) {
+        Ok(value) => JsonlLineEvent::Json(value),
+        Err(_) => JsonlLineEvent::Unparsed(line.to_string()),
+    }
+}
+
+fn push_tail_line(tail: &mut String, line: &str, limit_bytes: usize) {
+    tail.push_str(line);
+    tail.push('\n');
+    if tail.len() <= limit_bytes {
+        return;
+    }
+    let cut_at_least = tail.len() - limit_bytes;
+    let cut = tail
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= cut_at_least)
+        .unwrap_or(tail.len());
+    tail.drain(..cut);
+}
+
 /// 跑一次性 JSON 子命令(devices / processors / config validate),返回解析后的 JSON。
 fn run_json_blocking(
     app: Option<&tauri::AppHandle>,
@@ -746,21 +780,17 @@ fn run_probe_streaming(
         // probe-delay 进度契约:stderr 上每条进度都是完整 JSONL;坏行降级为日志保留证据。
         for line in BufReader::new(stderr).lines() {
             let Ok(line) = line else { break };
-            match serde_json::from_str::<Value>(&line) {
-                Ok(v) => {
+            match parse_jsonl_line_event(&line) {
+                JsonlLineEvent::Empty => {}
+                JsonlLineEvent::Json(v) => {
                     let _ = app_ev.emit("echoless://probe-progress", v);
                 }
-                Err(_) => {
+                JsonlLineEvent::Unparsed(line) => {
                     let _ = app_ev.emit("echoless://log", format!("unparsed probe line: {line}"));
                 }
             }
             let mut tail = tail_writer.lock().unwrap();
-            tail.push_str(&line);
-            tail.push('\n');
-            if tail.len() > 4096 {
-                let cut = tail.len() - 4096;
-                tail.drain(..cut);
-            }
+            push_tail_line(&mut tail, &line, STREAM_TAIL_LIMIT_BYTES);
         }
     });
     let started = Instant::now();
@@ -966,6 +996,10 @@ fn migrate_legacy_localvqe_models(app: &tauri::AppHandle, dest_dir: &Path) {
     let Ok(legacy_base) = app.path().app_local_data_dir() else {
         return;
     };
+    migrate_legacy_localvqe_models_from_base(&legacy_base, dest_dir);
+}
+
+fn migrate_legacy_localvqe_models_from_base(legacy_base: &Path, dest_dir: &Path) {
     let legacy_dir = legacy_base.join("localvqe").join("models");
     if legacy_dir == dest_dir || !legacy_dir.is_dir() {
         return;
@@ -1436,20 +1470,16 @@ fn start_run(
         // CLI stdout 契约:只输出完整 JSONL status/control 行;坏行降级为日志保留证据。
         for line in BufReader::new(stdout).lines() {
             match line {
-                Ok(line) => {
-                    if line.trim().is_empty() {
-                        continue;
+                Ok(line) => match parse_jsonl_line_event(&line) {
+                    JsonlLineEvent::Empty => {}
+                    JsonlLineEvent::Json(v) => {
+                        let _ = app_out.emit("echoless://status", v);
                     }
-                    match serde_json::from_str::<Value>(&line) {
-                        Ok(v) => {
-                            let _ = app_out.emit("echoless://status", v);
-                        }
-                        Err(_) => {
-                            let _ = app_out
-                                .emit("echoless://log", format!("unparsed status line: {line}"));
-                        }
+                    JsonlLineEvent::Unparsed(line) => {
+                        let _ =
+                            app_out.emit("echoless://log", format!("unparsed status line: {line}"));
                     }
-                }
+                },
                 Err(err) => {
                     let _ = app_out.emit(
                         "echoless://log",
@@ -1476,7 +1506,9 @@ fn start_run(
         for line in BufReader::new(stderr).lines() {
             match line {
                 Ok(line) => {
-                    let _ = app_err.emit("echoless://log", line);
+                    if !line.trim().is_empty() {
+                        let _ = app_err.emit("echoless://log", line);
+                    }
                 }
                 Err(err) => {
                     let _ = app_err.emit(
@@ -1882,12 +1914,63 @@ mod tests {
     }
 
     #[test]
+    fn jsonl_line_event_classifies_status_lines() {
+        assert_eq!(parse_jsonl_line_event("   "), JsonlLineEvent::Empty);
+        assert_eq!(
+            parse_jsonl_line_event(r#"{"type":"status","ok":true}"#),
+            JsonlLineEvent::Json(json!({"type": "status", "ok": true}))
+        );
+        assert_eq!(
+            parse_jsonl_line_event("not json"),
+            JsonlLineEvent::Unparsed("not json".to_string())
+        );
+    }
+
+    #[test]
+    fn push_tail_line_truncates_without_splitting_utf8() {
+        let mut tail = String::new();
+        push_tail_line(&mut tail, "ascii-prefix", 32);
+        push_tail_line(&mut tail, "错误错误错误错误错误", 16);
+
+        assert!(tail.len() <= 16, "{tail:?}");
+        assert!(tail.ends_with('\n'));
+        assert!(std::str::from_utf8(tail.as_bytes()).is_ok());
+    }
+
+    #[test]
     fn default_diag_dir_uses_brand_data_root() {
         let root = unique_temp_dir("echoless-diag-root");
         with_test_data_root(&root, || {
             assert_eq!(PathBuf::from(default_diag_dir()), root.join("diagnostics"));
         });
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migrate_legacy_localvqe_models_moves_only_missing_gguf_files() {
+        let legacy_base = unique_temp_dir("echoless-legacy-localvqe");
+        let legacy_models = legacy_base.join("localvqe").join("models");
+        std::fs::create_dir_all(&legacy_models).unwrap();
+        let dest = unique_temp_dir("echoless-localvqe-dest");
+
+        std::fs::write(legacy_models.join("move-me.gguf"), b"new").unwrap();
+        std::fs::write(legacy_models.join("keep-existing.gguf"), b"legacy").unwrap();
+        std::fs::write(legacy_models.join("notes.txt"), b"ignore").unwrap();
+        std::fs::write(dest.join("keep-existing.gguf"), b"dest").unwrap();
+
+        migrate_legacy_localvqe_models_from_base(&legacy_base, &dest);
+
+        assert_eq!(std::fs::read(dest.join("move-me.gguf")).unwrap(), b"new");
+        assert!(!legacy_models.join("move-me.gguf").exists());
+        assert_eq!(
+            std::fs::read(dest.join("keep-existing.gguf")).unwrap(),
+            b"dest"
+        );
+        assert!(legacy_models.join("keep-existing.gguf").exists());
+        assert!(!dest.join("notes.txt").exists());
+
+        let _ = std::fs::remove_dir_all(legacy_base);
+        let _ = std::fs::remove_dir_all(dest);
     }
 
     #[test]
