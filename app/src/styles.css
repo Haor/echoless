@@ -1618,16 +1618,16 @@ button.ecard:disabled {
 .power.on:hover .slider {
   color: #ffa477;
 }
-/* v9:OFF 态招领 beacon —— 全页安静时每 4s 斜纹滑一拍+文字亮一下,引导开机 */
+/* v9:OFF 态招领 beacon —— 全页安静时每 3s 斜纹滑一拍+文字亮一下,引导开机 */
 .power:not(.on)::before {
-  animation: offdrift 4s linear infinite;
+  animation: offdrift 3s linear infinite;
 }
 @keyframes offdrift {
   0%, 74% { background-position: 0 0; }
   100% { background-position: 12px 0; } /* 12px=2 tile,循环无缝 */
 }
 .power:not(.on) .slider {
-  animation: offbeacon 4s ease-in-out infinite;
+  animation: offbeacon 3s ease-in-out infinite;
 }
 @keyframes offbeacon {
   0%, 72%, 100% { color: var(--t-mut); }
