@@ -403,11 +403,17 @@ const VARIANTS = [
       return plate() + ws.map((w, i) =>
         `<rect x="${x}" y="${350 + i * 130}" width="${w}" height="${bh}" rx="${bh / 2}" fill="${PAPER}"/>`).join("");
     } },
-  { id: "H2", name: "一滴橙", tags: ["最小改动"], note: "同 H1,只做一个动作:最长的中杠点橙。原始构图的「文本行」气质保留,但多了一个品牌锚点 —— 如果想要的是「几乎没变但更像我们」,选这张。",
-    draw: () => {
-      const ws = [325, 435, 215], x = 300, bh = 64;
-      return plate() + ws.map((w, i) =>
-        `<rect x="${x}" y="${350 + i * 130}" width="${w}" height="${bh}" rx="${bh / 2}" fill="${i === 1 ? ACC : PAPER}"/>`).join("");
+  { id: "H2", name: "一滴橙", tags: ["噪点直角版"], note: "三杠各一个色阶:纸灰(人声)/ 橙(参考)/ 暗灰(残响);炭黑底铺白噪点颗粒,底板和杠全部直角 —— 印刷质感的硬朗版。",
+    draw: (uid) => {
+      const ws = [325, 435, 215], cols = [PAPER, ACC, "#8a897f"], x = 300, bh = 64;
+      return `<rect x="100" y="100" width="824" height="824" fill="${BG}" stroke="${LINE}" stroke-width="6"/>` +
+        `<defs><filter id="gr${uid}" x="0" y="0" width="100%" height="100%">` +
+        `<feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7"/>` +
+        `<feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.9 -0.55"/>` +
+        `</filter><clipPath id="gp${uid}"><rect x="100" y="100" width="824" height="824"/></clipPath></defs>` +
+        `<g clip-path="url(#gp${uid})"><rect x="100" y="100" width="824" height="824" filter="url(#gr${uid})" opacity="0.5"/></g>` +
+        ws.map((w, i) =>
+          `<rect x="${x}" y="${350 + i * 130}" width="${w}" height="${bh}" fill="${cols[i]}"/>`).join("");
     } },
   { id: "H3", name: "衰减序", tags: ["驯化成 echo"], note: "把原始三杠的杠序驯化成语义:长 → 中 → 短的衰减排列,首杠橙(原声),后两杠渐隐(回声)。原始图标和 A1/G3 之间的中间态。",
     draw: () => {
