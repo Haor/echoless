@@ -27,11 +27,6 @@ const D: Record<string, { en: string; zh: string }> = {
   bypassLive: { en: "Bypass · Mic Live", zh: "直通 · 麦克风在线" },
   unstable: { en: "Unstable", zh: "不稳定" },
   noReference: { en: "No Reference", zh: "无参考信号" },
-  volWheel: {
-    en: "scroll to adjust output volume",
-    zh: "滚轮调节输出音量",
-  },
-  latency: { en: "Pipeline", zh: "管线延迟" },
   ms: { en: "MS", zh: "毫秒" },
   stable: { en: "Stable", zh: "稳定" },
   checkSetup: { en: "Check Setup", zh: "检查设置" },
@@ -43,7 +38,6 @@ const D: Record<string, { en: string; zh: string }> = {
   // 术语保留英文(近端/参考 译成中文反而怪)。
   micNearEnd: { en: "Microphone · Near-end", zh: "Microphone · Near-end" },
   reference: { en: "Reference", zh: "Reference" },
-  noLoopback: { en: "No Loopback", zh: "No Loopback" },
   installCable: { en: "install virtual cable", zh: "安装虚拟声卡" },
   inAppPickMic: { en: "in app pick {name} as mic", zh: "通话软件麦克风选 {name}" },
   reduceNoise: { en: "Reduce background noise", zh: "抑制背景噪声" },
@@ -63,10 +57,6 @@ const D: Record<string, { en: string; zh: string }> = {
 
   // 系统音频录制权限(mac Process Tap reference)
   sysAudioGrant: { en: "grant system audio permission", zh: "授予系统音频权限" },
-  sysAudioFirstRun: {
-    en: "first run will request system audio permission",
-    zh: "首次运行将请求系统音频权限",
-  },
   sysAudioRequest: {
     en: "request system audio permission",
     zh: "请求系统音频权限",
@@ -92,20 +82,13 @@ const D: Record<string, { en: string; zh: string }> = {
   windowsRtxOnly: { en: "WINDOWS · RTX ONLY", zh: "仅 WINDOWS · RTX" },
   engNoGpu: { en: "no NVIDIA GPU detected", zh: "未检测到 NVIDIA GPU" },
   engRecheck: { en: "recheck", zh: "重检" },
-  engPickModel: { en: "pick .gguf model…", zh: "选择 .gguf 模型…" },
-  engModelReq: { en: "model required", zh: "需要模型文件" },
   // LocalVQE 模型列表
   // 徽标重设计(2026-07-05):DEFAULT 全词太宽挤掉参数量 → 工程 BOM 的标准件记号 STD
   lvqeDefault: { en: "STD", zh: "标配" },
   lvqeDefaultHint: { en: "default model", zh: "默认模型" },
   lvqeDownload: { en: "download", zh: "下载" },
-  lvqeDownloading: { en: "downloading…", zh: "下载中…" },
-  lvqeUse: { en: "use", zh: "使用" },
-  lvqeInUse: { en: "in use", zh: "使用中" },
-  lvqeCustom: { en: "pick local .gguf…", zh: "选本地 .gguf…" },
   lvqeGet: { en: "GET", zh: "下载" },
   lvqeOpenDir: { en: "open model folder", zh: "打开模型目录" },
-  lvqeSource: { en: "official repo", zh: "官方 repo" },
   lvqeRuntimeMissing: {
     en: "native runtime missing",
     zh: "缺少原生运行库",
@@ -115,7 +98,6 @@ const D: Record<string, { en: string; zh: string }> = {
 
   // RTX Setup 向导
   rtxSetup: { en: "RTX SETUP", zh: "RTX 配置" },
-  back: { en: "back", zh: "返回" },
   wzSystem: { en: "System", zh: "系统" },
   wzReadiness: { en: "Readiness", zh: "就绪进度" },
   wzAction: { en: "Action", zh: "操作" },
@@ -138,7 +120,6 @@ const D: Record<string, { en: string; zh: string }> = {
   },
   wzOpenDriver: { en: "open NVIDIA drivers", zh: "打开 NVIDIA 驱动下载" },
   wzOpenVc: { en: "open VC++ redistributable", zh: "打开 VC++ 运行库下载" },
-  wzInstallTitle: { en: "Install RTX AEC runtime", zh: "安装 RTX AEC 运行时" },
   wzInstallSize: {
     en: "runtime ~1 GB + model · extracted via Echoless CLI",
     zh: "运行时约 1 GB + 模型 · 由 Echoless CLI 解压",
@@ -234,12 +215,6 @@ const D: Record<string, { en: string; zh: string }> = {
   referenceChannels: { en: "Reference Channels", zh: "参考声道" },
   language: { en: "Language", zh: "语言" },
   auto: { en: "auto", zh: "自动" },
-  applyHint: {
-    en: "changes restart the runtime",
-    zh: "改动会重启运行时",
-  },
-  needsRestart: { en: "needs restart", zh: "需重启" },
-
   // Advanced · 延迟侦测 / AEC 链路诊断
   secProbe: { en: "Delay Probe", zh: "延迟侦测" },
   nearDelay: { en: "Near Delay", zh: "近端延迟" },
@@ -248,10 +223,6 @@ const D: Record<string, { en: string; zh: string }> = {
   probeQuiet: {
     en: "keep quiet · plays a beep train (~15s)",
     zh: "请保持安静 · 会外放一串蜂鸣(约 15 秒)",
-  },
-  probeStopFirst: {
-    en: "stop the runtime first",
-    zh: "请先停机再侦测",
   },
   probeAutoPause: {
     en: "running → engine auto-pauses, then restores",
@@ -301,12 +272,7 @@ const D: Record<string, { en: string; zh: string }> = {
   recordDir: { en: "Output Dir", zh: "输出目录" },
   choose: { en: "choose…", zh: "选择…" },
   recording: { en: "recording…", zh: "录制中…" },
-  recordHint: {
-    en: "writes mic / ref / out .wav + stats.csv",
-    zh: "写出 mic / ref / out .wav + stats.csv",
-  },
   notRunning: { en: "turn ON to record", zh: "开启后开始录制" },
-  comingSoon: { en: "coming next", zh: "下一步填充" },
 };
 
 interface Ctx {
