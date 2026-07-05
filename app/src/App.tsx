@@ -1060,8 +1060,29 @@ function useAppController() {
 
   // Applies changes that still require rebuilding the sidecar runtime.
   // Hot controls bypass this path to avoid an audio dropout.
-  async function applyChange(next: Override) {
-    if (!powerOnRef.current) return;
+  // 审计 B-04:手动切换与热插拔自动刷新(devicechange → applyChangeRef)可
+  // 重叠,交错的 stop→start 可能终态「UI 显示 OFF 但 sidecar 仍在采集」。
+  // promise 链串行化;排队期间的多次请求合并 delta 只跑最后一次(执行时
+  // currentToml 读最新 state,中间态选择无需逐个重启)。
+  const applyChainRef = useRef<Promise<void>>(Promise.resolve());
+  const queuedOverrideRef = useRef<Override | null>(null);
+
+  function applyChange(next: Override) {
+    if (queuedOverrideRef.current) {
+      queuedOverrideRef.current = { ...queuedOverrideRef.current, ...next };
+      return;
+    }
+    queuedOverrideRef.current = next;
+    applyChainRef.current = applyChainRef.current.then(async () => {
+      const merged = queuedOverrideRef.current;
+      queuedOverrideRef.current = null;
+      // 电源态在真正执行的时刻判定(排队期间可能已被关掉)。
+      if (!merged || !powerOnRef.current) return;
+      await doApplyChange(merged);
+    });
+  }
+
+  async function doApplyChange(next: Override) {
     updateApp({ busy: true });
     try {
       await stopRun();

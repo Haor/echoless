@@ -59,9 +59,13 @@
   --idle-ghost: rgba(107, 159, 212, 0.09);
   --ink: #171715;
   --hatch: rgba(194, 193, 184, 0.26);
+  /* CJK 候选(审计 B-06):打包的 woff2 无中文字形,补平台黑体系,
+     否则 Windows 中文落到默认宋体,与等宽 brutalist 版式割裂。 */
+  --cjk: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC",
+    "Noto Sans CJK SC", "Source Han Sans SC";
   --mono: "Martian Mono", "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono",
-    ui-monospace, monospace;
-  --disp: "Archivo", "Archivo Black", "Chakra Petch", sans-serif;
+    ui-monospace, var(--cjk), monospace;
+  --disp: "Archivo", "Archivo Black", "Chakra Petch", var(--cjk), sans-serif;
 }
 
 /* app 根:满窗(设计稿 harness 里是固定 1040×640 画布) */
@@ -81,6 +85,30 @@ body,
 :focus,
 :focus-visible {
   outline: none !important;
+}
+
+/* 定制滚动条(审计 B-18):macOS overlay 滚动条平时隐形,但 Windows
+   WebView2 常驻粗滚动条,与单色直角主题冲突。全局改为细直角。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) var(--raised);
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: var(--raised);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 2px solid var(--raised);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--t-dim);
+}
+*::-webkit-scrollbar-corner {
+  background: var(--raised);
 }
 body {
   font-family: var(--mono);
@@ -1815,7 +1843,9 @@ hr.hair {
   font-family: var(--mono);
   font-size: 15px;
   padding: 2px 0;
-  max-width: 360px;
+  /* 审计 B-17:值列收窄,长设备名更早截断,让 .sp 分隔线有空间把右侧
+     注记(meta)顶到行尾,而非被挤到行中。 */
+  max-width: 300px;
 }
 .dd-trigger .lbl {
   white-space: nowrap;
