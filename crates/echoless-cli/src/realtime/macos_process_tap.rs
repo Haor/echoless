@@ -109,6 +109,9 @@ pub fn preflight_permission() -> Option<&'static str> {
     }
     match String::from_utf8_lossy(&output.stdout).trim() {
         "granted" => Some("granted"),
+        // Current helper intentionally maps private-TCC denied/unknown outputs to
+        // "undetermined" so the UI can use the request path first. Keep this arm
+        // defensive for older helpers or future contract changes.
         "denied" => Some("denied"),
         "undetermined" => Some("undetermined"),
         _ => None,
