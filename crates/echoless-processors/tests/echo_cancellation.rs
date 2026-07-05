@@ -194,6 +194,8 @@ fn run_windowed(
 #[test]
 fn cancels_single_path_echo() {
     // 单径 50ms 回声,默认 config。
+    // 18dB 是合成信号 smoke floor,不是音质目标;CI 虚拟化环境若出现系统性余量下降,
+    // 应先看打印的实际 dB 分布再调阈值。
     let db = run(toml::Table::new(), &[(2400, 0.5)]);
     assert!(db > 18.0, "单径回声压低不足:{db:.1} dB");
 }
@@ -201,6 +203,7 @@ fn cancels_single_path_echo() {
 #[test]
 fn tuned_tail_injection_works() {
     // 经 vendored fork 注入更长 tail,验证调参口可用且不劣化 AEC。
+    // 阈值沿用 smoke floor,避免把 runner 浮动误读成 tail 注入失效。
     let mut params = toml::Table::new();
     params.insert("tail_ms".into(), toml::Value::Integer(120));
     let db = run(params, &[(2400, 0.5)]);
@@ -209,6 +212,7 @@ fn tuned_tail_injection_works() {
 
 #[test]
 fn stereo_reference_mode_cancels_single_path_echo() {
+    // 这里验证 stereo wiring 的基本消除能力;绝对 18dB 阈值只用于挡住明显退化。
     let mut params = toml::Table::new();
     params.insert(
         "reference_channels".into(),
@@ -265,6 +269,7 @@ fn long_run_energy_reduction_stays_stable_over_60s() {
     let late_db = db[2];
 
     assert!(
+        // heavy ignore 测试的绝对阈值同样是 smoke floor;核心判断是后期窗口不低于平台期。
         late_db >= mid_db - 1.0 && late_db > 18.0,
         ">60s AEC3 平台不稳:mid={mid_db:.1}dB late={late_db:.1}dB"
     );

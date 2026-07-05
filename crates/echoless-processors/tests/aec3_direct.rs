@@ -104,6 +104,7 @@ fn run(delay: usize, far_stereo: bool, set_delay_ms: Option<i32>) -> (f32, f32, 
 #[test]
 fn engine_cancels_nonstationary_echo() {
     // mono far,对齐 aec3 节点的 mono 配置。
+    // 18dB 是非平稳合成信号的 smoke floor,用于捕获明显回归;不要把它当产品音质指标。
     let (_, _, db) = run(2400, false, None);
     assert!(db > 18.0, "aec3 引擎对非平稳回声压低不足:{db:.1} dB");
 }
