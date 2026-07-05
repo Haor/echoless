@@ -78,6 +78,11 @@ speakers while recording both paths, then cross-correlating per beep
 echoless probe-delay --json --mic default --reference system --output "CABLE Input"
 ```
 
+The command accepts `default` selectors, but its clap defaults are intentionally
+macOS-oriented (`MacBook Pro...` / `BlackHole 2ch`) for the maintainer's local
+calibration rig. Portable scripts should pass `--mic`, `--reference`, and
+`--output` explicitly rather than relying on those defaults.
+
 Stops nothing by itself — don't run it while another `run` holds the devices.
 Flags: `--beeps N` (12), `--startup-delay S` (4), `--volume 0..1` (0.35),
 `--out-dir/--keep-session/--keep-beep`, `--analyze-only <session>`.
