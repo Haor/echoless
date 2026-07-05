@@ -1183,6 +1183,11 @@ fn validate_browser_url(url: &str) -> Result<String, String> {
     {
         return Err("URL 不能包含空白或控制字符".to_string());
     }
+    // 系统设置深链(隐私面板跳转):固定 scheme 白名单。此前被 http(s) 门拒掉,
+    // 「授予系统音频权限」按钮点了毫无反应(2026-07-05 修)。
+    if trimmed.starts_with("x-apple.systempreferences:") {
+        return Ok(trimmed.to_string());
+    }
     if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
         return Err("仅允许打开 http(s) URL".to_string());
     }
@@ -1727,6 +1732,14 @@ mod tests {
         assert_eq!(
             validate_browser_url("http://example.com/#drivers").unwrap(),
             "http://example.com/#drivers"
+        );
+        // 系统设置深链白名单(隐私面板跳转)。
+        assert_eq!(
+            validate_browser_url(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture"
+            )
+            .unwrap(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture"
         );
 
         for bad in [
