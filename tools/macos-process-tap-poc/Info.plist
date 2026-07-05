@@ -6,9 +6,9 @@
   <key>CFBundleIdentifier</key>
   <string>com.echoless.process-tap-poc</string>
   <key>CFBundleName</key>
-  <string>Echoless Process Tap PoC</string>
+  <string>Echoless System Audio</string>
   <key>CFBundleDisplayName</key>
-  <string>Echoless Process Tap PoC</string>
+  <string>Echoless System Audio</string>
   <key>CFBundleExecutable</key>
   <string>echoless-process-tap-poc</string>
   <key>CFBundleVersion</key>

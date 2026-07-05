@@ -482,6 +482,44 @@ func preflightAudioCapturePermission() -> String {
     }
 }
 
+// TCC 责任人自立(disclaim,AudioCap 同款架构)。不做这步时,授权归属启动链
+// 上层的 responsible process —— dev 下就是终端 App(Cursor/Warp/Terminal):
+// 终端一自动更新记录即失效(面板里开关还开着但签名失配),Warp 这类缺
+// NSAudioCaptureUsageDescription 的终端更是连弹窗都出不来(2026-07-05 日志实证)。
+// self-disclaim 后授权记在本 helper 自己名下(内嵌 Info.plist 提供 bundle id
+// 与用途说明),与终端、与 Echoless app 的重编彻底解耦。
+func selfDisclaimIfNeeded() {
+    let marker = "ECHOLESS_TAP_DISCLAIMED"
+    if ProcessInfo.processInfo.environment[marker] != nil { return }
+    guard let sym = dlsym(dlopen(nil, RTLD_NOW), "responsibility_spawnattrs_setdisclaim") else {
+        return
+    }
+    typealias SetDisclaimFunc = @convention(c) (
+        UnsafeMutablePointer<posix_spawnattr_t?>, Int32
+    ) -> Int32
+    let setDisclaim = unsafeBitCast(sym, to: SetDisclaimFunc.self)
+
+    var attr: posix_spawnattr_t? = nil
+    guard posix_spawnattr_init(&attr) == 0 else { return }
+    defer { posix_spawnattr_destroy(&attr) }
+    guard setDisclaim(&attr, 1) == 0,
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETEXEC)) == 0
+    else { return }
+
+    // SETEXEC:用带 disclaim 的自身镜像原地替换当前进程(pid/stdio 不变),
+    // 环境标记防循环;posix_spawn 成功即不返回,失败则以未 disclaim 状态继续。
+    let exePath = Bundle.main.executablePath ?? CommandLine.arguments[0]
+    var argv: [UnsafeMutablePointer<CChar>?] = CommandLine.arguments.map { strdup($0) }
+    argv.append(nil)
+    var envs: [UnsafeMutablePointer<CChar>?] = ProcessInfo.processInfo.environment.map {
+        strdup("\($0.key)=\($0.value)")
+    }
+    envs.append(strdup("\(marker)=1"))
+    envs.append(nil)
+    _ = posix_spawn(nil, exePath, nil, &attr, argv, envs)
+}
+selfDisclaimIfNeeded()
+
 let options = parseOptions()
 
 if options.preflightPermission {

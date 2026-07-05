@@ -15,7 +15,6 @@ import {
   nvafxInstall,
   onDevicesChanged,
   onRunEvent,
-  openUrl,
   onRunExit,
   onRunLog,
   openPath,
@@ -65,7 +64,6 @@ import { RuntimeSignalPanel } from "./components/RuntimeSignalPanel";
 import {
   RuntimeStatusStrip,
   RuntimeSubline,
-  SYS_AUDIO_PRIVACY_URL,
   useRunStatusKind,
 } from "./components/RuntimeStatusStrip";
 import { AdvancedPage } from "./pages/AdvancedPage";
@@ -900,21 +898,19 @@ function useAppController() {
       .catch(() => {});
   }
 
-  // 用户主动请求系统音频录制权限:触发一次 Process Tap probe(macOS 弹窗),回传更新 doctor。
-  // 请求后仍未授予 = 系统静默拒绝(不弹窗)—— 自动打开隐私设置兜底,避免按钮点了没反应。
+  // 用户主动请求系统音频录制权限:helper 显式调 TCCAccessRequest 弹窗,回传更新 doctor。
+  // 未授予时不再自动跳设置(用户否决 2026-07-05),把 CLI 的失败原因如实显示。
   const probeSystemAudio = useCallback(() => {
     noteError(null);
     requestSystemAudio()
       .then((doctor) => {
         updateApp({ doctor });
         if (doctor.system_audio_permission !== "granted") {
-          openUrl(SYS_AUDIO_PRIVACY_URL).catch(() => {});
+          const detail = doctor.system_audio_permission_probe?.detail;
+          noteError(detail || "system audio permission was not granted");
         }
       })
-      .catch((e) => {
-        noteError(String(e));
-        openUrl(SYS_AUDIO_PRIVACY_URL).catch(() => {});
-      });
+      .catch((e) => noteError(String(e)));
   }, [noteError]);
 
   // RTX runtime 安装:解压 common + 架构 model,回传安装后 doctor 报告。
