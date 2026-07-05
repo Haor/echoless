@@ -730,10 +730,16 @@ fn run_probe_streaming(
     let stderr_tail = Arc::new(Mutex::new(String::new()));
     let tail_writer = stderr_tail.clone();
     let reader = std::thread::spawn(move || {
+        // probe-delay 进度契约:stderr 上每条进度都是完整 JSONL;坏行降级为日志保留证据。
         for line in BufReader::new(stderr).lines() {
             let Ok(line) = line else { break };
-            if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                let _ = app_ev.emit("echoless://probe-progress", v);
+            match serde_json::from_str::<Value>(&line) {
+                Ok(v) => {
+                    let _ = app_ev.emit("echoless://probe-progress", v);
+                }
+                Err(_) => {
+                    let _ = app_ev.emit("echoless://log", format!("unparsed probe line: {line}"));
+                }
             }
             let mut tail = tail_writer.lock().unwrap();
             tail.push_str(&line);
@@ -1355,14 +1361,21 @@ fn start_run(
     let stop_reader = stopping.clone();
     let reader_config_path = path.clone();
     std::thread::spawn(move || {
+        // CLI stdout 契约:只输出完整 JSONL status/control 行;坏行降级为日志保留证据。
         for line in BufReader::new(stdout).lines() {
             match line {
                 Ok(line) => {
                     if line.trim().is_empty() {
                         continue;
                     }
-                    if let Ok(v) = serde_json::from_str::<Value>(&line) {
-                        let _ = app_out.emit("echoless://status", v);
+                    match serde_json::from_str::<Value>(&line) {
+                        Ok(v) => {
+                            let _ = app_out.emit("echoless://status", v);
+                        }
+                        Err(_) => {
+                            let _ = app_out
+                                .emit("echoless://log", format!("unparsed status line: {line}"));
+                        }
                     }
                 }
                 Err(err) => {
