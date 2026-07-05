@@ -55,7 +55,7 @@ use self::devices::{
     format_device_description, is_virtual_audio_name, system_audio_permission_state,
 };
 use self::diagnostics::{DiagnosticRecorder, DiagnosticRecorderConfig, DiagnosticsStatusHandle};
-use self::resample::{InterleavedLinearResampler, OutputLinearResampler};
+use self::resample::{InterleavedInputResampler, OutputDeviceResampler};
 use self::stats::{RealtimeStats, RealtimeStatsConfig, StatsSample};
 use echoless_core::{
     apply_output_level, apply_reference_channels_to_chain, output_level_gain_db, PipelineConfig,
@@ -841,23 +841,23 @@ where
     let config = choice.config();
     let channels = usize::from(config.channels);
     let pipeline_channels = channel_mode.output_channels();
-    let mut resampler = InterleavedLinearResampler::new(
+    let mut resampler = InterleavedInputResampler::new(
         choice.stream_sample_rate(),
         choice.pipeline_sample_rate,
         pipeline_channels,
     );
+    let mut mapped = Vec::<f32>::new();
     let needs_resampling = choice.requires_resampling();
     device
         .build_input_stream(
             &config,
             move |data: &[T], _: &cpal::InputCallbackInfo| {
                 if needs_resampling {
-                    let mut mapped =
-                        Vec::with_capacity((data.len() / channels) * pipeline_channels);
+                    mapped.clear();
                     for frame in data.chunks(channels) {
                         map_input_frame(frame, channel_mode, &mut mapped);
                     }
-                    for sample in resampler.process(&mapped) {
+                    for &sample in resampler.process(&mapped) {
                         if producer.try_push(sample).is_err() {
                             drops.fetch_add(1, Ordering::Relaxed);
                         }
@@ -967,29 +967,38 @@ where
     let config = choice.config();
     let channels = usize::from(config.channels);
     let mut resampler =
-        OutputLinearResampler::new(choice.pipeline_sample_rate, choice.stream_sample_rate());
+        OutputDeviceResampler::new(choice.pipeline_sample_rate, choice.stream_sample_rate());
     let needs_resampling = choice.requires_resampling();
     device
         .build_output_stream(
             &config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-                for frame in data.chunks_mut(channels) {
-                    let sample = if needs_resampling {
-                        resampler.next_sample(&mut consumer, &underruns)
-                    } else {
-                        match consumer.try_pop() {
-                            Some(v) => v.clamp(-1.0, 1.0),
-                            None => {
-                                underruns.fetch_add(1, Ordering::Relaxed);
-                                0.0
-                            }
+                if needs_resampling {
+                    let samples =
+                        resampler.next_chunk(data.len() / channels, &mut consumer, &underruns);
+                    for (frame_index, frame) in data.chunks_mut(channels).enumerate() {
+                        let s = T::from_sample(samples.get(frame_index).copied().unwrap_or(0.0));
+                        for out in frame {
+                            *out = s; // 单声道铺到所有输出声道
                         }
-                    };
-                    let s = T::from_sample(sample);
-                    for out in frame {
-                        *out = s; // 单声道铺到所有输出声道
                     }
-                }
+                } else {
+                    for frame in data.chunks_mut(channels) {
+                        let sample = {
+                            match consumer.try_pop() {
+                                Some(v) => v.clamp(-1.0, 1.0),
+                                None => {
+                                    underruns.fetch_add(1, Ordering::Relaxed);
+                                    0.0
+                                }
+                            }
+                        };
+                        let s = T::from_sample(sample);
+                        for out in frame {
+                            *out = s; // 单声道铺到所有输出声道
+                        }
+                    }
+                };
             },
             on_error,
             None,

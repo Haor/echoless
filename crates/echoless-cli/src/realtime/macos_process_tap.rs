@@ -12,10 +12,10 @@ use ringbuf::traits::Producer;
 
 use echoless_core::ReferenceChannels;
 
-use super::resample::InterleavedLinearResampler;
+use super::resample::InterleavedInputResampler;
 
 // tap 的默认/常见采样率;实际值由 helper 的 ELTP 流头上报(跟随系统输出设备),
-// 与管线不一致时 reader 线程插固定比率线性重采样(A5)。
+// 与管线不一致时 reader 线程插固定比率 rubato 重采样。
 pub const SAMPLE_RATE: u32 = 48_000;
 
 // --stream-stdout 流头:magic "ELTP" + u32 version + u32 sample_rate + u32 channels(全 LE)。
@@ -205,7 +205,7 @@ fn read_pcm_stream<P>(
     let mut read_buf = [0u8; 16 * 1024];
     let mut pending = Vec::<u8>::with_capacity(16 * 1024);
     // 流头解析:None = 还没读够 16 字节判定
-    let mut resampler: Option<InterleavedLinearResampler> = None;
+    let mut resampler: Option<InterleavedInputResampler> = None;
     let mut header_done = false;
     // tap 实际交织声道数;默认按请求值,流头上报不一致时以头为准(审计 B-05)。
     let mut source_channels = channels;
@@ -235,17 +235,17 @@ fn read_pcm_stream<P>(
                         }
                         if rate != 0 && rate != target_rate {
                             eprintln!(
-                                "macOS Process Tap: 系统输出 {rate} Hz ≠ 管线 {target_rate} Hz,启用线性重采样"
+                                "macOS Process Tap: 系统输出 {rate} Hz ≠ 管线 {target_rate} Hz,启用 rubato 重采样"
                             );
                             resampler =
-                                Some(InterleavedLinearResampler::new(rate, target_rate, channels));
+                                Some(InterleavedInputResampler::new(rate, target_rate, channels));
                         }
                         pending.drain(..STREAM_HEADER_LEN);
                     } else {
                         // 旧版 helper 没有流头:按默认 48k 处理,这批字节就是 PCM。
                         eprintln!("macOS Process Tap: helper 未上报流头,按 {SAMPLE_RATE} Hz 处理");
                         if SAMPLE_RATE != target_rate {
-                            resampler = Some(InterleavedLinearResampler::new(
+                            resampler = Some(InterleavedInputResampler::new(
                                 SAMPLE_RATE,
                                 target_rate,
                                 channels,
@@ -274,7 +274,7 @@ fn read_pcm_stream<P>(
                     &remapped
                 };
                 if let Some(rs) = resampler.as_mut() {
-                    for sample in rs.process(adapted) {
+                    for &sample in rs.process(adapted) {
                         if producer.try_push(sample).is_err() {
                             drops.fetch_add(1, Ordering::Relaxed);
                         }
