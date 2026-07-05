@@ -68,7 +68,7 @@
 <body data-dock="dark">
 <header>
   <h1>ECHOLESS <span class="no">/</span> ICON PROPOSALS</h1>
-  <p class="sub">39 个方向 · 同一主题语汇(炭黑 #1d1d1b · 纸灰 #d6d5cd · 橙 #ff7235)· 每卡含 128 / 64 / 32 / 16 px。选中报编号即可。</p>
+  <p class="sub">42 个方向 · 同一主题语汇(炭黑 #1d1d1b · 纸灰 #d6d5cd · 橙 #ff7235)· 每卡含 128 / 64 / 32 / 16 px。选中报编号即可。</p>
 </header>
 <div class="controls">
   dock 背景
@@ -416,6 +416,46 @@ const VARIANTS = [
         `<rect x="${x}" y="${350 + i * 130}" width="${w}" height="${bh}" rx="${bh / 2}" fill="${f}"${op ? ` fill-opacity="${op}"` : ""}/>`).join("");
     } },
 ]},
+{ group: "I · 纹身波形 × IBM 条纹 — 右侧收敛成单线拖尾", items: (() => {
+  // 尖刺包络:三角峰取 max,横条纹在包络内取段(多峰自动长出纹身的碎刺感)
+  const PEAKS = [
+    [238, 118, 42], [305, 312, 68], [402, 204, 58],
+    [478, 126, 46], [548, 74, 40], [612, 38, 34],
+  ];
+  const envAt = (x) => {
+    let a = 0;
+    for (const [xp, h, w] of PEAKS) a = Math.max(a, h * (1 - Math.abs(x - xp) / w));
+    return a;
+  };
+  // 条纹几何常量:pitch 44 / 条厚 26,波形区 190..668,单线拖尾到 884
+  const waveTail = (stripe, line) => {
+    const pitch = 44, t = 26, cy = 512, x0 = 190, x1 = 668, tail = 884;
+    let s = "";
+    for (let k = -7; k <= 7; k++) {
+      if (k === 0) continue;
+      const dy = Math.abs(k) * pitch;
+      let run = null;
+      for (let x = x0; x <= x1 + 2; x += 2) {
+        const on = x <= x1 && envAt(x) >= dy;
+        if (on && run === null) run = x;
+        if (!on && run !== null) {
+          if (x - run >= 8) s += rk(run, cy + k * pitch - t / 2, x - run, t, stripe);
+          run = null;
+        }
+      }
+    }
+    s += rk(x0 - 14, cy - t / 2, tail - (x0 - 14), t, line);
+    return s;
+  };
+  return [
+    { id: "I1", name: "纹身波形 · 单线拖尾", tags: ["你的配方", "mono"], note: "尖刺包络切成横条纹:左边是乱糟糟的多峰声场,越往右越塌,最后只剩正中一根线独自拖出去 —— 进来的是房间,出去的是一根线。全纸灰版。",
+      draw: () => plate() + waveTail(PAPER, PAPER) },
+    { id: "I2", name: "橙贯穿线", tags: ["你的配方", "本命提名"], note: "同 I1,但把那根从头贯到尾的中线点橙:它就是人声 —— 从噪场里穿过、毫发无损地走出来。小尺寸下 = 灰色毛刺 + 一根橙线,辨识度极高。",
+      draw: () => plate() + waveTail(PAPER, ACC) },
+    { id: "I3", name: "纸面纹身版", tags: ["最接近参考"], note: "同一几何落回纹身的原生语境:米白纸面 + 墨色条纹,橙线贯穿。像一枚印在纸上的声音戳记。",
+      draw: () => plate(OFFW, OFFL) + waveTail(INKD, ACC) },
+  ];
+})() },
 { group: "A · 衰减 — 回声正在死去", items: [
   { id: "A1", name: "衰减杠(现行)", tags: ["线上", "32px 稳"], note: "首杠橙 = 活人声,四道纸灰回声逐级熄灭。已上线的基准方案。",
     draw: () => plate() + decayBars() },
