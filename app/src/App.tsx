@@ -12,6 +12,7 @@ import {
   nvafxDoctor,
   nvafxDownloadInstall,
   nvafxInstall,
+  onDevicesChanged,
   onRunEvent,
   onRunExit,
   onRunLog,
@@ -581,9 +582,11 @@ function useAppController() {
       .then((diagDir) => updateApp({ diagDir }))
       .catch(() => {});
 
-    // 设备热插拔:webview devicechange(WebView2 可靠;WKWebView 未必触发,
-    // 由窗口聚焦 + 下拉展开时刷新兜底)。300ms 防抖合并连发——一次插拔常触发
-    // 多个事件,每次刷新都会 spawn 一次 CLI 枚举。
+    // 设备热插拔:三路触发 → 同一个防抖刷新。
+    //   ① 原生 CoreAudio 监听(macOS;WKWebView 不触发 devicechange)
+    //   ② webview devicechange(Windows WebView2 可靠)
+    //   ③ 窗口聚焦 + 下拉展开(兜底)
+    // 300ms 防抖合并连发——一次插拔常触发多个事件,每次刷新都 spawn 一次 CLI 枚举。
     let devChangeTimer = 0;
     const refreshDevicesSoon = () => {
       window.clearTimeout(devChangeTimer);
@@ -597,6 +600,7 @@ function useAppController() {
 
     const uns: UnlistenFn[] = [];
     (async () => {
+      uns.push(await onDevicesChanged(refreshDevicesSoon));
       uns.push(
         await onRunEvent((ev) => {
           if (ev.type === "started") {

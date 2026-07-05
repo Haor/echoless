@@ -222,6 +222,10 @@ export function onRunExit(
 export function onRunLog(cb: (line: string) => void): Promise<UnlistenFn> {
   return listen<string>("echoless://log", (e) => cb(e.payload));
 }
+// 原生侧设备热插拔通知(macOS CoreAudio 监听;WKWebView 不触发 devicechange)。
+export function onDevicesChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("echoless://devices-changed", () => cb());
+}
 
 // ---- 配置生成:把 UI 选择拼成后端 PipelineConfig(TOML) ----
 export interface PipelineCfg {

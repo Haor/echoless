@@ -1407,6 +1407,71 @@ fn set_tray_prefs(prefs: State<TrayPrefs>, minimize_to_tray: bool, close_to_tray
     set_tray_prefs_inner(&prefs, minimize_to_tray, close_to_tray);
 }
 
+// macOS 设备热插拔监听:CoreAudio 设备列表('dev#')变更即推事件给前端刷新。
+// WKWebView 不触发 navigator.mediaDevices 的 devicechange,只能原生侧监听;
+// Windows 的 WebView2(Chromium)会触发,前端已挂 devicechange,无需原生监听。
+#[cfg(target_os = "macos")]
+mod device_watch {
+    use std::ffi::c_void;
+    use tauri::Emitter;
+
+    // CoreAudio/AudioHardware.h
+    #[repr(C)]
+    struct AudioObjectPropertyAddress {
+        selector: u32,
+        scope: u32,
+        element: u32,
+    }
+
+    const SYSTEM_OBJECT: u32 = 1; // kAudioObjectSystemObject
+    const DEVICES_ADDRESS: AudioObjectPropertyAddress = AudioObjectPropertyAddress {
+        selector: u32::from_be_bytes(*b"dev#"), // kAudioHardwarePropertyDevices
+        scope: u32::from_be_bytes(*b"glob"),    // kAudioObjectPropertyScopeGlobal
+        element: 0,                             // kAudioObjectPropertyElementMain
+    };
+
+    type Listener =
+        extern "C" fn(u32, u32, *const AudioObjectPropertyAddress, *mut c_void) -> i32;
+
+    #[link(name = "CoreAudio", kind = "framework")]
+    extern "C" {
+        fn AudioObjectAddPropertyListener(
+            object_id: u32,
+            address: *const AudioObjectPropertyAddress,
+            listener: Listener,
+            client_data: *mut c_void,
+        ) -> i32;
+    }
+
+    // HAL 通知线程回调:只透传「变了」,枚举仍由前端调 list_devices 完成。
+    extern "C" fn on_devices_changed(
+        _object_id: u32,
+        _num_addresses: u32,
+        _addresses: *const AudioObjectPropertyAddress,
+        client_data: *mut c_void,
+    ) -> i32 {
+        let app = unsafe { &*(client_data as *const tauri::AppHandle) };
+        let _ = app.emit("echoless://devices-changed", ());
+        0
+    }
+
+    pub fn start(app: &tauri::AppHandle) {
+        // AppHandle 有意泄漏成 'static:监听与进程同生命周期,不注销。
+        let client = Box::into_raw(Box::new(app.clone()));
+        let status = unsafe {
+            AudioObjectAddPropertyListener(
+                SYSTEM_OBJECT,
+                &DEVICES_ADDRESS,
+                on_devices_changed,
+                client as *mut c_void,
+            )
+        };
+        if status != 0 {
+            eprintln!("device watch: AudioObjectAddPropertyListener failed ({status})");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -1482,6 +1547,8 @@ pub fn run() {
             {
                 register_windows_tray(app)?;
             }
+            #[cfg(target_os = "macos")]
+            device_watch::start(app.handle());
             let _ = &window;
             Ok(())
         })
