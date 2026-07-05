@@ -100,7 +100,8 @@ impl DiagnosticDoneReason {
 }
 
 enum DiagnosticCommand {
-    Frame(DiagnosticFrame),
+    // Box 让 channel 只搬 8 字节指针;堆块本身随回收池循环,不在音频线程新增分配。
+    Frame(Box<DiagnosticFrame>),
     Finish(DiagnosticDoneReason),
 }
 
@@ -207,8 +208,8 @@ impl DiagnosticFrame {
 pub(super) struct DiagnosticRecorder {
     dir: PathBuf,
     sender: Option<SyncSender<DiagnosticCommand>>,
-    recycle_sender: SyncSender<DiagnosticFrame>,
-    recycle_receiver: Receiver<DiagnosticFrame>,
+    recycle_sender: SyncSender<Box<DiagnosticFrame>>,
+    recycle_receiver: Receiver<Box<DiagnosticFrame>>,
     writer: Option<JoinHandle<()>>,
     status: DiagnosticsStatusHandle,
 }
@@ -357,10 +358,12 @@ impl DiagnosticRecorder {
         }
     }
 
-    fn take_frame(&mut self) -> DiagnosticFrame {
+    fn take_frame(&mut self) -> Box<DiagnosticFrame> {
         match self.recycle_receiver.try_recv() {
             Ok(frame) => frame,
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => DiagnosticFrame::empty(),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
+                Box::new(DiagnosticFrame::empty())
+            }
         }
     }
 
@@ -416,7 +419,7 @@ struct DiagnosticWriter {
     human_to_stderr: bool,
     status_json: bool,
     status: DiagnosticsStatusHandle,
-    recycle_sender: SyncSender<DiagnosticFrame>,
+    recycle_sender: SyncSender<Box<DiagnosticFrame>>,
 }
 
 impl DiagnosticWriter {
@@ -451,7 +454,7 @@ impl DiagnosticWriter {
         self.finish(reason, ok);
     }
 
-    fn recycle_frame(&self, frame: DiagnosticFrame) {
+    fn recycle_frame(&self, frame: Box<DiagnosticFrame>) {
         let _ = self.recycle_sender.try_send(frame);
     }
 

@@ -70,16 +70,14 @@ impl InterleavedInputResampler {
         self.configured_input_frames = input_frames;
         resize_planes(&mut self.planes, self.channels, input_frames);
 
-        self.resampler = match FftFixedIn::<f32>::new(
+        self.resampler = FftFixedIn::<f32>::new(
             self.in_rate as usize,
             self.out_rate as usize,
             input_frames,
             1,
             self.channels,
-        ) {
-            Ok(resampler) => Some(resampler),
-            Err(_) => None,
-        };
+        )
+        .ok();
         let output_frames_max = self
             .resampler
             .as_ref()
@@ -257,16 +255,14 @@ impl OutputDeviceResampler {
             return;
         }
         self.configured_output_frames = output_frames;
-        self.resampler = match FftFixedOut::<f32>::new(
+        self.resampler = FftFixedOut::<f32>::new(
             self.in_rate as usize,
             self.out_rate as usize,
             output_frames,
             1,
             1,
-        ) {
-            Ok(resampler) => Some(resampler),
-            Err(_) => None,
-        };
+        )
+        .ok();
         let input_frames = self
             .resampler
             .as_ref()
