@@ -9,6 +9,7 @@ import {
   getPlatform,
   listDevices,
   listProcessors,
+  localvqeAssets,
   nvafxDoctor,
   nvafxDownloadInstall,
   nvafxInstall,
@@ -170,9 +171,15 @@ function pickReference(devices: DeviceList, current: string): string {
 
 const MODELS: { kind: string; label: string }[] = [
   { kind: "aec3", label: "AEC3" },
-  { kind: "localvqe", label: "LOCALVQE" },
+  { kind: "localvqe", label: "LVQE" },
   { kind: "nvidia_afx_aec", label: "NVAFX" },
 ];
+
+// LocalVQE 官方描述:v1.4 = 纯 AEC(无降噪),v1.3 = AEC + 降噪。
+// 首页 NOISE 开关在 LVQE 下的语义 = 在这两个版本间切换(文件名 "-aec-" 标记纯 AEC)。
+const LVQE_NS_ON_FILE = "localvqe-v1.3-4.8M-f32.gguf";
+const LVQE_NS_OFF_FILE = "localvqe-v1.4-aec-200K-f32.gguf";
+const lvqePureAec = (model: unknown) => String(model ?? "").includes("-aec-");
 
 function modelName(kind: string): string {
   return MODELS.find((m) => m.kind === kind)?.label ?? kind.toUpperCase();
@@ -1112,6 +1119,20 @@ function useAppController() {
     }
     applyChange({ params: np });
   }
+  // LVQE 下的 NOISE 开关 = 切模型版本(ON→v1.3 AEC+降噪,OFF→v1.4 纯 AEC)。
+  // 目标版本未下载时跳 Engine 页(那里有下载入口),不生成缺文件的配置。
+  function setLvqeNoise(on: boolean) {
+    const curOn = !lvqePureAec(paramsRef.current.model);
+    if (on === curOn) return; // 已处于目标态
+    const target = on ? LVQE_NS_ON_FILE : LVQE_NS_OFF_FILE;
+    localvqeAssets()
+      .then((a) => {
+        const found = a.models.find((m) => m.filename === target);
+        if (found) pickLocalvqeModel(found.path);
+        else gotoView("engine");
+      })
+      .catch((e) => noteError(String(e)));
+  }
   // 选 LocalVQE 模型(清单常驻):原子地切到 localvqe 引擎并设 model,避免把 model 写到当前引擎上。
   function pickLocalvqeModel(path: string) {
     const base =
@@ -1252,11 +1273,13 @@ function useAppController() {
   const platformView: Platform = dev && devWin ? "windows" : platform;
   const isMac = platformView === "macos";
   const refSel = dev ? referenceView : reference;
-  const ns = Boolean(params.ns);
-  // 降噪是 AEC3 管线独有(其它 backend 无 ns 参数)→ 不支持时置灰。
-  const nsSupported = Boolean(
-    processors.find((p) => p.kind === kind)?.params?.ns,
-  );
+  // NOISE 开关三种语义:aec3 = ns 参数;localvqe = 模型版本(v1.3 带降噪 / v1.4 纯 AEC);
+  // nvafx 无对应 → 置灰。
+  const isLvqe = kind === "localvqe";
+  const ns = isLvqe ? !lvqePureAec(params.model) : Boolean(params.ns);
+  const nsSupported =
+    isLvqe ||
+    Boolean(processors.find((p) => p.kind === kind)?.params?.ns);
   // 通话 app 里要选的"麦克风"名:由所选输出设备名推导(CABLE Input→CABLE Output;其余同名)。
   const outDev = devices?.outputs.find((d) => d.stable_id === selOutput);
   const cableName = outDev
@@ -1559,21 +1582,29 @@ function useAppController() {
               <button
                 type="button"
                 className={`b ${ns ? "active" : ""}`}
-                onClick={() => setParam("ns", true)}
+                onClick={() =>
+                  isLvqe ? setLvqeNoise(true) : setParam("ns", true)
+                }
               >
                 ON
               </button>
               <button
                 type="button"
                 className={`b ${!ns ? "active" : ""}`}
-                onClick={() => setParam("ns", false)}
+                onClick={() =>
+                  isLvqe ? setLvqeNoise(false) : setParam("ns", false)
+                }
               >
                 OFF
               </button>
             </div>
             <span className="sp" />
             <span className="meta">
-              {nsSupported ? t("reduceNoise") : "AEC3 only"}
+              {isLvqe
+                ? t("lvqeNsHint")
+                : nsSupported
+                  ? t("reduceNoise")
+                  : "AEC3 only"}
             </span>
             <span className="ico">
               <IcoNoise />

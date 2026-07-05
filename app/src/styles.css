@@ -1979,8 +1979,11 @@ hr.hair {
   padding-right: 0;
   text-align: center;
 }
+/* 02 MODEL 三钮等宽(LOCALVQE 简写 LVQE 后可等宽);04 NOISE 双钮同宽 74px,
+   ON|OFF 接缝正对上排 AEC3|LVQE 接缝、右缘对齐 LVQE|NVAFX 接缝(用户定案 2026-07-05) */
+#models .b,
 #ns .b {
-  min-width: 48px;
+  width: 74px;
   padding-left: 0;
   padding-right: 0;
   text-align: center;

@@ -46,6 +46,10 @@ const D: Record<string, { en: string; zh: string }> = {
   noLoopback: { en: "No Loopback", zh: "No Loopback" },
   installCable: { en: "install virtual cable", zh: "安装虚拟声卡" },
   reduceNoise: { en: "Reduce background noise", zh: "抑制背景噪声" },
+  lvqeNsHint: {
+    en: "on = v1.3 · off = v1.4 pure aec",
+    zh: "开 = v1.3 · 关 = v1.4 纯回声消除",
+  },
 
   signal: { en: "Signal", zh: "Signal" },
   sigFlow: {
