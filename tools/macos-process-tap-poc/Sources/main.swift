@@ -470,10 +470,14 @@ func preflightAudioCapturePermission() -> String {
     guard let sym = dlsym(handle, "TCCAccessPreflight") else { return "unknown" }
     typealias PreflightFunc = @convention(c) (CFString, CFDictionary?) -> Int32
     let preflight = unsafeBitCast(sym, to: PreflightFunc.self)
+    // 私有 API 的返回枚举只有 0=granted 可确证;1/2 的 denied/unknown 语义在
+    // 不同 headers dump 里互相矛盾(2026-07-05 实测:无授权记录时返回 1,若按
+    // "denied" 上报,UI 会引导去系统设置——而那里没有条目可开,请求弹窗的路径
+    // 反而永远走不到,用户卡死)。故非 0 一律报 undetermined:UI 走「请求」路径,
+    // 真 denied 时系统静默不弹窗,再由前端兜底打开设置,无一卡死。
     switch preflight("kTCCServiceAudioCapture" as CFString, nil) {
     case 0: return "granted"
-    case 1: return "denied"
-    case 2: return "undetermined"
+    case 1, 2: return "undetermined"
     default: return "unknown"
     }
 }

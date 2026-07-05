@@ -4,7 +4,7 @@ import { useI18n } from "../i18n";
 import { useRuntimeLive } from "../runtimeTelemetry";
 import { ScrambleText } from "./ScrambleText";
 
-const SYS_AUDIO_PRIVACY_URL =
+export const SYS_AUDIO_PRIVACY_URL =
   "x-apple.systempreferences:com.apple.preference.security?Privacy";
 
 const dash = (v: number | null, d = 1) => (v === null ? "—" : v.toFixed(d));
