@@ -1563,6 +1563,7 @@ fn set_tray_prefs(prefs: State<TrayPrefs>, close_to_tray: bool) {
 #[cfg(target_os = "macos")]
 mod device_watch {
     use std::ffi::c_void;
+    use std::sync::Mutex;
     use tauri::Emitter;
 
     // CoreAudio/AudioHardware.h
@@ -1590,6 +1591,17 @@ mod device_watch {
             listener: Listener,
             client_data: *mut c_void,
         ) -> i32;
+        fn AudioObjectRemovePropertyListener(
+            object_id: u32,
+            address: *const AudioObjectPropertyAddress,
+            listener: Listener,
+            client_data: *mut c_void,
+        ) -> i32;
+    }
+
+    #[derive(Default)]
+    pub struct DeviceWatchState {
+        client: Mutex<Option<usize>>,
     }
 
     // HAL 通知线程回调:只透传「变了」,枚举仍由前端调 list_devices 完成。
@@ -1604,8 +1616,8 @@ mod device_watch {
         0
     }
 
-    pub fn start(app: &tauri::AppHandle) {
-        // AppHandle 有意泄漏成 'static:监听与进程同生命周期,不注销。
+    pub fn start(app: &tauri::AppHandle, state: &DeviceWatchState) {
+        stop(state);
         let client = Box::into_raw(Box::new(app.clone()));
         let status = unsafe {
             AudioObjectAddPropertyListener(
@@ -1616,7 +1628,46 @@ mod device_watch {
             )
         };
         if status != 0 {
-            eprintln!("device watch: AudioObjectAddPropertyListener failed ({status})");
+            let _ = app.emit(
+                "echoless://log",
+                format!("device watch: AudioObjectAddPropertyListener failed ({status})"),
+            );
+            unsafe {
+                drop(Box::from_raw(client));
+            }
+            return;
+        }
+        if let Ok(mut guard) = state.client.lock() {
+            *guard = Some(client as usize);
+        } else {
+            let _ = app.emit(
+                "echoless://log",
+                "device watch: failed to store CoreAudio listener state",
+            );
+            unsafe {
+                let _ = AudioObjectRemovePropertyListener(
+                    SYSTEM_OBJECT,
+                    &DEVICES_ADDRESS,
+                    on_devices_changed,
+                    client as *mut c_void,
+                );
+                drop(Box::from_raw(client));
+            }
+        }
+    }
+
+    pub fn stop(state: &DeviceWatchState) {
+        let Some(client) = state.client.lock().ok().and_then(|mut guard| guard.take()) else {
+            return;
+        };
+        unsafe {
+            let _ = AudioObjectRemovePropertyListener(
+                SYSTEM_OBJECT,
+                &DEVICES_ADDRESS,
+                on_devices_changed,
+                client as *mut c_void,
+            );
+            drop(Box::from_raw(client as *mut tauri::AppHandle));
         }
     }
 }
@@ -1631,6 +1682,8 @@ pub fn run() {
 
     #[cfg(target_os = "windows")]
     let builder = builder.manage(TrayIconState(Mutex::new(None)));
+    #[cfg(target_os = "macos")]
+    let builder = builder.manage(device_watch::DeviceWatchState::default());
 
     builder
         .invoke_handler(tauri::generate_handler![
@@ -1695,7 +1748,10 @@ pub fn run() {
                 register_windows_tray(app)?;
             }
             #[cfg(target_os = "macos")]
-            device_watch::start(app.handle());
+            {
+                let device_watch_state = app.state::<device_watch::DeviceWatchState>();
+                device_watch::start(app.handle(), &device_watch_state);
+            }
             let _ = &window;
             Ok(())
         })
@@ -1718,6 +1774,8 @@ pub fn run() {
             // 统一在 ExitRequested 回收 sidecar,避免孤儿 CLI 占用麦克风/虚拟麦。
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 terminate_run(&app_handle.state::<RunState>());
+                #[cfg(target_os = "macos")]
+                device_watch::stop(&app_handle.state::<device_watch::DeviceWatchState>());
             }
         });
 }
