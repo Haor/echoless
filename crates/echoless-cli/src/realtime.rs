@@ -45,9 +45,9 @@ pub use self::devices::{
     AudioDoctorOptions, DeviceListOptions,
 };
 use self::devices::{
-    config_choice_summary, mic_selector,
-    output_selector, pick_config, select_device, select_reference_source, selected_device_label,
-    DeviceKind, ReferenceSource, StreamConfigChoice,
+    config_choice_summary, mic_selector, output_selector, pick_config, select_device,
+    select_reference_source, selected_device_label, DeviceKind, ReferenceSource,
+    StreamConfigChoice,
 };
 #[cfg(test)]
 use self::devices::{
@@ -215,8 +215,8 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
     }
     let near_delay_samples = delay_ms_to_samples(cfg.near_delay_ms, sample_rate);
     let ring_size = frame_size * 12 + near_delay_samples; // ~120ms plus explicit near delay
-    // A5:tap 采样率由 helper 流头上报,与管线不一致时 reader 侧线性重采样,
-    // 不再要求管线锁 48k。
+                                                          // A5:tap 采样率由 helper 流头上报,与管线不一致时 reader 侧线性重采样,
+                                                          // 不再要求管线锁 48k。
 
     let reference_channels = if reference_source.has_reference() {
         usize::from(cfg.reference_channels.channel_count())

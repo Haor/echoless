@@ -153,7 +153,14 @@ where
     let reader_running = running.clone();
     let channels = usize::from(mode.channel_count());
     let reader = thread::spawn(move || {
-        read_pcm_stream(stdout, channels, target_rate, producer, drops, reader_running)
+        read_pcm_stream(
+            stdout,
+            channels,
+            target_rate,
+            producer,
+            drops,
+            reader_running,
+        )
     });
 
     Ok(MacProcessTapStream {
@@ -162,7 +169,6 @@ where
         running,
     })
 }
-
 
 fn read_pcm_stream<P>(
     mut stdout: impl Read,
@@ -196,11 +202,8 @@ fn read_pcm_stream<P>(
                             eprintln!(
                                 "macOS Process Tap: 系统输出 {rate} Hz ≠ 管线 {target_rate} Hz,启用线性重采样"
                             );
-                            resampler = Some(InterleavedLinearResampler::new(
-                                rate,
-                                target_rate,
-                                channels,
-                            ));
+                            resampler =
+                                Some(InterleavedLinearResampler::new(rate, target_rate, channels));
                         }
                         pending.drain(..STREAM_HEADER_LEN);
                     } else {

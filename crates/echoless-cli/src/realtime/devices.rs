@@ -345,41 +345,8 @@ pub fn devices_json_with_options(options: DeviceListOptions) -> Result<Value> {
         })
         .collect::<Vec<_>>();
 
-    let mut reference_sources = vec![
-        system_reference_source(default_output_index.is_some()),
-        json!({
-            "id": "none",
-            "stable_id": "none",
-            "label": "No reference",
-            "kind": "none",
-            "available": true,
-            "hint": "No far-end reference; AEC will behave like single-ended processing."
-        }),
-    ];
-    reference_sources.extend(input_devices.iter().enumerate().map(|(index, device)| {
-        json!({
-            "id": format!("input:{index}"),
-            "stable_id": format!("input:{}", stable_device_id(device, DeviceKind::Input, index)),
-            "label": device_label(device),
-            "kind": "input",
-            "device_index": index,
-            "selector": format!("input:{}", stable_device_id(device, DeviceKind::Input, index)),
-            "available": true,
-        })
-    }));
-    if !cfg!(target_os = "macos") {
-        reference_sources.extend(output_devices.iter().enumerate().map(|(index, device)| {
-            json!({
-                "id": format!("output:{index}"),
-                "stable_id": format!("output:{}", stable_device_id(device, DeviceKind::Output, index)),
-                "label": device_label(device),
-                "kind": "output",
-                "device_index": index,
-                "selector": format!("output:{}", stable_device_id(device, DeviceKind::Output, index)),
-                "available": true,
-            })
-        }));
-    }
+    let reference_sources =
+        reference_sources_json(&input_devices, &output_devices, default_output_index);
 
     Ok(json!({
         "ok": true,
@@ -412,12 +379,12 @@ pub fn audio_doctor_json_with_options(options: AudioDoctorOptions) -> Result<Val
     let outputs = devices["outputs"].as_array().cloned().unwrap_or_default();
     let candidate_inputs = inputs
         .iter()
-        .filter(|entry| is_virtual_audio_name(entry["name"].as_str().unwrap_or_default()))
+        .filter(|entry| is_virtual_audio_input_name(entry["name"].as_str().unwrap_or_default()))
         .map(audio_candidate_json)
         .collect::<Vec<_>>();
     let candidate_outputs = outputs
         .iter()
-        .filter(|entry| is_virtual_audio_name(entry["name"].as_str().unwrap_or_default()))
+        .filter(|entry| is_virtual_audio_output_name(entry["name"].as_str().unwrap_or_default()))
         .map(audio_candidate_json)
         .collect::<Vec<_>>();
     let virtual_output_detected = !candidate_outputs.is_empty();
@@ -542,6 +509,106 @@ fn supported_ranges_json(ranges: impl Iterator<Item = SupportedStreamConfigRange
     )
 }
 
+fn reference_sources_json(
+    input_devices: &[Device],
+    output_devices: &[Device],
+    default_output_index: Option<usize>,
+) -> Vec<Value> {
+    let mut reference_sources = Vec::new();
+    if !cfg!(target_os = "linux") {
+        reference_sources.push(system_reference_source(default_output_index.is_some()));
+    }
+    reference_sources.push(no_reference_source());
+
+    if cfg!(target_os = "linux") {
+        reference_sources.extend(
+            input_devices
+                .iter()
+                .enumerate()
+                .filter_map(|(index, device)| {
+                    let label = device_label(device);
+                    is_linux_monitor_source_name(&label).then(|| {
+                        input_reference_source_json(
+                            index,
+                            label,
+                            stable_device_id(device, DeviceKind::Input, index),
+                            ReferenceIdStyle::Label,
+                        )
+                    })
+                }),
+        );
+        return reference_sources;
+    }
+
+    reference_sources.extend(input_devices.iter().enumerate().map(|(index, device)| {
+        input_reference_source_json(
+            index,
+            device_label(device),
+            stable_device_id(device, DeviceKind::Input, index),
+            ReferenceIdStyle::Index,
+        )
+    }));
+    if !cfg!(target_os = "macos") {
+        reference_sources.extend(output_devices.iter().enumerate().map(|(index, device)| {
+            output_reference_source_json(
+                index,
+                device_label(device),
+                stable_device_id(device, DeviceKind::Output, index),
+            )
+        }));
+    }
+    reference_sources
+}
+
+fn no_reference_source() -> Value {
+    json!({
+        "id": "none",
+        "stable_id": "none",
+        "label": "No reference",
+        "kind": "none",
+        "available": true,
+        "hint": "No far-end reference; AEC will behave like single-ended processing."
+    })
+}
+
+enum ReferenceIdStyle {
+    Index,
+    Label,
+}
+
+fn input_reference_source_json(
+    index: usize,
+    label: String,
+    stable_id: String,
+    id_style: ReferenceIdStyle,
+) -> Value {
+    let id = match id_style {
+        ReferenceIdStyle::Index => format!("input:{index}"),
+        ReferenceIdStyle::Label => format!("input:{label}"),
+    };
+    json!({
+        "id": id,
+        "stable_id": format!("input:{stable_id}"),
+        "label": label,
+        "kind": "input",
+        "device_index": index,
+        "selector": format!("input:{stable_id}"),
+        "available": true,
+    })
+}
+
+fn output_reference_source_json(index: usize, label: String, stable_id: String) -> Value {
+    json!({
+        "id": format!("output:{index}"),
+        "stable_id": format!("output:{stable_id}"),
+        "label": label,
+        "kind": "output",
+        "device_index": index,
+        "selector": format!("output:{stable_id}"),
+        "available": true,
+    })
+}
+
 fn system_reference_source(has_default_output: bool) -> Value {
     let available = if cfg!(windows) {
         has_default_output
@@ -601,6 +668,8 @@ fn recommended_audio_driver() -> &'static str {
         "vb-cable"
     } else if cfg!(target_os = "macos") {
         "blackhole-2ch"
+    } else if cfg!(target_os = "linux") {
+        "pipewire-null-sink"
     } else {
         "unknown"
     }
@@ -639,16 +708,12 @@ pub(super) fn system_audio_permission_state() -> &'static str {
 fn vb_cable_driver_present() -> bool {
     #[cfg(windows)]
     {
-        let windir =
-            std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
         let sys_files = [
             format!(r"{windir}\System32\drivers\vbaudio_cable64_win7.sys"),
             format!(r"{windir}\System32\drivers\vbaudio_cable32_win7.sys"),
         ];
-        if sys_files
-            .iter()
-            .any(|p| std::path::Path::new(p).is_file())
-        {
+        if sys_files.iter().any(|p| std::path::Path::new(p).is_file()) {
             return true;
         }
         // 卸载程序所在的安装目录兜底(不同版本 sys 文件名可能变)。
@@ -700,6 +765,9 @@ fn request_system_audio_permission() -> SystemAudioPermissionProbe {
 }
 
 fn audio_doctor_hint(install_status: &str) -> &'static str {
+    if cfg!(target_os = "linux") {
+        return "Create the PipeWire/PulseAudio null sink with: pactl load-module module-null-sink sink_name=echoless_out sink_properties=device.description=Echoless-Output. In your call app, choose \"Monitor of Echoless-Output\" as the microphone.";
+    }
     match install_status {
         "installed" => "Virtual audio input/output candidates were detected.",
         "missing" => {
@@ -713,6 +781,29 @@ fn audio_doctor_hint(install_status: &str) -> &'static str {
         }
         _ => "Only one side of a virtual audio route was detected; verify the driver and refresh devices.",
     }
+}
+
+fn is_virtual_audio_input_name(name: &str) -> bool {
+    if cfg!(target_os = "linux") {
+        return is_linux_monitor_source_name(name);
+    }
+    is_virtual_audio_name(name)
+}
+
+fn is_virtual_audio_output_name(name: &str) -> bool {
+    if cfg!(target_os = "linux") {
+        return is_linux_virtual_output_name(name);
+    }
+    is_virtual_audio_name(name)
+}
+
+fn is_linux_monitor_source_name(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("monitor")
+}
+
+fn is_linux_virtual_output_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.contains("echoless") || name.contains("null")
 }
 
 pub(super) fn is_virtual_audio_name(name: &str) -> bool {
@@ -866,4 +957,40 @@ fn find_device_index(devices: &[Device], selected: &Device) -> Option<usize> {
             .iter()
             .position(|device| device.id().ok().as_ref() == Some(&id))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_monitor_reference_uses_input_label_id() {
+        let source = input_reference_source_json(
+            2,
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor".to_string(),
+            "name:alsa-output-monitor".to_string(),
+            ReferenceIdStyle::Label,
+        );
+
+        assert_eq!(
+            source["id"],
+            "input:alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        );
+        assert_eq!(source["kind"], "input");
+        assert_eq!(source["selector"], "input:name:alsa-output-monitor");
+    }
+
+    #[test]
+    fn linux_audio_name_helpers_match_monitor_and_null_sink() {
+        assert!(is_linux_monitor_source_name(
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        ));
+        assert!(is_linux_monitor_source_name("Monitor of Echoless-Output"));
+        assert!(is_linux_virtual_output_name("Echoless-Output"));
+        assert!(is_linux_virtual_output_name("Null Output"));
+        assert!(!is_linux_monitor_source_name("Built-in Microphone"));
+        assert!(!is_linux_virtual_output_name(
+            "Built-in Audio Analog Stereo"
+        ));
+    }
 }
