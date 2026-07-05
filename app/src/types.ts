@@ -110,6 +110,8 @@ export interface RuntimeStatus {
   mic_input_drops: number;
   ref_input_drops: number;
   input_drops: number;
+  mic_stale_drops?: number;
+  ref_stale_drops?: number;
   ref_underruns: number;
   output_underruns: number;
   output_overruns: number;

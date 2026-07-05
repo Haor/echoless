@@ -576,7 +576,7 @@ fn process_loop<M, R, O>(
             continue;
         }
         // 控制积压(简单 drift/堆积处理):超 4 帧丢旧的。
-        let mut stale_drops = skip_stale(&mut mic_cons, frame_size);
+        let mic_stale_drops = skip_stale(&mut mic_cons, frame_size);
         mic_cons.pop_slice(&mut mic_frame);
         let near_delay_buffered_samples = apply_near_delay(
             &mut near_delay,
@@ -586,8 +586,9 @@ fn process_loop<M, R, O>(
         );
 
         let mut ref_underrun = 0;
+        let mut ref_stale_drops = 0;
         if let Some(rc) = render_cons.as_mut() {
-            stale_drops += skip_stale(rc, far_samples_per_frame);
+            ref_stale_drops = skip_stale(rc, far_samples_per_frame);
             if rc.occupied_len() >= far_samples_per_frame {
                 rc.pop_slice(&mut far);
             } else {
@@ -632,7 +633,8 @@ fn process_loop<M, R, O>(
             out_q: out_prod.occupied_len(),
             mic_input_drops: runtime.counters.mic_input_drops.swap(0, Ordering::Relaxed),
             ref_input_drops: runtime.counters.ref_input_drops.swap(0, Ordering::Relaxed),
-            stale_drops: stale_drops as u64,
+            mic_stale_drops: mic_stale_drops as u64,
+            ref_stale_drops: ref_stale_drops as u64,
             ref_underruns: ref_underrun,
             output_overruns,
             output_underruns: runtime.counters.output_underruns.swap(0, Ordering::Relaxed),

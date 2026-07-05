@@ -117,6 +117,8 @@ struct DiagnosticFrame {
     out_q: usize,
     mic_input_drops: u64,
     ref_input_drops: u64,
+    mic_stale_drops: u64,
+    ref_stale_drops: u64,
     stale_drops: u64,
     ref_underruns: u64,
     output_overruns: u64,
@@ -144,7 +146,9 @@ impl DiagnosticFrame {
             out_q: sample.out_q,
             mic_input_drops: sample.mic_input_drops,
             ref_input_drops: sample.ref_input_drops,
-            stale_drops: sample.stale_drops,
+            mic_stale_drops: sample.mic_stale_drops,
+            ref_stale_drops: sample.ref_stale_drops,
+            stale_drops: sample.mic_stale_drops + sample.ref_stale_drops,
             ref_underruns: sample.ref_underruns,
             output_overruns: sample.output_overruns,
             output_underruns: sample.output_underruns,
@@ -223,7 +227,7 @@ impl DiagnosticRecorder {
         );
         writeln!(
             stats,
-            "frame_index,frames,near_delay_ms,near_delay_buffered_samples,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,input_queue_latency_ms,output_queue_latency_ms,estimated_user_latency_ms,aec_estimated_delay_ms,aec3_delay_blocks,mic_input_drops,ref_input_drops,input_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
+            "frame_index,frames,near_delay_ms,near_delay_buffered_samples,mic_dbfs,ref_dbfs,out_dbfs,mic_q,ref_q,out_q,input_queue_latency_ms,output_queue_latency_ms,estimated_user_latency_ms,aec_estimated_delay_ms,aec3_delay_blocks,mic_input_drops,ref_input_drops,input_drops,mic_stale_drops,ref_stale_drops,stale_drops,ref_underruns,output_overruns,output_underruns,node_process_time_ms,node_runtime_errors,node_diverged,node_last_error"
         )?;
 
         let mic_part_path = dir.join("mic.wav.part");
@@ -413,7 +417,7 @@ impl DiagnosticWriter {
         };
         writeln!(
             stats,
-            "{},{},{},{},{:.2},{:.2},{:.2},{},{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
+            "{},{},{},{},{:.2},{:.2},{:.2},{},{},{},{:.2},{:.2},{:.2},{},{},{},{},{},{},{},{},{},{},{},{:.3},{},{},{}",
             self.frame_index,
             frame.frame_size,
             frame.near_delay_ms,
@@ -442,6 +446,8 @@ impl DiagnosticWriter {
             frame.mic_input_drops,
             frame.ref_input_drops,
             frame.mic_input_drops + frame.ref_input_drops,
+            frame.mic_stale_drops,
+            frame.ref_stale_drops,
             frame.stale_drops,
             frame.ref_underruns,
             frame.output_overruns,
@@ -674,7 +680,8 @@ mod tests {
             out_q: 0,
             mic_input_drops: 0,
             ref_input_drops: 0,
-            stale_drops: 0,
+            mic_stale_drops: 0,
+            ref_stale_drops: 0,
             ref_underruns: 0,
             output_overruns: 0,
             output_underruns: 0,
@@ -743,7 +750,8 @@ mod tests {
             out_q: 0,
             mic_input_drops: 0,
             ref_input_drops: 0,
-            stale_drops: 0,
+            mic_stale_drops: 0,
+            ref_stale_drops: 0,
             ref_underruns: 0,
             output_overruns: 0,
             output_underruns: 0,
@@ -809,7 +817,8 @@ mod tests {
             out_q: 0,
             mic_input_drops: 0,
             ref_input_drops: 0,
-            stale_drops: 0,
+            mic_stale_drops: 0,
+            ref_stale_drops: 0,
             ref_underruns: 0,
             output_overruns: 0,
             output_underruns: 0,

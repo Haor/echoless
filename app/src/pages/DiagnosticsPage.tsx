@@ -61,6 +61,8 @@ export function DiagnosticsPage({
     { label: "input drops", value: health.input_drops, warn: health.input_drops > 0 },
     { label: "ref underruns", value: health.ref_underruns, warn: health.ref_underruns > 0 },
     { label: "output underruns", value: health.output_underruns, warn: health.output_underruns > 0 },
+    { label: "mic stale", value: health.mic_stale_drops, warn: health.mic_stale_drops > 0 },
+    { label: "ref stale", value: health.ref_stale_drops, warn: health.ref_stale_drops > 0 },
     { label: "stale drops", value: health.stale_drops, warn: health.stale_drops > 0 },
     { label: "runtime errors", value: health.runtime_errors, warn: health.runtime_errors > 0 },
     { label: "diverged", value: health.diverged ? "YES" : "NO", warn: health.diverged },

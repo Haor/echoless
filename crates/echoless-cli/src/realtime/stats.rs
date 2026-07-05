@@ -22,7 +22,8 @@ pub(super) struct StatsSample<'a> {
     pub(super) out_q: usize,
     pub(super) mic_input_drops: u64,
     pub(super) ref_input_drops: u64,
-    pub(super) stale_drops: u64,
+    pub(super) mic_stale_drops: u64,
+    pub(super) ref_stale_drops: u64,
     pub(super) ref_underruns: u64,
     pub(super) output_overruns: u64,
     pub(super) output_underruns: u64,
@@ -179,7 +180,8 @@ pub(super) struct RealtimeStats {
     out_q: usize,
     mic_input_drops: u64,
     ref_input_drops: u64,
-    stale_drops: u64,
+    mic_stale_drops: u64,
+    ref_stale_drops: u64,
     ref_underruns: u64,
     output_overruns: u64,
     output_underruns: u64,
@@ -239,7 +241,8 @@ impl RealtimeStats {
             out_q: 0,
             mic_input_drops: 0,
             ref_input_drops: 0,
-            stale_drops: 0,
+            mic_stale_drops: 0,
+            ref_stale_drops: 0,
             ref_underruns: 0,
             output_overruns: 0,
             output_underruns: 0,
@@ -292,7 +295,8 @@ impl RealtimeStats {
         self.near_delay_buffered_samples = sample.near_delay_buffered_samples;
         self.mic_input_drops += sample.mic_input_drops;
         self.ref_input_drops += sample.ref_input_drops;
-        self.stale_drops += sample.stale_drops;
+        self.mic_stale_drops += sample.mic_stale_drops;
+        self.ref_stale_drops += sample.ref_stale_drops;
         self.ref_underruns += sample.ref_underruns;
         self.output_overruns += sample.output_overruns;
         self.output_underruns += sample.output_underruns;
@@ -331,7 +335,8 @@ impl RealtimeStats {
         self.out_wave.reset();
         self.mic_input_drops = 0;
         self.ref_input_drops = 0;
-        self.stale_drops = 0;
+        self.mic_stale_drops = 0;
+        self.ref_stale_drops = 0;
         self.ref_underruns = 0;
         self.output_overruns = 0;
         self.output_underruns = 0;
@@ -367,7 +372,7 @@ impl RealtimeStats {
             self.output_underruns,
             self.output_overruns,
             self.mic_input_drops + self.ref_input_drops,
-            self.stale_drops,
+            self.mic_stale_drops + self.ref_stale_drops,
             self.node_process_time_ms,
             self.node_runtime_errors,
             self.node_diverged,
@@ -433,7 +438,9 @@ impl RealtimeStats {
             "mic_input_drops": self.mic_input_drops,
             "ref_input_drops": self.ref_input_drops,
             "input_drops": self.mic_input_drops + self.ref_input_drops,
-            "stale_drops": self.stale_drops,
+            "mic_stale_drops": self.mic_stale_drops,
+            "ref_stale_drops": self.ref_stale_drops,
+            "stale_drops": self.mic_stale_drops + self.ref_stale_drops,
             "ref_underruns": self.ref_underruns,
             "output_underruns": self.output_underruns,
             "output_overruns": self.output_overruns,
@@ -504,6 +511,8 @@ mod tests {
         stats.out_q = 2400;
         stats.mic_input_drops = 1;
         stats.ref_input_drops = 2;
+        stats.mic_stale_drops = 3;
+        stats.ref_stale_drops = 5;
         stats.aec_estimated_delay_ms = 48;
         stats.aec3_delay_blocks = Some(12);
 
@@ -512,6 +521,9 @@ mod tests {
         assert_eq!(value["type"], "status");
         assert_eq!(value["backend"], "localvqe");
         assert_eq!(value["input_drops"], 3);
+        assert_eq!(value["mic_stale_drops"], 3);
+        assert_eq!(value["ref_stale_drops"], 5);
+        assert_eq!(value["stale_drops"], 8);
         assert_eq!(value["near_delay_ms"], 25);
         assert_eq!(value["output_level"], 75);
         assert_eq!(value["output_gain_db"], output_level_gain_db(75).unwrap());

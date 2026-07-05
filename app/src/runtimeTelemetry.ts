@@ -14,6 +14,8 @@ export interface Health {
   input_drops: number;
   ref_underruns: number;
   output_underruns: number;
+  mic_stale_drops: number;
+  ref_stale_drops: number;
   stale_drops: number;
   runtime_errors: number;
   diverged: boolean;
@@ -37,6 +39,8 @@ const ZERO_HEALTH: Health = {
   input_drops: 0,
   ref_underruns: 0,
   output_underruns: 0,
+  mic_stale_drops: 0,
+  ref_stale_drops: 0,
   stale_drops: 0,
   runtime_errors: 0,
   diverged: false,
@@ -89,6 +93,8 @@ export function publishRuntimeStatus(s: RuntimeStatus) {
     input_drops: s.input_drops ?? 0,
     ref_underruns: s.ref_underruns ?? 0,
     output_underruns: s.output_underruns ?? 0,
+    mic_stale_drops: s.mic_stale_drops ?? 0,
+    ref_stale_drops: s.ref_stale_drops ?? 0,
     stale_drops: s.stale_drops ?? 0,
     runtime_errors: s.runtime_errors ?? 0,
     diverged: Boolean(s.diverged),
