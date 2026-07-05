@@ -345,9 +345,8 @@ fn validate_chain_node(
         return;
     }
 
-    match node.kind.as_str() {
+    match registry::canonical_kind(&node.kind) {
         "aec3" => validate_aec3_node(&base, &node.params, errors),
-        "sonora_aec3" => validate_aec3_node(&base, &node.params, errors), // legacy alias, remove after 2 releases
         "localvqe" => validate_localvqe_node(&base, &node.params, errors),
         "nvidia_afx_aec" => validate_nvafx_node(cfg, &base, &node.params, errors),
         "passthrough" => {}
@@ -356,7 +355,7 @@ fn validate_chain_node(
 }
 
 fn is_known_processor_kind(kind: &str) -> bool {
-    registry::kinds().contains(&kind) || kind == "sonora_aec3" // legacy alias, remove after 2 releases
+    registry::kinds().contains(&registry::canonical_kind(kind))
 }
 
 fn validate_aec3_node(base: &str, params: &toml::Table, errors: &mut Vec<ConfigValidationError>) {

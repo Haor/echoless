@@ -236,9 +236,10 @@ where
 }
 
 pub fn apply_reference_channels_to_chain(nodes: &mut [NodeConfig], mode: ReferenceChannels) {
-    for node in nodes.iter_mut().filter(|node| {
-        node.kind == "aec3" || node.kind == "sonora_aec3" // legacy alias, remove after 2 releases
-    }) {
+    for node in nodes
+        .iter_mut()
+        .filter(|node| echoless_processors::registry::canonical_kind(&node.kind) == "aec3")
+    {
         node.params.insert(
             "reference_channels".to_string(),
             toml::Value::String(mode.as_str().to_string()),

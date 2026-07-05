@@ -120,9 +120,10 @@ fn apply_run_overrides(mut cfg: PipelineConfig, a: &RunArgs) -> Result<PipelineC
 
 #[cfg_attr(not(feature = "realtime"), allow(dead_code))]
 fn set_aec3_param(nodes: &mut [NodeConfig], key: &str, value: toml::Value) -> Result<()> {
-    let Some(node) = nodes.iter_mut().find(|node| {
-        node.kind == "aec3" || node.kind == "sonora_aec3" // legacy alias, remove after 2 releases
-    }) else {
+    let Some(node) = nodes
+        .iter_mut()
+        .find(|node| echoless_processors::registry::canonical_kind(&node.kind) == "aec3")
+    else {
         bail!("{key} 需要配置中存在 aec3 节点,或使用 --processor aec3");
     };
     node.params.insert(key.to_string(), value);
