@@ -201,16 +201,6 @@ jobs:
           set -euo pipefail
           shared_build="${RUNNER_TEMP}/localvqe-shared-build"
           regression_build="${RUNNER_TEMP}/localvqe-regression-build"
-          model_name="localvqe-v1.3-4.8M-f32.gguf"
-          model="${regression_build}/bench_assets/${model_name}"
-          if [[ ! -f "${model}" ]]; then
-            model="$(find "${regression_build}" -name "${model_name}" -print -quit)"
-          fi
-          if [[ -z "${model}" || ! -f "${model}" ]]; then
-            echo "LocalVQE smoke model not found under ${regression_build}" >&2
-            exit 1
-          fi
-
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
             shared_dir="${shared_build}/bin/Release"
             lib="${shared_dir}/localvqe.dll"
@@ -232,9 +222,24 @@ jobs:
             export DYLD_FALLBACK_LIBRARY_PATH="${shared_dir}:${DYLD_FALLBACK_LIBRARY_PATH:-}"
           fi
 
-          ECHOLESS_LOCALVQE_LIBRARY="${lib}" \
-          ECHOLESS_LOCALVQE_MODEL="${model}" \
-            cargo test -p echoless-processors localvqe_ffi_smoke -- --ignored --nocapture
+          for model_name in \
+            "localvqe-v1.3-4.8M-f32.gguf" \
+            "localvqe-v1.4-aec-200K-f32.gguf"; do
+            model="${regression_build}/bench_assets/${model_name}"
+            if [[ ! -f "${model}" ]]; then
+              model="$(find "${regression_build}" -name "${model_name}" -print -quit)"
+            fi
+            if [[ -z "${model}" || ! -f "${model}" ]]; then
+              echo "LocalVQE smoke model not found under ${regression_build}: ${model_name}" >&2
+              exit 1
+            fi
+            if [[ "${RUNNER_OS}" == "Windows" ]]; then
+              model="$(cygpath -w "${model}")"
+            fi
+            ECHOLESS_LOCALVQE_LIBRARY="${lib}" \
+            ECHOLESS_LOCALVQE_MODEL="${model}" \
+              cargo test -p echoless-processors localvqe_ffi_smoke -- --ignored --nocapture
+          done
 
       # native runtime 随包分发(2026-07-05 定案;模型不随包,走 HF 下载)
       - name: Prepare Tauri LocalVQE native runtime
