@@ -68,7 +68,7 @@
 <body data-dock="dark">
 <header>
   <h1>ECHOLESS <span class="no">/</span> ICON PROPOSALS</h1>
-  <p class="sub">17 个方向 · 同一主题语汇(炭黑 #1d1d1b · 纸灰 #d6d5cd · 橙 #ff7235)· 每卡含 128 / 64 / 32 / 16 px。选中报编号即可。</p>
+  <p class="sub">24 个方向 · 同一主题语汇(炭黑 #1d1d1b · 纸灰 #d6d5cd · 橙 #ff7235)· 每卡含 128 / 64 / 32 / 16 px。选中报编号即可。</p>
 </header>
 <div class="controls">
   dock 背景
@@ -97,7 +97,117 @@ const decayBars = (first = ACC, echo = PAPER, ops = [0.9, 0.63, 0.39, 0.23]) => 
   return s;
 };
 
+// ---- Op-Art 条纹球工具(参考稿:条纹构成圆球,图形从缺口里浮现) ----
+const OFFW = "#ecebe4", OFFL = "#c9c8c0", INKD = "#1f1f1d";
+const rk = (x, y, w, h, f = INKD, op) =>
+  `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${f}"${op != null ? ` fill-opacity="${op}"` : ""}/>`;
+
+// 竖杠滚花球:外圆内全高杠,内圆区域收细成连杆(参考图 1)
+const knurl = (uid, ink, accIdx = -1, acc = ACC) => {
+  const R = 340, Rin = 205, bw = 42, pitch = 66, cx = 512, cy = 512;
+  let s = "";
+  for (let k = -5; k <= 5; k++) {
+    const x = cx + k * pitch, dx = Math.abs(x - cx);
+    if (dx > R - 8) continue;
+    const f = k + 5 === accIdx ? acc : ink;
+    if (dx < Rin - 4) {
+      const vi = Math.sqrt(Rin * Rin - dx * dx);
+      s += rk(x - bw / 2, cy - R, bw, R - vi, f);
+      s += rk(x - bw / 2, cy + vi, bw, R - vi, f);
+      s += rk(x - 7, cy - vi, 14, 2 * vi, f);
+    } else {
+      s += rk(x - bw / 2, cy - R, bw, 2 * R, f);
+    }
+  }
+  return `<g clip-path="url(#kc${uid})">${s}</g>` +
+    `<defs><clipPath id="kc${uid}"><circle cx="512" cy="512" r="${R}"/></clipPath></defs>`;
+};
+
+// 横纹分层球:细条 = 外圆弦宽,粗条 = 内形弦宽(参考图 2)
+const slicedSphere = (innerHalfWidthAt /* dy -> 内形半宽或 null */, ink = INKD) => {
+  const R = 350, pitch = 78, t = 26, T = 62, cx = 512, cy = 512;
+  let s = "";
+  for (let k = -4; k <= 4; k++) {
+    const y = cy + k * pitch, dy = Math.abs(y - cy);
+    if (dy > R - 10) continue;
+    const wo = Math.sqrt(R * R - dy * dy);
+    s += rk(cx - wo, y - t / 2, 2 * wo, t, ink);
+    const wi = innerHalfWidthAt(k * pitch);
+    if (wi) s += rk(cx - wi, y - T / 2, 2 * wi, T, ink);
+  }
+  return s;
+};
+
 const VARIANTS = [
+{ group: "★ · OP-ART 条纹球 — 你给的参考方向", items: [
+  { id: "E1", name: "滚花栅格球", tags: ["参考直译", "旋钮质感"], note: "参考图 1 的直译:竖杠成球,内圆收细成连杆 —— 像一颗滚花旋钮,也像麦克风防风网。纯图形,不讲故事。",
+    draw: (uid) => plate(OFFW, OFFL) + knurl(uid, INKD) },
+  { id: "E2", name: "分层球", tags: ["参考直译"], note: "参考图 2 的直译:横纹球体,内层球从条纹增厚处浮现。图底反转的经典配方,远看是球,近看全是条。",
+    draw: () => {
+      const Rin = 235;
+      return plate(OFFW, OFFL) + slicedSphere(dy => Math.abs(dy) < Rin - 4 ? Math.sqrt(Rin * Rin - dy * dy) : null);
+    } },
+  { id: "E3", name: "衰减球", tags: ["杂交", "本命提名"], note: "把 op-art 配方换上我们的心脏:竖细杠成球,粗段的高度沿衰减包络一路跌下去 —— 球里锁着一条正在死去的回声。",
+    draw: (uid) => {
+      const R = 340, pitch = 64, cx = 512, cy = 512;
+      let s = "";
+      for (let k = -5; k <= 5; k++) {
+        const x = cx + k * pitch, dx = Math.abs(x - cx);
+        if (dx > R - 8) continue;
+        const vo = Math.sqrt(R * R - dx * dx);
+        s += rk(x - 8, cy - vo, 16, 2 * vo);
+        const H = Math.min(300 * Math.pow(0.72, k + 5), vo - 6);
+        if (H > 12) s += rk(x - 22, cy - H, 44, 2 * H);
+      }
+      return plate(OFFW, OFFL) + `<g clip-path="url(#dc${uid})">${s}</g>` +
+        `<defs><clipPath id="dc${uid}"><circle cx="512" cy="512" r="${R}"/></clipPath></defs>`;
+    } },
+  { id: "E4", name: "衰减球 · 橙脉冲", tags: ["杂交", "一滴橙"], note: "同 E3,但第一声是橙的:活人声进场,后面全是它逐渐熄灭的回声。品牌色只出现在唯一重要的地方。",
+    draw: (uid) => {
+      const R = 340, pitch = 64, cx = 512, cy = 512;
+      let s = "";
+      for (let k = -5; k <= 5; k++) {
+        const x = cx + k * pitch, dx = Math.abs(x - cx);
+        if (dx > R - 8) continue;
+        const vo = Math.sqrt(R * R - dx * dx);
+        const H = Math.min(300 * Math.pow(0.72, k + 5), vo - 6);
+        const hot = k === -4; // 最高可见杠(k=-5 被圆裁成细条)
+        s += rk(x - 8, cy - vo, 16, 2 * vo, hot ? ACC : INKD);
+        if (H > 12) s += rk(x - 22, cy - H, 44, 2 * H, hot ? ACC : INKD);
+      }
+      return plate(OFFW, OFFL) + `<g clip-path="url(#ec${uid})">${s}</g>` +
+        `<defs><clipPath id="ec${uid}"><circle cx="512" cy="512" r="${R}"/></clipPath></defs>`;
+    } },
+  { id: "E5", name: "残影双球", tags: ["杂交", "echo 字面义"], note: "一颗实纹球,右后方跟着一颗错半拍相位的淡纹残影 —— 回声就是错位的复读。两球相接处干净切开。",
+    draw: (uid) => {
+      const R = 280, pitch = 62, t = 32;
+      const stripes = (cx, cy, phase, op) => {
+        let s = "";
+        for (let k = -4; k <= 4; k++) {
+          const y = cy + k * pitch + phase, dy = Math.abs(y - cy);
+          if (dy > R - 8) continue;
+          const w = Math.sqrt(R * R - dy * dy);
+          s += rk(cx - w, y - t / 2, 2 * w, t, INKD, op);
+        }
+        return s;
+      };
+      return plate(OFFW, OFFL) +
+        `<defs><mask id="gm${uid}"><rect width="1024" height="1024" fill="black"/>` +
+        `<circle cx="642" cy="512" r="${R}" fill="white"/><circle cx="422" cy="512" r="${R}" fill="black"/></mask></defs>` +
+        `<g mask="url(#gm${uid})">${stripes(642, 512, 31, 0.38)}</g>` +
+        stripes(422, 512, 0, null);
+    } },
+  { id: "E6", name: "出线球", tags: ["杂交", "叙事完整"], note: "分层球 = 塞满反射的房间;唯一走出去的,是一条干净的橙色平线。混响留在球里,人声离开。",
+    draw: () => {
+      const Rin = 235;
+      return plate(OFFW, OFFL) +
+        `<g transform="translate(442 512) scale(0.86) translate(-512 -512)">` +
+        slicedSphere(dy => Math.abs(dy) < Rin - 4 ? Math.sqrt(Rin * Rin - dy * dy) : null) +
+        `</g><rect x="470" y="490" width="422" height="44" rx="22" fill="${ACC}"/>`;
+    } },
+  { id: "E7", name: "暗面栅格", tags: ["杂交", "接现有主题"], note: "E1 翻回炭黑底:纸灰杠 + 正中一根橙杠,和 App 界面同一张脸。op-art 结构留下,配色归队。",
+    draw: (uid) => plate() + knurl(uid, PAPER, 5) },
+]},
 { group: "A · 衰减 — 回声正在死去", items: [
   { id: "A1", name: "衰减杠(现行)", tags: ["线上", "32px 稳"], note: "首杠橙 = 活人声,四道纸灰回声逐级熄灭。已上线的基准方案。",
     draw: () => plate() + decayBars() },
