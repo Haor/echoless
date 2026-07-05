@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ECHOLESS — ICON PROPOSALS</title>
+<style>
+  :root {
+    --bg: #141412; --raised: #1d1d1b; --line: #35352f;
+    --t-strong: #d6d5cd; --t: #c2c1b8; --t-soft: #98978e; --t-mut: #767570;
+    --acc: #ff7235; --paper: #c9c9c3; --ink: #171715;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 48px 40px 96px;
+    background: var(--bg); color: var(--t);
+    font: 13px/1.6 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  header { max-width: 1280px; margin: 0 auto 8px; }
+  h1 {
+    font-size: 20px; letter-spacing: 4px; color: var(--t-strong);
+    text-transform: uppercase; margin: 0 0 4px;
+  }
+  h1 .no { color: var(--acc); }
+  .sub { color: var(--t-mut); letter-spacing: 1px; margin: 0 0 28px; }
+  .controls {
+    max-width: 1280px; margin: 0 auto 28px; display: flex; gap: 10px; align-items: center;
+    color: var(--t-mut); letter-spacing: 1.5px; text-transform: uppercase; font-size: 11px;
+  }
+  .controls button {
+    font: inherit; letter-spacing: 1.5px; text-transform: uppercase;
+    background: transparent; color: var(--t-soft);
+    border: 1px solid var(--line); padding: 6px 14px; cursor: pointer;
+  }
+  .controls button.active { color: var(--ink); background: var(--paper); border-color: var(--paper); }
+  .group { max-width: 1280px; margin: 0 auto; }
+  .gtitle {
+    margin: 44px 0 16px; padding-top: 16px; border-top: 1px solid var(--line);
+    color: var(--t-soft); letter-spacing: 3px; text-transform: uppercase; font-size: 12px;
+  }
+  .gtitle .no { color: var(--acc); margin-right: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 18px; }
+  .card { border: 1px solid var(--line); background: var(--raised); padding: 16px; }
+  .dock {
+    display: flex; align-items: center; justify-content: center; gap: 18px;
+    padding: 20px 12px; margin-bottom: 14px; background: #0e0e0d; transition: background .2s;
+  }
+  body[data-dock="light"] .dock { background: #ececea; }
+  body[data-dock="desk"]  .dock { background: linear-gradient(135deg, #46587c 0%, #23283a 60%, #191a22 100%); }
+  .dock .lg { width: 128px; height: 128px; }
+  .dock .col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .dock .s64 { width: 64px; height: 64px; }
+  .dock .s32 { width: 32px; height: 32px; }
+  .dock .s16 { width: 16px; height: 16px; }
+  .dock svg { display: block; width: 100%; height: 100%; }
+  .cid { color: var(--acc); letter-spacing: 2px; font-size: 11px; }
+  .cname { color: var(--t-strong); letter-spacing: 1.5px; text-transform: uppercase; margin: 2px 0 6px; }
+  .cnote { color: var(--t-mut); font-size: 12px; line-height: 1.55; }
+  .tag {
+    display: inline-block; margin-top: 10px; margin-right: 6px;
+    border: 1px solid var(--line); color: var(--t-mut);
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 2px 8px;
+  }
+  .tag.hot { color: var(--acc); border-color: rgba(255,114,53,.4); }
+  footer { max-width: 1280px; margin: 64px auto 0; color: var(--t-mut); border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body data-dock="dark">
+<header>
+  <h1>ECHOLESS <span class="no">/</span> ICON PROPOSALS</h1>
+  <p class="sub">17 个方向 · 同一主题语汇(炭黑 #1d1d1b · 纸灰 #d6d5cd · 橙 #ff7235)· 每卡含 128 / 64 / 32 / 16 px。选中报编号即可。</p>
+</header>
+<div class="controls">
+  dock 背景
+  <button data-dock="dark" class="active">炭黑</button>
+  <button data-dock="light">浅色</button>
+  <button data-dock="desk">桌面</button>
+</div>
+<div id="root"></div>
+<footer>A1 = 当前线上版本。所有图形按 1024 视区绘制,母版脚本在 <code>app/scripts/gen-icon.py</code>;定稿后我把选中方向落回脚本并重出全套尺寸。</footer>
+
+<script>
+const ACC = "#ff7235", PAPER = "#d6d5cd", BG = "#1d1d1b", LINE = "#35352f", INK = "#171715", PAPBG = "#c9c9c3";
+let uidc = 0;
+
+const plate = (fill = BG, stroke = LINE) =>
+  `<rect x="100" y="100" width="824" height="824" rx="224" fill="${fill}" stroke="${stroke}" stroke-width="6"/>`;
+
+const bar = (x, cy, w, h, fill, op) =>
+  `<rect x="${x}" y="${cy - h / 2}" width="${w}" height="${h}" rx="${w / 2}" fill="${fill}"${op != null ? ` fill-opacity="${op}"` : ""}/>`;
+
+// A1 几何:首杠橙,回声纸灰渐隐(gap1 拉开信号|回声两组)
+const decayBars = (first = ACC, echo = PAPER, ops = [0.9, 0.63, 0.39, 0.23]) => {
+  const xs = [162, 338, 482, 626, 770], hs = [527, 346, 231, 148, 92];
+  let s = bar(xs[0], 512, 92, hs[0], first);
+  for (let i = 1; i < 5; i++) s += bar(xs[i], 512, 92, hs[i], echo, ops[i - 1]);
+  return s;
+};
+
+const VARIANTS = [
+{ group: "A · 衰减 — 回声正在死去", items: [
+  { id: "A1", name: "衰减杠(现行)", tags: ["线上", "32px 稳"], note: "首杠橙 = 活人声,四道纸灰回声逐级熄灭。已上线的基准方案。",
+    draw: () => plate() + decayBars() },
+  { id: "A1b", name: "衰减杠 · 反转配色", tags: ["橙 = 敌人"], note: "换个叙事:人声保持纸灰中性,被消掉的回声才是橙色警示 —— 渐隐的是「问题」本身。",
+    draw: () => plate() + decayBars(PAPER, ACC, [0.85, 0.55, 0.32, 0.18]) },
+  { id: "A2", name: "衰减点", tags: ["几何更软"], note: "同一衰减节奏换成圆点:声源一颗橙点,回声点越来越小、越来越暗。更圆润,小尺寸更抗糊。",
+    draw: () => {
+      const cs = [[224, 110], [459, 80], [640, 56], [779, 38], [886, 24]], ops = [1, 0.9, 0.6, 0.36, 0.2];
+      return plate() + cs.map(([x, r], i) =>
+        `<circle cx="${x}" cy="512" r="${r}" fill="${i ? PAPER : ACC}"${i ? ` fill-opacity="${ops[i]}"` : ""}/>`).join("");
+    } },
+  { id: "A3", name: "反相抵消", tags: ["最技术流"], note: "AEC 的物理本质:一条橙波 + 一条反相纸灰波,叠加后归于一条平线。懂的人会心一笑。",
+    draw: () => plate() +
+      `<path d="M184,388 Q254,268 324,388 T464,388" fill="none" stroke="${ACC}" stroke-width="40" stroke-linecap="round"/>` +
+      `<path d="M184,636 Q254,756 324,636 T464,636" fill="none" stroke="${PAPER}" stroke-width="40" stroke-linecap="round" stroke-opacity="0.88"/>` +
+      `<path d="M556,512 L844,512" stroke="${PAPER}" stroke-width="40" stroke-linecap="round" stroke-opacity="0.5"/>` +
+      `<circle cx="844" cy="512" r="34" fill="${ACC}"/>` },
+  { id: "A4", name: "回声弧", tags: ["声学直觉"], note: "橙点声源向右辐射三道弧,一道比一道淡 —— 回声在房间里衰减的样子。",
+    draw: () => plate() +
+      `<circle cx="330" cy="512" r="64" fill="${ACC}"/>` +
+      `<path d="M428.5,385.9 A160,160 0 0 1 428.5,638.1" fill="none" stroke="${PAPER}" stroke-width="46" stroke-linecap="round"/>` +
+      `<path d="M496.2,299.2 A270,270 0 0 1 496.2,724.8" fill="none" stroke="${PAPER}" stroke-width="42" stroke-linecap="round" stroke-opacity="0.5"/>` +
+      `<path d="M564,212.6 A380,380 0 0 1 564,811.4" fill="none" stroke="${PAPER}" stroke-width="38" stroke-linecap="round" stroke-opacity="0.24"/>` },
+  { id: "A5", name: "同心环", tags: ["正圆构图"], note: "俯视版本:橙核 + 两圈渐淡的回声环。完全对称,任何裁切(圆形 mask)都安全。",
+    draw: () => plate() +
+      `<circle cx="512" cy="512" r="100" fill="${ACC}"/>` +
+      `<circle cx="512" cy="512" r="215" fill="none" stroke="${PAPER}" stroke-width="46" stroke-opacity="0.85"/>` +
+      `<circle cx="512" cy="512" r="330" fill="none" stroke="${PAPER}" stroke-width="40" stroke-opacity="0.35"/>` },
+]},
+{ group: "B · 消除动作 — 有东西在干活", items: [
+  { id: "B1", name: "封切尾巴", tags: ["带攻击性"], note: "一整排波形,橙色斜杠把回声尾巴划掉 —— 强调「切除」这个动作而不是结果。",
+    draw: () => {
+      const hs = [480, 400, 330, 270, 215, 170], ops = [1, 1, 0.9, 0.7, 0.42, 0.28];
+      let s = plate();
+      hs.forEach((h, i) => { s += bar(197 + i * 112, 512, 70, h, PAPER, ops[i]); });
+      return s + `<path d="M608,752 L884,318" stroke="${ACC}" stroke-width="54" stroke-linecap="round"/>`;
+    } },
+  { id: "B2", name: "吸声墙", tags: ["叙事最完整"], note: "声波一路飞向右侧的橙色墙,越靠近越小 —— Echoless 就是那面墙。",
+    draw: () => {
+      const xs = [196, 316, 436, 556, 676], hs = [440, 330, 240, 160, 90], ops = [1, 0.8, 0.55, 0.34, 0.18];
+      let s = plate();
+      xs.forEach((x, i) => { s += bar(x, 512, 64, hs[i], PAPER, ops[i]); });
+      return s + `<rect x="772" y="252" width="60" height="520" rx="30" fill="${ACC}"/>`;
+    } },
+  { id: "B3", name: "双列 VU", tags: ["电器面板"], note: "进 / 出两条电平柱:进来的打满带橙色峰值,出去的只剩两格,其余是空壳段 —— 回声被压掉了。",
+    draw: () => {
+      let s = plate();
+      for (let i = 0; i < 7; i++) {
+        const y = 706 - i * 84;
+        s += `<rect x="308" y="${y}" width="170" height="58" rx="16" fill="${i === 6 ? ACC : PAPER}"/>`;
+        s += i < 2
+          ? `<rect x="546" y="${y}" width="170" height="58" rx="16" fill="${PAPER}" fill-opacity="${i ? 0.5 : 0.75}"/>`
+          : `<rect x="550" y="${y + 4}" width="162" height="50" rx="14" fill="none" stroke="${PAPER}" stroke-opacity="0.16" stroke-width="8"/>`;
+      }
+      return s;
+    } },
+]},
+{ group: "C · 品牌母题 — 从 App 界面里长出来", items: [
+  { id: "C1", name: "电源拨片", tags: ["最像本体"], note: "App 的灵魂控件就是那颗斜纹电源开关 —— 把它本人做成图标:橙色警示斜纹药丸 + 底部括角。",
+    draw: (uid) => plate() +
+      `<defs><pattern id="hz${uid}" width="72" height="72" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="34" height="72" fill="${ACC}"/></pattern></defs>` +
+      `<rect x="240" y="400" width="544" height="224" rx="112" fill="url(#hz${uid})"/>` +
+      `<rect x="240" y="400" width="544" height="224" rx="112" fill="none" stroke="${PAPER}" stroke-width="12"/>` +
+      `<path d="M170,760 L170,854 L264,854" fill="none" stroke="${ACC}" stroke-width="22"/>` +
+      `<path d="M854,760 L854,854 L760,854" fill="none" stroke="${ACC}" stroke-width="22"/>` },
+  { id: "C2", name: "括角取景", tags: ["安静克制"], note: "界面里的括角标记 + 一橙一灰两道信号:像仪器面板上被框住待处理的那一段。",
+    draw: () => {
+      const b = (x, y, dx, dy) => `<path d="M${x + dx * 130},${y} L${x},${y} L${x},${y + dy * 130}" fill="none" stroke="${PAPER}" stroke-opacity="0.4" stroke-width="26"/>`;
+      return plate() + b(212, 212, 1, 1) + b(812, 212, -1, 1) + b(212, 812, 1, -1) + b(812, 812, -1, -1) +
+        bar(420, 512, 104, 500, ACC) + bar(580, 512, 104, 300, PAPER, 0.4);
+    } },
+  { id: "C3", name: "警示斜带", tags: ["最狠最简"], note: "整块炭黑上一条橙色警示斜带,别的什么都不说。远看像一卷工业胶带,辨识度极高但和「声音」无关。",
+    draw: (uid) => plate() +
+      `<defs><clipPath id="pl${uid}"><rect x="100" y="100" width="824" height="824" rx="224"/></clipPath>` +
+      `<pattern id="st${uid}" width="128" height="128" patternUnits="userSpaceOnUse"><rect width="64" height="128" fill="${ACC}"/></pattern></defs>` +
+      `<g clip-path="url(#pl${uid})"><g transform="rotate(-45 512 512)"><rect x="-220" y="384" width="1464" height="256" fill="url(#st${uid})"/></g></g>` },
+  { id: "C4", name: "纸标签", tags: ["最俏皮"], note: "Brass Hands 的纸 tag 母题:一张挂签,上面印着迷你衰减波形,橙绳从打孔穿出去。",
+    draw: () => {
+      let s = plate() + `<path d="M328,517 Q240,610 196,716" fill="none" stroke="${ACC}" stroke-width="16" stroke-linecap="round"/>`;
+      s += `<g transform="rotate(-9 512 512)"><rect x="252" y="372" width="520" height="290" rx="28" fill="${PAPBG}"/>` +
+        `<circle cx="322" cy="517" r="26" fill="${BG}"/>`;
+      const hs = [150, 96, 64, 40], xs = [396, 470, 534, 598], ops = [null, 0.85, 0.55, 0.3];
+      hs.forEach((h, i) => {
+        s += `<rect x="${xs[i]}" y="${517 - h / 2}" width="44" height="${h}" rx="22" fill="${i ? INK : ACC}"${ops[i] ? ` fill-opacity="${ops[i]}"` : ""}/>`;
+      });
+      return s + `</g>`;
+    } },
+  { id: "C5", name: "残影 E", tags: ["字标路线"], note: "字母 E 和它的橙色残影错位一拍 —— echo 就是「同一个东西又出现了一次」。字标路线,和波形彻底区分。",
+    draw: () => {
+      const E = (fill, op, dx) => `<g transform="translate(${dx},0)" fill="${fill}"${op ? ` fill-opacity="${op}"` : ""}>` +
+        `<rect x="330" y="272" width="90" height="480" rx="40"/>` +
+        `<rect x="330" y="272" width="270" height="90" rx="40"/>` +
+        `<rect x="330" y="467" width="220" height="90" rx="40"/>` +
+        `<rect x="330" y="662" width="270" height="90" rx="40"/></g>`;
+      return plate() + E(ACC, 0.5, 96) + E(PAPER, null, 0);
+    } },
+]},
+{ group: "D · 底板变体 — 同一图形换衣服", items: [
+  { id: "D1", name: "纸面浅底", tags: ["浅色 dock 友好"], note: "A1 图形落在纸灰底上,回声用墨色渐隐。在浅色桌面 / 官网上更亮眼,但深色 dock 里会发白发浮。",
+    draw: () => plate(PAPBG, "#a9a9a2") + decayBars(ACC, INK, [0.9, 0.6, 0.38, 0.22]) },
+  { id: "D2", name: "整橙底", tags: ["最远可认"], note: "整块橙,墨色衰减杠。dock 里一眼锁定,代价是「橙 = 强调色」的克制感没了 —— 它变成了主角。",
+    draw: () => plate(ACC, "#d95c24") + decayBars(INK, INK, [0.72, 0.48, 0.3, 0.18]) },
+  { id: "D3", name: "正圆底", tags: ["跨平台中性"], note: "A1 图形装进正圆:Linux / web / 社区头像场景更自然,mac dock 里则比圆角方「小一圈」。",
+    draw: () => `<circle cx="512" cy="512" r="412" fill="${BG}" stroke="${LINE}" stroke-width="6"/>` +
+      `<g transform="translate(512 512) scale(0.84) translate(-512 -512)">${decayBars()}</g>` },
+]},
+];
+
+const svgOf = (v) => {
+  const uid = ++uidc;
+  return `<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">${v.draw(uid)}</svg>`;
+};
+
+const root = document.getElementById("root");
+root.innerHTML = VARIANTS.map(g => `
+  <div class="group">
+    <div class="gtitle"><span class="no">${g.group.slice(0, 1)}</span>${g.group.slice(4)}</div>
+    <div class="grid">
+      ${g.items.map(v => `
+        <div class="card">
+          <div class="dock">
+            <div class="lg">${svgOf(v)}</div>
+            <div class="col">
+              <div class="s64">${svgOf(v)}</div>
+              <div class="s32">${svgOf(v)}</div>
+              <div class="s16">${svgOf(v)}</div>
+            </div>
+          </div>
+          <div class="cid">${v.id}</div>
+          <div class="cname">${v.name}</div>
+          <div class="cnote">${v.note}</div>
+          <div>${v.tags.map((t, i) => `<span class="tag${i === 0 && (t === "线上" || v.id === "A1") ? " hot" : ""}">${t}</span>`).join("")}</div>
+        </div>`).join("")}
+    </div>
+  </div>`).join("");
+
+document.querySelectorAll(".controls button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.body.dataset.dock = b.dataset.dock;
+    document.querySelectorAll(".controls button").forEach(x => x.classList.toggle("active", x === b));
+  });
+});
+</script>
+</body>
+</html>
