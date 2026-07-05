@@ -1,3 +1,6 @@
 /target/
 .DS_Store
 /graphify-out/
+
+# 内部过程文档(backlog/审计/交接/调研):本地保留,不上 GitHub
+docs/internal/

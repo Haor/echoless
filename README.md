@@ -81,7 +81,7 @@ setup. *AEC powered by NVIDIA Maxine.*
 |---|---|---|---|
 | Windows 10 / 11 | WASAPI loopback | [VB-CABLE](https://vb-audio.com/Cable/) | supported |
 | macOS 14.4+ | Core Audio Process Tap | [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) | supported |
-| Linux (PipeWire) | monitor source | `pactl` null sink — no driver needed | experimental, not yet verified on hardware |
+| Linux | monitor source | `pactl` null sink — no driver needed | experimental, not yet verified on hardware |
 
 ## Install
 
