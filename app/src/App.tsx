@@ -1471,15 +1471,14 @@ function useAppController() {
                 const proc = processors.find((p) => p.kind === m.kind);
                 const supported =
                   !proc || proc.platforms.includes(platform) || dev;
-                const exp = proc?.experimental;
                 const rdy = engineReady(m.kind);
                 return (
                   <button
                     type="button"
                     key={m.kind}
                     className={`b ${kind === m.kind ? "active" : ""} ${
-                      exp ? "exp" : ""
-                    } ${supported && !rdy ? "unready" : ""}`}
+                      supported && !rdy ? "unready" : ""
+                    }`}
                     disabled={!supported}
                     onClick={() => {
                       // 未就绪(LocalVQE 无模型 / NVAFX doctor 未过):跳 Engine 配置,不生成非法配置。

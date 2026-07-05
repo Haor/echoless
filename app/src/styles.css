@@ -1957,14 +1957,16 @@ hr.hair {
 }
 /* v3.1:选中段=反白(截图诊断:整页多个橙块成胡椒面,违反唯一强调纪律。
    橙只留给「动作」(INSTALL/SET UP/REC/GET/probe 热点/选中标)与「告警热态」) */
+/* 未配置(LocalVQE 无模型 / NVAFX doctor 未过)才置灰;配置好与 aec3 同色。
+   放在 .active 之前:选中反白优先于置灰(用户定案 2026-07-05)。 */
+.segg .b.unready {
+  color: var(--t-faint);
+}
 .segg .b.active {
   background: var(--t-strong);
   color: var(--ink);
   border-color: var(--t-strong);
   font-weight: 600;
-}
-.segg .b.exp {
-  color: var(--t-faint);
 }
 .segg .b:disabled {
   cursor: default;
