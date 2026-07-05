@@ -753,120 +753,70 @@ function useEngineConfig({
   };
 }
 
-function useAppController() {
-  const [appState, updateApp] = useReducer(
-    patchReducer<AppState>,
-    undefined,
-    initAppState,
-  );
-  const {
-    platform,
-    devices,
-    processors,
-    powerOn,
-    busy,
-    err,
-    view,
-    doctor,
-    nvafx,
-    nvafxBusy,
-    dev,
-    devRtxState,
-    devMicState,
-    devPlatform,
-    io,
-    rec,
-    bypassed,
-    bypassPending,
-    diagSeconds,
-    diagDir,
-  } = appState;
+type RunLifecycleDeps = {
+  busy: boolean;
+  powerOn: boolean;
+  bypassed: boolean;
+  bypassPending: boolean | null;
+  rec: boolean;
+  diagSeconds: number | null;
+  diagDir: string;
+  selInput: string;
+  selOutput: string;
+  reference: string;
+  kind: string;
+  engineReady: (kind: string) => boolean;
+  pipelineRef: MutableRefObject<PipelineCfg>;
+  paramsRef: MutableRefObject<Record<string, unknown>>;
+  telRef: MutableRefObject<Telemetry>;
+  cliVersionRef: MutableRefObject<string | null>;
+  runControlsRef: MutableRefObject<Set<string> | null>;
+  powerOnRef: MutableRefObject<boolean>;
+  applyChangeRef: MutableRefObject<(next: Override) => void>;
+  updateApp: Dispatch<Patch<AppState>>;
+  noteError: (err: string | null) => void;
+  gotoView: (view: View) => void;
+  hasRunControl: (cmd: string) => boolean;
+  reportMissingRunControl: (cmd: string) => void;
+};
 
-  const telRef = useRef<Telemetry>({ mic: -120, ref: -120, out: -120, on: false });
+function useRunLifecycle({
+  busy,
+  powerOn,
+  bypassed,
+  bypassPending,
+  rec,
+  diagSeconds,
+  diagDir,
+  selInput,
+  selOutput,
+  reference,
+  kind,
+  engineReady,
+  pipelineRef,
+  paramsRef,
+  telRef,
+  cliVersionRef,
+  runControlsRef,
+  powerOnRef,
+  applyChangeRef,
+  updateApp,
+  noteError,
+  gotoView,
+  hasRunControl,
+  reportMissingRunControl,
+}: RunLifecycleDeps) {
   // 当前 run 实际生效的参考源(由 started 给出),供 status 判断是否 Process Tap。
   const refSourceRef = useRef<string | null>(null);
-  const cliVersionRef = useRef<string | null>(null);
-  const runControlsRef = useRef<Set<string> | null>(null);
   // 子进程最近一条 stderr 日志(用于在非预期退出时报错)。
   const lastLogRef = useRef<string>("");
-  const powerOnRef = useRef(powerOn);
-  powerOnRef.current = powerOn;
   const probeBorrowedRunRef = useRef(false);
-  const applyChangeRef = useRef(applyChange);
-  applyChangeRef.current = applyChange;
-  const doctorRef = useRef(doctor);
-  doctorRef.current = doctor;
   const recRef = useRef(rec);
   recRef.current = rec;
   const diagSecondsRef = useRef(diagSeconds);
   diagSecondsRef.current = diagSeconds;
   const diagDirRef = useRef(diagDir);
   diagDirRef.current = diagDir;
-  const { t } = useI18n();
-
-  const noteError = useCallback((err: string | null) => {
-    updateApp({ err });
-  }, []);
-
-  const { selection, updateSelection, refreshDevices } = useDeviceEnumeration({
-    doctorRef,
-    powerOnRef,
-    telRef,
-    applyChangeRef,
-    updateApp,
-    noteError,
-  });
-  const { selInput, selOutput, reference } = selection;
-
-  const gotoView = useCallback((view: View) => {
-    updateApp({ view });
-  }, []);
-
-  const chooseDevRtxState = useCallback((devRtxState: RtxState) => {
-    updateApp({ devRtxState });
-  }, []);
-
-  const chooseDevMicState = useCallback((devMicState: MicState) => {
-    updateApp({ devMicState });
-  }, []);
-
-  const hasRunControl = useCallback((cmd: string): boolean => {
-    return runControlsRef.current?.has(cmd) ?? false;
-  }, []);
-
-  const reportMissingRunControl = useCallback((cmd: string) => {
-    noteError(
-      `CLI ${cliVersionRef.current ?? "unknown"} does not support runtime control "${cmd}". Rebuild or replace the bundled echoless CLI.`,
-    );
-  }, [noteError]);
-
-  const {
-    engineState,
-    updateEngine,
-    kindRef,
-    pipelineRef,
-    paramsRef,
-    paramsByKind,
-    engineReady,
-    changeKind,
-    setParam,
-    setLvqeNoise,
-    pickLocalvqeModel,
-    changePipeline,
-    changeOutVolume,
-  } = useEngineConfig({
-    processors,
-    platform,
-    dev,
-    nvafx,
-    powerOnRef,
-    applyChangeRef,
-    noteError,
-    gotoView,
-    hasRunControl,
-    reportMissingRunControl,
-  });
-  const { kind, pipeline, params } = engineState;
 
   // 录制就地起停命令(运行中改录制态用 stdin,不重启 run)。
   const startDiag = useCallback(() => {
@@ -881,59 +831,11 @@ function useAppController() {
     }
   }, [hasRunControl, noteError, reportMissingRunControl]);
 
-  // 平台 + 设备/处理器枚举 + 事件订阅
   useEffect(() => {
     // 清理可能残留的 sidecar(前端 reload 后 Rust 子进程可能还活着 → 状态脱同步)。
     stopRun().catch(() => {});
-    getPlatform()
-      .then((platform) => updateApp({ platform }))
-      .catch(() => {});
-    refreshDevices();
-    listProcessors()
-      .then((m) => {
-        updateApp({ processors: m.processors });
-        const proc = m.processors.find((p) => p.kind === kindRef.current);
-        // manifest defaults 打底 + 持久化参数覆盖:新版本新增参数时老存档不缺键。
-        updateEngine((cur) => ({
-          ...cur,
-          params: {
-            ...defaultParams(proc),
-            ...(Object.keys(cur.params).length
-              ? cur.params
-              : (paramsByKind.current[kindRef.current] ?? {})),
-          },
-        }));
-      })
-      .catch((e) => noteError(String(e)));
-    doctorAudio()
-      .then((doctor) => updateApp({ doctor }))
-      .catch(() => {});
-    nvafxDoctor()
-      .then((nvafx) => updateApp({ nvafx }))
-      .catch(() => {});
-    defaultDiagDir()
-      .then((diagDir) => updateApp({ diagDir }))
-      .catch(() => {});
-
-    // 设备热插拔:三路触发 → 同一个防抖刷新。
-    //   ① 原生 CoreAudio 监听(macOS;WKWebView 不触发 devicechange)
-    //   ② webview devicechange(Windows WebView2 可靠)
-    //   ③ 窗口聚焦 + 下拉展开(兜底)
-    // 300ms 防抖合并连发——一次插拔常触发多个事件,每次刷新都 spawn 一次 CLI 枚举。
-    let devChangeTimer = 0;
-    const refreshDevicesSoon = () => {
-      window.clearTimeout(devChangeTimer);
-      devChangeTimer = window.setTimeout(refreshDevices, 300);
-    };
-    navigator.mediaDevices?.addEventListener?.(
-      "devicechange",
-      refreshDevicesSoon,
-    );
-    window.addEventListener("focus", refreshDevicesSoon);
-
     const uns: UnlistenFn[] = [];
     (async () => {
-      uns.push(await onDevicesChanged(refreshDevicesSoon));
       uns.push(
         await onRunEvent((ev) => {
           if (ev.type === "started") {
@@ -1091,132 +993,9 @@ function useAppController() {
       );
     })();
     return () => {
-      window.clearTimeout(devChangeTimer);
-      navigator.mediaDevices?.removeEventListener?.(
-        "devicechange",
-        refreshDevicesSoon,
-      );
-      window.removeEventListener("focus", refreshDevicesSoon);
       uns.forEach((u) => u());
     };
-  }, [hasRunControl, noteError, refreshDevices, startDiag]);
-
-  // Esc 始终有意义:在次级页按 Esc 返回 Overview。
-  useEffect(() => {
-    if (view === "overview") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") gotoView("overview");
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [gotoView, view]);
-
-  // 桌面 app:禁用 Tab 键焦点移动(避免按钮出现键盘选中框)。
-  useEffect(() => {
-    const onTab = (e: KeyboardEvent) => {
-      if (e.key === "Tab") e.preventDefault();
-    };
-    window.addEventListener("keydown", onTab);
-    return () => window.removeEventListener("keydown", onTab);
-  }, []);
-
-  // 开发态快捷键:按 ~ 切换(在输入框里则正常输入,不触发)。
-  // 仅 dev 构建存在:正式包 import.meta.env.DEV=false,快捷键与 dev 模式
-  // 一并从产物里消失(?dev=1 直链在 Tauri 里本就没有 query,双保险)。
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const onTilde = (e: KeyboardEvent) => {
-      if (e.key !== "~") return;
-      const el = document.activeElement;
-      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
-      e.preventDefault();
-      updateApp((state) => ({ ...state, dev: !state.dev }));
-    };
-    window.addEventListener("keydown", onTilde);
-    return () => window.removeEventListener("keydown", onTilde);
-  }, []);
-
-  // 开发态下按 `(同一物理键不按 Shift)在 当前平台 / Windows / Linux 间切换。
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const onBacktick = (e: KeyboardEvent) => {
-      if (e.key !== "`") return;
-      const el = document.activeElement;
-      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
-      if (!dev) return;
-      e.preventDefault();
-      updateApp((state) => ({
-        ...state,
-        devPlatform: cycleDevPlatform(state.devPlatform),
-      }));
-    };
-    window.addEventListener("keydown", onBacktick);
-    return () => window.removeEventListener("keydown", onBacktick);
-  }, [dev]);
-
-  function recheckNvafx(runtimeDir?: string) {
-    if (dev) return; // dev 模拟:状态由 dev 切换条控制
-    nvafxDoctor(runtimeDir)
-      .then((nvafx) => updateApp({ nvafx }))
-      .catch(() => {});
-  }
-
-  // 重跑虚拟声卡检测(MIC SETUP 向导的 recheck)。
-  function recheckAudio() {
-    doctorAudio()
-      .then((doctor) => updateApp({ doctor }))
-      .catch(() => {});
-  }
-
-  // 用户主动请求系统音频录制权限:helper 显式调 TCCAccessRequest 弹窗,回传更新 doctor。
-  // 未授予时不再自动跳设置(用户否决 2026-07-05),把 CLI 的失败原因如实显示。
-  const probeSystemAudio = useCallback(() => {
-    noteError(null);
-    requestSystemAudio()
-      .then((doctor) => {
-        updateApp({ doctor });
-        if (doctor.system_audio_permission !== "granted") {
-          const detail = doctor.system_audio_permission_probe?.detail;
-          noteError(detail || "system audio permission was not granted");
-        }
-      })
-      .catch((e) => noteError(String(e)));
-  }, [noteError]);
-
-  // RTX runtime 安装:解压 common + 架构 model,回传安装后 doctor 报告。
-  // dev 模拟:不调后端,延迟后置 ready,以便走通"安装中 → 就绪"。
-  function installNvafx(commonZip: string, modelZip: string) {
-    if (dev) {
-      updateApp({ nvafxBusy: true });
-      window.setTimeout(() => {
-        updateApp({ devRtxState: "ready", nvafxBusy: false });
-      }, 900);
-      return;
-    }
-    const runtimeDir = (paramsRef.current.runtime_dir as string) || undefined;
-    updateApp({ nvafxBusy: true, err: null });
-    nvafxInstall({ commonZip, modelZip, runtimeDir })
-      .then((nvafx) => updateApp({ nvafx }))
-      .catch((e) => noteError(String(e)))
-      .finally(() => updateApp({ nvafxBusy: false }));
-  }
-
-  // 从公共 GitHub release 下载并安装(按 GPU 架构自动选模型)。dev 下模拟。
-  function downloadInstallNvafx() {
-    if (dev) {
-      updateApp({ nvafxBusy: true });
-      window.setTimeout(() => {
-        updateApp({ devRtxState: "ready", nvafxBusy: false });
-      }, 1200);
-      return;
-    }
-    const runtimeDir = (paramsRef.current.runtime_dir as string) || undefined;
-    updateApp({ nvafxBusy: true, err: null });
-    nvafxDownloadInstall({ runtimeDir })
-      .then((nvafx) => updateApp({ nvafx }))
-      .catch((e) => noteError(String(e)))
-      .finally(() => updateApp({ nvafxBusy: false }));
-  }
+  }, [hasRunControl, noteError, startDiag, updateApp]);
 
   function currentToml(over?: Override) {
     return buildConfigToml({
@@ -1342,6 +1121,8 @@ function useAppController() {
     applyQueueRef.current.enqueue(next);
   }
 
+  applyChangeRef.current = applyChange;
+
   async function doApplyChange(next: Override) {
     updateApp({ busy: true });
     try {
@@ -1385,19 +1166,347 @@ function useAppController() {
       }
       stopDiagnostics().catch((e) => noteError(String(e)));
     }
-  }, [hasRunControl, noteError, reportMissingRunControl, startDiag]);
+  }, [hasRunControl, noteError, reportMissingRunControl, startDiag, updateApp]);
+
   // 时长 / 目录:仅更新状态。录制中改动 → 重发 start_diagnostics 让新参数立即生效
   // (后端先收尾旧 session 再开新的)。
   const setRecSeconds = useCallback((v: number | null) => {
     updateApp({ diagSeconds: v });
     diagSecondsRef.current = v;
     if (powerOnRef.current && recRef.current) startDiag();
-  }, [startDiag]);
+  }, [startDiag, updateApp]);
   const setRecDir = useCallback((v: string) => {
     updateApp({ diagDir: v });
     diagDirRef.current = v;
     if (powerOnRef.current && recRef.current) startDiag();
-  }, [startDiag]);
+  }, [startDiag, updateApp]);
+
+  return {
+    applyChange,
+    setRunForProbe,
+    togglePower,
+    setRecording,
+    setRecSeconds,
+    setRecDir,
+  };
+}
+
+function useAppController() {
+  const [appState, updateApp] = useReducer(
+    patchReducer<AppState>,
+    undefined,
+    initAppState,
+  );
+  const {
+    platform,
+    devices,
+    processors,
+    powerOn,
+    busy,
+    err,
+    view,
+    doctor,
+    nvafx,
+    nvafxBusy,
+    dev,
+    devRtxState,
+    devMicState,
+    devPlatform,
+    io,
+    rec,
+    bypassed,
+    bypassPending,
+    diagSeconds,
+    diagDir,
+  } = appState;
+
+  const telRef = useRef<Telemetry>({ mic: -120, ref: -120, out: -120, on: false });
+  const cliVersionRef = useRef<string | null>(null);
+  const runControlsRef = useRef<Set<string> | null>(null);
+  const powerOnRef = useRef(powerOn);
+  powerOnRef.current = powerOn;
+  const applyChangeRef = useRef<(next: Override) => void>(() => {});
+  const doctorRef = useRef(doctor);
+  doctorRef.current = doctor;
+  const { t } = useI18n();
+
+  const noteError = useCallback((err: string | null) => {
+    updateApp({ err });
+  }, []);
+
+  const { selection, updateSelection, refreshDevices } = useDeviceEnumeration({
+    doctorRef,
+    powerOnRef,
+    telRef,
+    applyChangeRef,
+    updateApp,
+    noteError,
+  });
+  const { selInput, selOutput, reference } = selection;
+
+  const gotoView = useCallback((view: View) => {
+    updateApp({ view });
+  }, []);
+
+  const chooseDevRtxState = useCallback((devRtxState: RtxState) => {
+    updateApp({ devRtxState });
+  }, []);
+
+  const chooseDevMicState = useCallback((devMicState: MicState) => {
+    updateApp({ devMicState });
+  }, []);
+
+  const hasRunControl = useCallback((cmd: string): boolean => {
+    return runControlsRef.current?.has(cmd) ?? false;
+  }, []);
+
+  const reportMissingRunControl = useCallback((cmd: string) => {
+    noteError(
+      `CLI ${cliVersionRef.current ?? "unknown"} does not support runtime control "${cmd}". Rebuild or replace the bundled echoless CLI.`,
+    );
+  }, [noteError]);
+
+  const {
+    engineState,
+    updateEngine,
+    kindRef,
+    pipelineRef,
+    paramsRef,
+    paramsByKind,
+    engineReady,
+    changeKind,
+    setParam,
+    setLvqeNoise,
+    pickLocalvqeModel,
+    changePipeline,
+    changeOutVolume,
+  } = useEngineConfig({
+    processors,
+    platform,
+    dev,
+    nvafx,
+    powerOnRef,
+    applyChangeRef,
+    noteError,
+    gotoView,
+    hasRunControl,
+    reportMissingRunControl,
+  });
+  const { kind, pipeline, params } = engineState;
+
+  const {
+    applyChange,
+    setRunForProbe,
+    togglePower,
+    setRecording,
+    setRecSeconds,
+    setRecDir,
+  } = useRunLifecycle({
+    busy,
+    powerOn,
+    bypassed,
+    bypassPending,
+    rec,
+    diagSeconds,
+    diagDir,
+    selInput,
+    selOutput,
+    reference,
+    kind,
+    engineReady,
+    pipelineRef,
+    paramsRef,
+    telRef,
+    cliVersionRef,
+    runControlsRef,
+    powerOnRef,
+    applyChangeRef,
+    updateApp,
+    noteError,
+    gotoView,
+    hasRunControl,
+    reportMissingRunControl,
+  });
+
+  // 平台 + 设备/处理器枚举 + 设备热插拔
+  useEffect(() => {
+    getPlatform()
+      .then((platform) => updateApp({ platform }))
+      .catch(() => {});
+    refreshDevices();
+    listProcessors()
+      .then((m) => {
+        updateApp({ processors: m.processors });
+        const proc = m.processors.find((p) => p.kind === kindRef.current);
+        // manifest defaults 打底 + 持久化参数覆盖:新版本新增参数时老存档不缺键。
+        updateEngine((cur) => ({
+          ...cur,
+          params: {
+            ...defaultParams(proc),
+            ...(Object.keys(cur.params).length
+              ? cur.params
+              : (paramsByKind.current[kindRef.current] ?? {})),
+          },
+        }));
+      })
+      .catch((e) => noteError(String(e)));
+    doctorAudio()
+      .then((doctor) => updateApp({ doctor }))
+      .catch(() => {});
+    nvafxDoctor()
+      .then((nvafx) => updateApp({ nvafx }))
+      .catch(() => {});
+    defaultDiagDir()
+      .then((diagDir) => updateApp({ diagDir }))
+      .catch(() => {});
+
+    // 设备热插拔:三路触发 → 同一个防抖刷新。
+    //   ① 原生 CoreAudio 监听(macOS;WKWebView 不触发 devicechange)
+    //   ② webview devicechange(Windows WebView2 可靠)
+    //   ③ 窗口聚焦 + 下拉展开(兜底)
+    // 300ms 防抖合并连发——一次插拔常触发多个事件,每次刷新都 spawn 一次 CLI 枚举。
+    let devChangeTimer = 0;
+    const refreshDevicesSoon = () => {
+      window.clearTimeout(devChangeTimer);
+      devChangeTimer = window.setTimeout(refreshDevices, 300);
+    };
+    navigator.mediaDevices?.addEventListener?.(
+      "devicechange",
+      refreshDevicesSoon,
+    );
+    window.addEventListener("focus", refreshDevicesSoon);
+
+    const uns: UnlistenFn[] = [];
+    (async () => {
+      uns.push(await onDevicesChanged(refreshDevicesSoon));
+    })();
+    return () => {
+      window.clearTimeout(devChangeTimer);
+      navigator.mediaDevices?.removeEventListener?.(
+        "devicechange",
+        refreshDevicesSoon,
+      );
+      window.removeEventListener("focus", refreshDevicesSoon);
+      uns.forEach((u) => u());
+    };
+  }, [noteError, refreshDevices]);
+
+  // Esc 始终有意义:在次级页按 Esc 返回 Overview。
+  useEffect(() => {
+    if (view === "overview") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") gotoView("overview");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [gotoView, view]);
+
+  // 桌面 app:禁用 Tab 键焦点移动(避免按钮出现键盘选中框)。
+  useEffect(() => {
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key === "Tab") e.preventDefault();
+    };
+    window.addEventListener("keydown", onTab);
+    return () => window.removeEventListener("keydown", onTab);
+  }, []);
+
+  // 开发态快捷键:按 ~ 切换(在输入框里则正常输入,不触发)。
+  // 仅 dev 构建存在:正式包 import.meta.env.DEV=false,快捷键与 dev 模式
+  // 一并从产物里消失(?dev=1 直链在 Tauri 里本就没有 query,双保险)。
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const onTilde = (e: KeyboardEvent) => {
+      if (e.key !== "~") return;
+      const el = document.activeElement;
+      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+      e.preventDefault();
+      updateApp((state) => ({ ...state, dev: !state.dev }));
+    };
+    window.addEventListener("keydown", onTilde);
+    return () => window.removeEventListener("keydown", onTilde);
+  }, []);
+
+  // 开发态下按 `(同一物理键不按 Shift)在 当前平台 / Windows / Linux 间切换。
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const onBacktick = (e: KeyboardEvent) => {
+      if (e.key !== "`") return;
+      const el = document.activeElement;
+      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+      if (!dev) return;
+      e.preventDefault();
+      updateApp((state) => ({
+        ...state,
+        devPlatform: cycleDevPlatform(state.devPlatform),
+      }));
+    };
+    window.addEventListener("keydown", onBacktick);
+    return () => window.removeEventListener("keydown", onBacktick);
+  }, [dev]);
+
+  function recheckNvafx(runtimeDir?: string) {
+    if (dev) return; // dev 模拟:状态由 dev 切换条控制
+    nvafxDoctor(runtimeDir)
+      .then((nvafx) => updateApp({ nvafx }))
+      .catch(() => {});
+  }
+
+  // 重跑虚拟声卡检测(MIC SETUP 向导的 recheck)。
+  function recheckAudio() {
+    doctorAudio()
+      .then((doctor) => updateApp({ doctor }))
+      .catch(() => {});
+  }
+
+  // 用户主动请求系统音频录制权限:helper 显式调 TCCAccessRequest 弹窗,回传更新 doctor。
+  // 未授予时不再自动跳设置(用户否决 2026-07-05),把 CLI 的失败原因如实显示。
+  const probeSystemAudio = useCallback(() => {
+    noteError(null);
+    requestSystemAudio()
+      .then((doctor) => {
+        updateApp({ doctor });
+        if (doctor.system_audio_permission !== "granted") {
+          const detail = doctor.system_audio_permission_probe?.detail;
+          noteError(detail || "system audio permission was not granted");
+        }
+      })
+      .catch((e) => noteError(String(e)));
+  }, [noteError]);
+
+  // RTX runtime 安装:解压 common + 架构 model,回传安装后 doctor 报告。
+  // dev 模拟:不调后端,延迟后置 ready,以便走通"安装中 → 就绪"。
+  function installNvafx(commonZip: string, modelZip: string) {
+    if (dev) {
+      updateApp({ nvafxBusy: true });
+      window.setTimeout(() => {
+        updateApp({ devRtxState: "ready", nvafxBusy: false });
+      }, 900);
+      return;
+    }
+    const runtimeDir = (paramsRef.current.runtime_dir as string) || undefined;
+    updateApp({ nvafxBusy: true, err: null });
+    nvafxInstall({ commonZip, modelZip, runtimeDir })
+      .then((nvafx) => updateApp({ nvafx }))
+      .catch((e) => noteError(String(e)))
+      .finally(() => updateApp({ nvafxBusy: false }));
+  }
+
+  // 从公共 GitHub release 下载并安装(按 GPU 架构自动选模型)。dev 下模拟。
+  function downloadInstallNvafx() {
+    if (dev) {
+      updateApp({ nvafxBusy: true });
+      window.setTimeout(() => {
+        updateApp({ devRtxState: "ready", nvafxBusy: false });
+      }, 1200);
+      return;
+    }
+    const runtimeDir = (paramsRef.current.runtime_dir as string) || undefined;
+    updateApp({ nvafxBusy: true, err: null });
+    nvafxDownloadInstall({ runtimeDir })
+      .then((nvafx) => updateApp({ nvafx }))
+      .catch((e) => noteError(String(e)))
+      .finally(() => updateApp({ nvafxBusy: false }));
+  }
 
   const platformView: Platform = dev && devPlatform ? devPlatform : platform;
 
