@@ -1211,28 +1211,62 @@ fn validate_browser_url(url: &str) -> Result<String, String> {
     {
         return Err("URL 不能包含空白或控制字符".to_string());
     }
-    // 系统设置深链(隐私面板跳转):固定 scheme 白名单。此前被 http(s) 门拒掉,
-    // 「授予系统音频权限」按钮点了毫无反应(2026-07-05 修)。
+    // 系统设置深链只允许跳到隐私面板;不要把整个 scheme 当作通用白名单。
     if trimmed.starts_with("x-apple.systempreferences:") {
+        if !trimmed.starts_with("x-apple.systempreferences:com.apple.preference.security?Privacy_")
+        {
+            return Err("仅允许打开系统隐私设置面板".to_string());
+        }
         return Ok(trimmed.to_string());
     }
-    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
-        return Err("仅允许打开 http(s) URL".to_string());
+    if !trimmed.starts_with("https://") {
+        return Err("仅允许打开 https URL".to_string());
     }
 
-    let host_start = trimmed
-        .find("://")
-        .map(|idx| idx + 3)
-        .unwrap_or(trimmed.len());
-    let host_end = trimmed[host_start..]
-        .find(['/', '?', '#'])
-        .map(|idx| host_start + idx)
-        .unwrap_or(trimmed.len());
-    if host_start == host_end {
-        return Err("URL 缺少主机名".to_string());
+    let host = https_url_host(trimmed).ok_or_else(|| "URL 缺少主机名".to_string())?;
+    if !is_allowed_browser_host(&host) {
+        return Err("URL 主机不在允许列表".to_string());
     }
 
     Ok(trimmed.to_string())
+}
+
+fn https_url_host(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let host_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    if host_end == 0 {
+        return None;
+    }
+    let host_port = &rest[..host_end];
+    let host = host_port
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(host_port);
+    let host = host
+        .split_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(host)
+        .trim_end_matches('.');
+    if host.is_empty() {
+        return None;
+    }
+    Some(host.to_ascii_lowercase())
+}
+
+fn is_allowed_browser_host(host: &str) -> bool {
+    const ALLOWED: &[&str] = &[
+        "aka.ms",
+        "developer.nvidia.com",
+        "existential.audio",
+        "github.com",
+        "huggingface.co",
+        "learn.microsoft.com",
+        "nvidia.com",
+        "vb-audio.com",
+    ];
+    ALLOWED
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
 }
 
 fn browser_open_command(url: &str) -> (&'static str, Vec<String>) {
@@ -1759,14 +1793,18 @@ mod tests {
     }
 
     #[test]
-    fn validates_only_plain_http_browser_urls() {
+    fn validates_only_allowlisted_browser_urls() {
         assert_eq!(
-            validate_browser_url(" https://example.com/download?x=1 ").unwrap(),
-            "https://example.com/download?x=1"
+            validate_browser_url(" https://vb-audio.com/Cable/?x=1 ").unwrap(),
+            "https://vb-audio.com/Cable/?x=1"
         );
         assert_eq!(
-            validate_browser_url("http://example.com/#drivers").unwrap(),
-            "http://example.com/#drivers"
+            validate_browser_url("https://www.nvidia.com/Download/index.aspx").unwrap(),
+            "https://www.nvidia.com/Download/index.aspx"
+        );
+        assert_eq!(
+            validate_browser_url("https://aka.ms/vs/17/release/vc_redist.x64.exe").unwrap(),
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe"
         );
         // 系统设置深链白名单(隐私面板跳转)。
         assert_eq!(
@@ -1786,6 +1824,9 @@ mod tests {
             "/Applications/Echoless.app",
             "https://example.com/a b",
             "https://example.com/\ncmd",
+            "http://vb-audio.com/Cable/",
+            "https://vb-audio.com.evil.example/Cable/",
+            "x-apple.systempreferences:com.apple.preference.security?General",
         ] {
             assert!(validate_browser_url(bad).is_err(), "{bad}");
         }
