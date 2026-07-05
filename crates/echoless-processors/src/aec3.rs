@@ -4,7 +4,7 @@
 //! 调用顺序铁律:每块先 process_render(far),再 process_capture(near)。
 //!
 //! 调参(经 vendored fork 开放的 `aec3_config()` 注入 EchoCanceller3Config):
-//!   tail_ms / delay_num_filters / linear_stable_echo_path。
+//!   delay_hold / tail_ms / delay_num_filters / linear_stable_echo_path。
 //! 顺带可选 NS(降噪)/ AGC(自动增益)—— 与 AEC3 同属一个 aec3 APM pipeline。
 //! 详见 research/aec3_internal_map.md §2/§9/§11。
 //!
@@ -25,7 +25,8 @@ struct Aec3Tuning {
     delay_num_filters: Option<usize>,
     /// 标记 echo path 线性且稳定(纯 loopback 参考时可酌情开)。
     linear_stable_echo_path: bool,
-    /// ref 断续/静音时保持 AEC3 延迟估计;None 表示走 vendored upstream 默认。
+    /// ref 断续/静音时保持 AEC3 延迟估计;产品默认显式开启,配置层可置 false。
+    /// None 仅表示不覆盖 vendored upstream 字段默认值。
     delay_hold: Option<bool>,
     /// 开启降噪(NoiseSuppression)。
     ns: bool,
@@ -49,17 +50,6 @@ impl Default for Aec3Tuning {
             agc: false,
             far_channels: 1,
         }
-    }
-}
-
-impl Aec3Tuning {
-    /// 是否对 EchoCanceller3Config 无任何调参(决定是否走上游原始默认路径,见 §11.4)。
-    /// 注:ns/agc 属高层 APM 配置,不影响 aec3_config 注入,故不计入。
-    fn aec3_is_default(&self) -> bool {
-        self.tail_ms.is_none()
-            && self.delay_num_filters.is_none()
-            && !self.linear_stable_echo_path
-            && self.delay_hold.is_none()
     }
 }
 
@@ -106,7 +96,7 @@ impl EchoProcessor for Aec3Engine {
         }
     }
     fn configure(&mut self, params: &toml::Table) -> anyhow::Result<()> {
-        // 注:外部延迟在默认路径下基本无效(只在 reset 时用一次,见 §4.3);保留备用。
+        // 注:外部延迟在当前 realtime 路径下基本无效(只在 reset 时用一次,见 §4.3);保留备用。
         if let Some(v) = params.get("initial_delay_ms").and_then(|v| v.as_integer()) {
             self.initial_delay_ms = v as i32;
         }
@@ -286,11 +276,11 @@ impl Inner {
     fn new(tuning: &Aec3Tuning) -> Self {
         use aec3_apm::{AudioProcessing, StreamConfig};
 
-        let mut builder = AudioProcessing::builder().config(build_apm_config(tuning));
-        // 仅在真有 AEC3 调参时注入(经 vendored fork 开放的入口);否则保持上游默认路径(§11.4)。
-        if !tuning.aec3_is_default() {
-            builder = builder.aec3_config(build_aec3_config(tuning));
-        }
+        let builder = AudioProcessing::builder()
+            .config(build_apm_config(tuning))
+            // 产品默认 delay_hold=Some(true),所以这里始终显式注入 AEC3 config。
+            // vendored aec3-apm 会从这份 base config 派生 stereo/multichannel 变体。
+            .aec3_config(build_aec3_config(tuning));
         let apm = builder
             .capture_config(StreamConfig::new(SR, 1))
             .render_config(StreamConfig::new(SR, tuning.far_channels))
