@@ -4,3 +4,6 @@
 
 # 内部过程文档(backlog/审计/交接/调研):本地保留,不上 GitHub
 docs/internal/
+
+# 设计探索稿归到仓库外层(../Design),不进项目
+/Design/

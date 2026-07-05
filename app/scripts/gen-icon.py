@@ -2,7 +2,7 @@
 """Echoless app icon master (1024px) — H2「一滴橙」定稿版。
 
 圆角炭黑底板 + 直角三杠(纸灰=人声 / 橙=参考 / 暗灰=残响)+ 白噪点颗粒。
-提案页:Design/icon-ideas.html(H2)。
+提案页在仓库外层:../Design/icon-ideas.html(H2)。
 再喂给 `tauri icon` 生成全尺寸(icns/ico/android/ios)。
 """
 from PIL import Image, ImageDraw
