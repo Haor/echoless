@@ -2,7 +2,9 @@ name: Build Echoless
 
 on:
   push:
-    branches: [main]
+    # phase-2/ui-refactor 临时加入:主分支 CI 连红多日(fmt/audit/win E0308),
+    # 在工作分支上先把全链路跑绿再合 main;合并后可撤。
+    branches: [main, phase-2/ui-refactor]
   workflow_dispatch:
 
 permissions:
@@ -112,7 +114,13 @@ jobs:
         run: |
           set -euo pipefail
           cargo audit
-          (cd app/src-tauri && cargo audit)
+          # app/src-tauri 的两条 ignore 均为 tauri v2 Linux GTK3/托盘图标栈锁死的
+          # 传递依赖(仅 Linux 目标编译,mac/win 构建不含);等 tauri 上游升级后移除:
+          #   RUSTSEC-2024-0429  glib 0.18(VariantStrIter unsound)
+          #   RUSTSEC-2026-0186  memmap2 0.5.10(linicon 托盘图标链)
+          (cd app/src-tauri && cargo audit \
+            --ignore RUSTSEC-2024-0429 \
+            --ignore RUSTSEC-2026-0186)
           (cd aec3 && cargo audit)
 
       - name: LocalVQE C API regression

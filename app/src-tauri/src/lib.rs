@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    AppHandle, WebviewWindow,
+    AppHandle,
 };
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 #[cfg(target_os = "macos")]
@@ -237,8 +237,12 @@ fn register_windows_tray(app: &mut tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+// on_window_event 给的是 &Window(非 WebviewWindow)——P5 合入时签名写错,
+// Windows CI 自此 E0308(mac 上 cfg 不编译,本地查不出)。2026-07-05 修正。
+// 注:最小化到托盘已退役(前端恒发 false),本函数是惰性死行为,待 Windows
+// 真机验证轮整体拆除。
 #[cfg(target_os = "windows")]
-fn handle_minimize_to_tray(window: &WebviewWindow) {
+fn handle_minimize_to_tray(window: &tauri::Window) {
     let prefs = window.state::<TrayPrefs>();
     if !minimize_to_tray_enabled(&prefs) || !window.is_minimized().unwrap_or(false) {
         return;
