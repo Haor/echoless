@@ -1191,7 +1191,7 @@ function useRunLifecycle({
   };
 }
 
-function useAppController() {
+function AppShell() {
   const [appState, updateApp] = useReducer(
     patchReducer<AppState>,
     undefined,
@@ -2239,7 +2239,7 @@ function TvNoise({ active }: { active: boolean }) {
 }
 
 export default function App() {
-  return useAppController();
+  return <AppShell />;
 }
 
 // UPTIME 走表:开机从零计,关机冻结最后读数(v3 原则 #5)。
