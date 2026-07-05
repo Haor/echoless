@@ -1,7 +1,7 @@
-# Echoless 内化的 AEC3 引擎(源自 dignifiedquire/aec3-apm @ aacadf0 的 fork,已完全内化维护)。
+# Echoless 内化的 AEC3 引擎(源自 dignifiedquire/sonora @ aacadf0 的 fork,已完全内化维护)。
 # 独立子 workspace(edition 2024/resolver 3),经 path 依赖被主 workspace 引用。
 # 已裁剪:cpp/fuzz/ffi/sys/bench、上游 examples/benches/CI 配置/10M 测试音频;
-# 延迟魔改等改动点见各 crate 内 "Echoless:" 注释,内部结构图见 research/aec3_internal_map.md。
+# 延迟魔改等改动点见各 crate 内 "Echoless:" 注释。
 [workspace]
 resolver = "3"
 members = [
@@ -18,7 +18,8 @@ members = [
 edition = "2024"
 rust-version = "1.91"
 license = "BSD-3-Clause"
-repository = "https://github.com/dignifiedquire/aec3-apm"
+# 已完全内化;上游溯源(dignifiedquire/sonora @ aacadf0)见 README.md。
+repository = "https://github.com/Haor/echoless"
 
 [workspace.dependencies]
 # Internal crates

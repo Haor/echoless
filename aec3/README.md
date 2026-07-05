@@ -1,7 +1,7 @@
 # aec3 — Echoless 内化的 AEC3 引擎
 
 WebRTC AEC3(声学回声消除)的纯 Rust 移植,源自
-[dignifiedquire/aec3-apm](https://github.com/dignifiedquire/aec3-apm)
+[dignifiedquire/sonora](https://github.com/dignifiedquire/sonora)
 @ `aacadf0` 的 fork,现由 Echoless **完全内化维护**(不再跟随上游)。
 BSD-3-Clause,见 `LICENSE`。
 

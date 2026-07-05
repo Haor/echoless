@@ -75,8 +75,9 @@ its adaptation state, so switching back on is instant and glitch-free.
 
 ## The AEC3 fork (`aec3/`)
 
-A Rust port of WebRTC's AEC3 (lineage: WebRTC C++ → the `sonora` port → this
-fork). Kept as a separate cargo workspace so its 700+ upstream-derived tests
+A Rust port of WebRTC's AEC3 (lineage: WebRTC C++ →
+the [sonora](https://github.com/dignifiedquire/sonora) port → this fork,
+fully internalized at `aacadf0`). Kept as a separate cargo workspace so its 700+ upstream-derived tests
 run against the port unchanged. Echoless-specific modifications, all guarded
 by config:
 

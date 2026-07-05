@@ -166,8 +166,9 @@ DeepVQE paper:
 
 - **Echoless** is MIT licensed ([LICENSE](LICENSE)).
 - **AEC3** (`aec3/`) derives from the
-  [WebRTC project](https://webrtc.org)'s audio processing module —
-  BSD-3-Clause ([aec3/LICENSE](aec3/LICENSE)).
+  [WebRTC project](https://webrtc.org)'s audio processing module, via the
+  [sonora](https://github.com/dignifiedquire/sonora) Rust port (fully
+  internalized) — BSD-3-Clause ([aec3/LICENSE](aec3/LICENSE)).
 - **LocalVQE** models and runtime are Apache-2.0, © Richard Palethorpe and
   Claude (Anthropic). Not for emergency or safety-critical use (see the
   [model card](https://huggingface.co/LocalAI-io/LocalVQE)).
