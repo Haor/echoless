@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "echoless-audio-io"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "echoless-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -490,7 +490,7 @@ dependencies = [
 
 [[package]]
 name = "echoless-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "echoless-audio-io",
@@ -501,11 +501,11 @@ dependencies = [
 
 [[package]]
 name = "echoless-paths"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "echoless-processors"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "aec3-apm",
  "anyhow",

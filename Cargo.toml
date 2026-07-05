@@ -15,7 +15,7 @@ exclude = ["aec3"]
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "1.0.0"
 license = "MIT"
 # aec3-apm 依赖要求 rust-version 1.91 + edition 2024(本机已 1.96)
 rust-version = "1.91"
