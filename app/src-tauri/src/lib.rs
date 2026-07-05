@@ -1288,13 +1288,10 @@ fn default_diag_dir() -> String {
     base.join("diagnostics").to_string_lossy().to_string()
 }
 
-/// 在系统文件管理器里打开目录(不存在则先创建)。
+/// 在系统文件管理器里打开目录。
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
-    let p = std::path::Path::new(&path);
-    if !p.exists() {
-        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-    }
+    let p = validate_open_path(&path)?;
     #[cfg(target_os = "macos")]
     let prog = "open";
     #[cfg(target_os = "windows")]
@@ -1302,10 +1299,40 @@ fn open_path(path: String) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let prog = "xdg-open";
     Command::new(prog)
-        .arg(&path)
+        .arg(&p)
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn validate_open_path(path: &str) -> Result<PathBuf, String> {
+    let p = Path::new(path);
+    let canonical = p
+        .canonicalize()
+        .map_err(|e| format!("目录不存在或不可访问: {e}"))?;
+    if !canonical.is_dir() {
+        return Err("只能打开目录".to_string());
+    }
+    let allowed_roots = allowed_open_path_roots();
+    if allowed_roots
+        .iter()
+        .any(|root| canonical == *root || canonical.starts_with(root))
+    {
+        return Ok(canonical);
+    }
+    Err("目录不在 Echoless 允许范围内".to_string())
+}
+
+fn allowed_open_path_roots() -> Vec<PathBuf> {
+    let (brand_root, _) = echoless_paths::brand_data_root();
+    [
+        brand_root.clone(),
+        brand_root.join("diagnostics"),
+        localvqe_models_dir_path(),
+    ]
+    .into_iter()
+    .filter_map(|path| path.canonicalize().ok())
+    .collect()
 }
 
 #[tauri::command]
@@ -1852,6 +1879,32 @@ mod tests {
         ] {
             assert!(validate_browser_url(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn validate_open_path_stays_under_brand_data_root() {
+        let root = unique_temp_dir("echoless-open-path-root");
+        let diagnostics = root.join("diagnostics").join("session-1");
+        let models = root.join("localvqe").join("models");
+        let external = unique_temp_dir("echoless-open-path-external");
+        std::fs::create_dir_all(&diagnostics).unwrap();
+        std::fs::create_dir_all(&models).unwrap();
+
+        with_test_data_root(&root, || {
+            assert_eq!(
+                validate_open_path(diagnostics.to_str().unwrap()).unwrap(),
+                diagnostics.canonicalize().unwrap()
+            );
+            assert_eq!(
+                validate_open_path(models.to_str().unwrap()).unwrap(),
+                models.canonicalize().unwrap()
+            );
+            assert!(validate_open_path(root.join("missing").to_str().unwrap()).is_err());
+            assert!(validate_open_path(external.to_str().unwrap()).is_err());
+        });
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(external);
     }
 
     #[test]
