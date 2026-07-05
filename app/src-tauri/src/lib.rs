@@ -1284,10 +1284,8 @@ fn browser_open_command(url: &str) -> (&'static str, Vec<String>) {
 /// 诊断录制默认目录(绝对路径,session-* 会写在其下)。
 #[tauri::command]
 fn default_diag_dir() -> String {
-    std::env::temp_dir()
-        .join("echoless-diagnostics")
-        .to_string_lossy()
-        .to_string()
+    let (base, _) = echoless_paths::brand_data_root();
+    base.join("diagnostics").to_string_lossy().to_string()
 }
 
 /// 在系统文件管理器里打开目录(不存在则先创建)。
@@ -1675,6 +1673,8 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static DATA_ROOT_ENV_LOCK: Mutex<()> = Mutex::new(());
+
     fn unique_temp_dir(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1683,6 +1683,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("{name}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn with_test_data_root<T>(root: &Path, run: impl FnOnce() -> T) -> T {
+        let _guard = DATA_ROOT_ENV_LOCK.lock().unwrap();
+        let previous = std::env::var_os(echoless_paths::DATA_ROOT_ENV_VAR);
+        std::env::set_var(echoless_paths::DATA_ROOT_ENV_VAR, root);
+        let result = run();
+        if let Some(previous) = previous {
+            std::env::set_var(echoless_paths::DATA_ROOT_ENV_VAR, previous);
+        } else {
+            std::env::remove_var(echoless_paths::DATA_ROOT_ENV_VAR);
+        }
+        result
     }
 
     #[cfg(unix)]
@@ -1733,6 +1746,15 @@ mod tests {
         let disabled: Value = serde_json::from_str(&bypass_control_line(false)).unwrap();
         assert_eq!(disabled["cmd"], "set_bypass");
         assert_eq!(disabled["enabled"], false);
+    }
+
+    #[test]
+    fn default_diag_dir_uses_brand_data_root() {
+        let root = unique_temp_dir("echoless-diag-root");
+        with_test_data_root(&root, || {
+            assert_eq!(PathBuf::from(default_diag_dir()), root.join("diagnostics"));
+        });
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
