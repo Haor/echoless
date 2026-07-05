@@ -69,7 +69,11 @@ impl ProcessorChain {
     }
 
     pub fn stats(&self) -> Vec<ProcessorStats> {
-        self.nodes.iter().map(|n| n.stats()).collect()
+        let mut stats: Vec<ProcessorStats> = self.nodes.iter().map(|n| n.stats()).collect();
+        for adapter in &self.adapters {
+            adapter.push_boundary_stats(&mut stats);
+        }
+        stats
     }
 
     pub fn reset(&mut self) {
@@ -175,14 +179,27 @@ impl NodeAdapters {
     fn new(base_rate: u32, base_far_channels: u16, spec: crate::IoSpec) -> Self {
         Self {
             spec,
-            near_in: BoundaryAdapter::new(base_rate, 1, spec.sample_rate, spec.near_channels),
+            near_in: BoundaryAdapter::new(
+                "near_in",
+                base_rate,
+                1,
+                spec.sample_rate,
+                spec.near_channels,
+            ),
             far_in: BoundaryAdapter::new(
+                "far_in",
                 base_rate,
                 base_far_channels,
                 spec.sample_rate,
                 spec.far_channels,
             ),
-            near_out: BoundaryAdapter::new(spec.sample_rate, spec.near_channels, base_rate, 1),
+            near_out: BoundaryAdapter::new(
+                "near_out",
+                spec.sample_rate,
+                spec.near_channels,
+                base_rate,
+                1,
+            ),
             out_n: Vec::new(),
         }
     }
@@ -193,9 +210,16 @@ impl NodeAdapters {
         self.near_out.reset();
         self.out_n.clear();
     }
+
+    fn push_boundary_stats(&self, stats: &mut Vec<ProcessorStats>) {
+        self.near_in.push_stats(stats);
+        self.far_in.push_stats(stats);
+        self.near_out.push_stats(stats);
+    }
 }
 
 struct BoundaryAdapter {
+    label: &'static str,
     in_rate: u32,
     in_channels: u16,
     out_rate: u32,
@@ -205,11 +229,20 @@ struct BoundaryAdapter {
     resampled_planes: Vec<Vec<f32>>,
     output: Vec<f32>,
     resampler: Option<FftFixedIn<f32>>,
+    fallback_count: u64,
+    last_fallback_error: Option<String>,
 }
 
 impl BoundaryAdapter {
-    fn new(in_rate: u32, in_channels: u16, out_rate: u32, out_channels: u16) -> Self {
+    fn new(
+        label: &'static str,
+        in_rate: u32,
+        in_channels: u16,
+        out_rate: u32,
+        out_channels: u16,
+    ) -> Self {
         Self {
+            label,
             in_rate,
             in_channels: in_channels.max(1),
             out_rate,
@@ -219,6 +252,8 @@ impl BoundaryAdapter {
             resampled_planes: Vec::new(),
             output: Vec::new(),
             resampler: None,
+            fallback_count: 0,
+            last_fallback_error: None,
         }
     }
 
@@ -260,7 +295,8 @@ impl BoundaryAdapter {
                     self.interleave_from_resampled(out_frames);
                     out_frames
                 }
-                Err(_err) => {
+                Err(err) => {
+                    self.record_fallback(format!("{} rubato process failed: {err}", self.label));
                     self.resample_linear_fallback(input_frames);
                     self.output.len() / self.out_channels as usize
                 }
@@ -281,14 +317,19 @@ impl BoundaryAdapter {
         let out_channels = self.out_channels as usize;
         resize_planes(&mut self.planes, out_channels, input_frames);
         if self.in_rate != self.out_rate && input_frames > 0 {
-            self.resampler = FftFixedIn::<f32>::new(
+            self.resampler = match FftFixedIn::<f32>::new(
                 self.in_rate as usize,
                 self.out_rate as usize,
                 input_frames,
                 1,
                 out_channels,
-            )
-            .ok();
+            ) {
+                Ok(resampler) => Some(resampler),
+                Err(err) => {
+                    self.record_fallback(format!("{} rubato init failed: {err}", self.label));
+                    None
+                }
+            };
             let output_frames_max = self
                 .resampler
                 .as_ref()
@@ -366,6 +407,21 @@ impl BoundaryAdapter {
                 self.output[frame * channels + channel] = a + (b - a) * frac;
             }
         }
+    }
+
+    fn record_fallback(&mut self, message: String) {
+        self.fallback_count = self.fallback_count.saturating_add(1);
+        self.last_fallback_error = Some(message);
+    }
+
+    fn push_stats(&self, stats: &mut Vec<ProcessorStats>) {
+        if self.fallback_count == 0 {
+            return;
+        }
+        let mut stat = ProcessorStats::empty("boundary_src");
+        stat.runtime_error_count = self.fallback_count;
+        stat.last_backend_error = self.last_fallback_error.clone();
+        stats.push(stat);
     }
 }
 
@@ -685,7 +741,7 @@ mod tests {
 
     #[test]
     fn boundary_adapter_downmixes_stereo_to_mono() {
-        let mut adapter = BoundaryAdapter::new(48_000, 2, 48_000, 1);
+        let mut adapter = BoundaryAdapter::new("test", 48_000, 2, 48_000, 1);
 
         let output = adapter.adapt(&[1.0, 3.0, -1.0, 1.0]);
 
@@ -694,7 +750,7 @@ mod tests {
 
     #[test]
     fn boundary_adapter_spreads_mono_to_stereo() {
-        let mut adapter = BoundaryAdapter::new(48_000, 1, 48_000, 2);
+        let mut adapter = BoundaryAdapter::new("test", 48_000, 1, 48_000, 2);
 
         let output = adapter.adapt(&[0.25, -0.5]);
 
