@@ -39,30 +39,15 @@ struct RunState(Mutex<Option<RunChild>>);
 #[cfg(target_os = "windows")]
 struct TrayIconState(Mutex<Option<TrayIcon>>);
 
-#[cfg(target_os = "windows")]
-struct TrayWindowState {
-    minimizing_to_tray: AtomicBool,
-}
-
-#[cfg(target_os = "windows")]
-impl Default for TrayWindowState {
-    fn default() -> Self {
-        Self {
-            minimizing_to_tray: AtomicBool::new(false),
-        }
-    }
-}
-
 /// Windows tray preferences pushed by the frontend at startup and on change.
+/// 只剩「关闭到托盘」——最小化到托盘已退役(用户定案 2026-07-05)。
 struct TrayPrefs {
-    minimize_to_tray: AtomicBool,
     close_to_tray: AtomicBool,
 }
 
 impl Default for TrayPrefs {
     fn default() -> Self {
         Self {
-            minimize_to_tray: AtomicBool::new(false),
             close_to_tray: AtomicBool::new(false),
         }
     }
@@ -117,18 +102,14 @@ fn mark_run_exited(state: &RunState, config_path: &Path) {
     }
 }
 
-fn set_tray_prefs_inner(prefs: &TrayPrefs, minimize_to_tray: bool, close_to_tray: bool) {
+fn set_tray_prefs_inner(prefs: &TrayPrefs, close_to_tray: bool) {
     #[cfg(target_os = "windows")]
     {
-        prefs
-            .minimize_to_tray
-            .store(minimize_to_tray, Ordering::SeqCst);
         prefs.close_to_tray.store(close_to_tray, Ordering::SeqCst);
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (minimize_to_tray, close_to_tray);
-        prefs.minimize_to_tray.store(false, Ordering::SeqCst);
+        let _ = close_to_tray;
         prefs.close_to_tray.store(false, Ordering::SeqCst);
     }
 }
@@ -144,11 +125,6 @@ fn tray_pref_enabled(value: &AtomicBool) -> bool {
         let _ = stored;
         false
     }
-}
-
-#[cfg(target_os = "windows")]
-fn minimize_to_tray_enabled(prefs: &TrayPrefs) -> bool {
-    tray_pref_enabled(&prefs.minimize_to_tray)
 }
 
 fn close_to_tray_enabled(prefs: &TrayPrefs) -> bool {
@@ -235,32 +211,6 @@ fn register_windows_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let tray_state = app.state::<TrayIconState>();
     *tray_icon_state_guard(&tray_state) = Some(tray);
     Ok(())
-}
-
-// on_window_event 给的是 &Window(非 WebviewWindow)——P5 合入时签名写错,
-// Windows CI 自此 E0308(mac 上 cfg 不编译,本地查不出)。2026-07-05 修正。
-// 注:最小化到托盘已退役(前端恒发 false),本函数是惰性死行为,待 Windows
-// 真机验证轮整体拆除。
-#[cfg(target_os = "windows")]
-fn handle_minimize_to_tray(window: &tauri::Window) {
-    let prefs = window.state::<TrayPrefs>();
-    if !minimize_to_tray_enabled(&prefs) || !window.is_minimized().unwrap_or(false) {
-        return;
-    }
-
-    let tray_window_state = window.state::<TrayWindowState>();
-    if tray_window_state
-        .minimizing_to_tray
-        .swap(true, Ordering::SeqCst)
-    {
-        return;
-    }
-
-    let _ = window.unminimize();
-    let _ = window.hide();
-    tray_window_state
-        .minimizing_to_tray
-        .store(false, Ordering::SeqCst);
 }
 
 const TAURI_TARGET_TRIPLE: &str = env!("TAURI_ENV_TARGET_TRIPLE");
@@ -1112,7 +1062,9 @@ fn download_localvqe_model_blocking(
     );
     let mut curl = Command::new("curl");
     // -sS:去掉进度表(否则 curl 把整张进度表写进 stderr,报错时被原样灌进 UI)。
-    curl.args(["-sSfL", "--retry", "2", "-o"]).arg(&tmp).arg(&url);
+    curl.args(["-sSfL", "--retry", "2", "-o"])
+        .arg(&tmp)
+        .arg(&url);
     let out =
         command_output_with_timeout(&mut curl, MODEL_DOWNLOAD_TIMEOUT, "LocalVQE model download")?;
     if !out.status.success() {
@@ -1482,8 +1434,8 @@ fn stop_run(app: tauri::AppHandle, state: State<RunState>) -> Result<(), String>
 }
 
 #[tauri::command]
-fn set_tray_prefs(prefs: State<TrayPrefs>, minimize_to_tray: bool, close_to_tray: bool) {
-    set_tray_prefs_inner(&prefs, minimize_to_tray, close_to_tray);
+fn set_tray_prefs(prefs: State<TrayPrefs>, close_to_tray: bool) {
+    set_tray_prefs_inner(&prefs, close_to_tray);
 }
 
 // macOS 设备热插拔监听:CoreAudio 设备列表('dev#')变更即推事件给前端刷新。
@@ -1509,8 +1461,7 @@ mod device_watch {
         element: 0,                             // kAudioObjectPropertyElementMain
     };
 
-    type Listener =
-        extern "C" fn(u32, u32, *const AudioObjectPropertyAddress, *mut c_void) -> i32;
+    type Listener = extern "C" fn(u32, u32, *const AudioObjectPropertyAddress, *mut c_void) -> i32;
 
     #[link(name = "CoreAudio", kind = "framework")]
     extern "C" {
@@ -1560,9 +1511,7 @@ pub fn run() {
         .manage(TrayPrefs::default());
 
     #[cfg(target_os = "windows")]
-    let builder = builder
-        .manage(TrayIconState(Mutex::new(None)))
-        .manage(TrayWindowState::default());
+    let builder = builder.manage(TrayIconState(Mutex::new(None)));
 
     builder
         .invoke_handler(tauri::generate_handler![
@@ -1641,10 +1590,6 @@ pub fn run() {
                     let state = window.state::<RunState>();
                     terminate_run(&state);
                 }
-            }
-            WindowEvent::Resized(_) => {
-                #[cfg(target_os = "windows")]
-                handle_minimize_to_tray(window);
             }
             _ => {}
         })
@@ -1742,21 +1687,14 @@ mod tests {
     #[test]
     fn tray_prefs_default_false_and_follow_platform_gate() {
         let prefs = TrayPrefs::default();
-        assert!(!prefs.minimize_to_tray.load(Ordering::SeqCst));
         assert!(!prefs.close_to_tray.load(Ordering::SeqCst));
 
-        set_tray_prefs_inner(&prefs, true, true);
+        set_tray_prefs_inner(&prefs, true);
 
         #[cfg(target_os = "windows")]
-        {
-            assert!(prefs.minimize_to_tray.load(Ordering::SeqCst));
-            assert!(prefs.close_to_tray.load(Ordering::SeqCst));
-        }
+        assert!(prefs.close_to_tray.load(Ordering::SeqCst));
         #[cfg(not(target_os = "windows"))]
-        {
-            assert!(!prefs.minimize_to_tray.load(Ordering::SeqCst));
-            assert!(!prefs.close_to_tray.load(Ordering::SeqCst));
-        }
+        assert!(!prefs.close_to_tray.load(Ordering::SeqCst));
     }
 
     #[test]

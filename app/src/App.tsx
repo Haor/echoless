@@ -1387,7 +1387,7 @@ function useAppController() {
     } catch {
       /* 持久化失败不阻塞 */
     }
-    setTrayPrefs(false, trayPrefs.closeToTray).catch(() => {});
+    setTrayPrefs(trayPrefs.closeToTray).catch(() => {});
   }, [trayPrefs]);
 
   // zmeta 版本号(tauri.conf.json 为源)。

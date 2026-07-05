@@ -26,7 +26,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -1052,7 +1052,7 @@ where
         .context("构建蜂鸣输出流失败")
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn interpolated_sample(samples: &[f32], position: f64) -> f32 {
     let i = position.floor() as usize;
     let frac = (position - i as f64) as f32;
