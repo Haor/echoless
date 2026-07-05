@@ -210,7 +210,6 @@ jobs:
             fi
             export PATH="${shared_dir}:${PATH}"
             lib="$(cygpath -w "${lib}")"
-            model="$(cygpath -w "${model}")"
           else
             shared_dir="${shared_build}/bin"
             lib="$(find "${shared_build}" -name 'liblocalvqe*.dylib' -print -quit)"
