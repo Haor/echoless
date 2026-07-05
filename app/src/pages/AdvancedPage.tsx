@@ -202,13 +202,18 @@ function ProbeSection({
   const [state, updateProbe] = useReducer(probeReducer, PROBE_INITIAL_STATE);
   const { probing, phase, lit, probe, probeErr } = state;
   const timer = useRef<number | null>(null);
+  const mounted = useRef(true);
 
   useEffect(
     () => () => {
+      mounted.current = false;
       if (timer.current != null) window.clearInterval(timer.current);
     },
     [],
   );
+  const updateProbeIfMounted = (patch: ProbePatch) => {
+    if (mounted.current) updateProbe(patch);
+  };
 
   async function runProbe() {
     if (probing) return;
@@ -217,10 +222,11 @@ function ProbeSection({
     const wasRunning = running;
     try {
       if (wasRunning) {
-        updateProbe({ phase: "pausing" });
+        updateProbeIfMounted({ phase: "pausing" });
         await onSetRun(false);
+        if (!mounted.current) return;
       }
-      updateProbe({ phase: "probing" });
+      updateProbeIfMounted({ phase: "probing" });
       // 进度灯节奏:默认按墙钟估计(旧 CLI 无进度事件的回退);收到 CLI 的
       // beep_train_start 事件后改以真实开播时刻为基准 —— 蜂鸣要等子进程起好
       // 设备 + 4s 稳定期才响,纯墙钟估计会让灯超前声音(音画不同步)。
@@ -235,16 +241,17 @@ function ProbeSection({
           0,
           Math.min(beeps, Math.floor((el - firstMs) / stepMs) + 1),
         );
-        updateProbe({ lit: n });
+        updateProbeIfMounted({ lit: n });
       }, 100);
       const unProgress = await onProbeProgress((p) => {
+        if (!mounted.current) return;
         if (p.stage !== "beep_train_start") return;
         // 首响 = 事件时刻 + WAV 前导静音 + 播放器打开的经验常量。
         t0 = Date.now();
         firstMs = (p.pre_roll_ms ?? 500) + PROBE_PLAYER_OPEN_MS;
         stepMs = (p.beep_ms ?? 70) + (p.gap_ms ?? 650);
         beeps = p.beeps ?? PROBE_BEEPS;
-        updateProbe({ lit: 0 });
+        updateProbeIfMounted({ lit: 0 });
       });
       let r: NearDelayProbeResult;
       try {
@@ -252,30 +259,32 @@ function ProbeSection({
       } finally {
         unProgress();
       }
-      updateProbe({ probe: r });
+      if (!mounted.current) return;
+      updateProbeIfMounted({ probe: r });
       // 自动把实测推荐值填进 near_delay_ms(含 8ms AEC 安全余量,后端已算好)。
       onPipeline({ near_delay_ms: r.recommended_near_delay_ms });
       // mac + AEC3 → 顺带写 AEC3 initial_delay_ms(负 lag 写 8ms 安全值,正常正 lag 写实测延迟)。
       const init = probeInitialDelay(r, platform, kind);
       if (init != null) onParam("initial_delay_ms", init);
     } catch (e) {
-      updateProbe({ probeErr: String(e) });
+      updateProbeIfMounted({ probeErr: String(e) });
     } finally {
       if (timer.current != null) {
         window.clearInterval(timer.current);
         timer.current = null;
       }
-      updateProbe({ lit: PROBE_BEEPS });
+      if (!mounted.current) return;
+      updateProbeIfMounted({ lit: PROBE_BEEPS });
       // 恢复引擎(用上刚写入的 near_delay/initial_delay);失败不阻塞 UI。
       if (wasRunning) {
-        updateProbe({ phase: "restoring" });
+        updateProbeIfMounted({ phase: "restoring" });
         try {
           await onSetRun(true);
         } catch {
           /* 恢复失败时用户可手动开机 */
         }
       }
-      updateProbe({ phase: "", probing: false });
+      updateProbeIfMounted({ phase: "", probing: false });
     }
   }
 

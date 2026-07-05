@@ -472,6 +472,7 @@ function useAppController() {
   const lastLogRef = useRef<string>("");
   const powerOnRef = useRef(powerOn);
   powerOnRef.current = powerOn;
+  const probeBorrowedRunRef = useRef(false);
   // 供 refreshDevices(mount 时创建的稳定回调)读到最新选择 / 触发最新 applyChange,
   // 避免闭包里的陈旧 selection 把用户后来改过的设备写回 toml。
   const selectionRef = useRef(selection);
@@ -993,6 +994,7 @@ function useAppController() {
       }
       telRef.current.on = true;
       await startRun(toml, 80);
+      probeBorrowedRunRef.current = false;
       // 启动即 AEC on(toml 不写 bypass,后端默认 false)。
       updateApp({ powerOn: true, bypassed: false, bypassPending: null });
     } catch (e) {
@@ -1023,8 +1025,14 @@ function useAppController() {
   // 延迟侦测专用:probe 需独占麦克风/输出 → AdvancedPage 在探测前后调这个停/起引擎。
   // 恢复时走 start(),会用上探测刚写入的 near_delay/initial_delay(refs 已同步)。
   async function setRunForProbe(on: boolean) {
-    if (on) await start();
-    else await stop();
+    if (on) {
+      if (!probeBorrowedRunRef.current) return;
+      probeBorrowedRunRef.current = false;
+      await start();
+      return;
+    }
+    probeBorrowedRunRef.current = powerOnRef.current;
+    if (probeBorrowedRunRef.current) await stop();
   }
 
   // P8-D1 语义(用户拍板 2026-07-04):电源 OFF = 穿透,mic 绝不变哑。
