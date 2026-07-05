@@ -22,14 +22,16 @@ BSD-3-Clause,见 `LICENSE`。
 - **延迟惯性魔改(P4)**:underrun 不扣 delay、不软重置;`estimate_delay`
   加 render 静音门(gate 期不增 consistent counter)。各处以 `Echoless:`
   注释标记;负方向搜索经上层 `near_delay` 偏置实现(本 workspace 零改动)。
+- **立体声 config 派生**:注入自定义 AEC3 config 时,多声道变体从该 base
+  派生(保留立体声专用调参),而非退回单声道默认(`aec3-apm`)。
 - **裁剪**:上游的 cpp 参考实现、fuzz、ffi/sys 绑定、bench、examples、
   CI/发布配置、10M 测试音频已全部移除;in-src 单元测试与 proptest 保留。
 
 ## 测试
 
 ```bash
-cd aec3 && cargo test
+cd aec3 && cargo test --workspace
 ```
 
-设计/结构分析见 `research/aec3_internal_map.md`(AEC/ 工作区),
-集成结论见 `docs/architecture/AEC3_INTERNALIZATION_PLAN.md`。
+改动点均以源码内 `Echoless:` 注释就地标记;集成契约见
+`crates/echoless-processors` 对 `aec3-apm` 的调用。

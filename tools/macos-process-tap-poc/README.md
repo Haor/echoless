@@ -13,8 +13,11 @@ consume raw Float32 PCM as its far-end reference.
 ```
 
 The build script embeds `NSAudioCaptureUsageDescription` into the command-line
-binary and ad-hoc signs it. Apple requires the usage string for system audio
-capture permission.
+binary (Apple requires the usage string for system audio capture permission)
+and signs it. If an `Echoless Dev` codesigning identity is present it signs
+with that stable identity — keeping the System Audio Recording TCC grant alive
+across rebuilds — otherwise it falls back to ad-hoc. The build is fingerprint
+cached (source + signing identity), so rebuilds stay byte-stable.
 
 ## Run
 
@@ -45,8 +48,13 @@ If it records silence:
 ./tools/macos-process-tap-poc/.build/echoless-process-tap-poc --stream-stdout --exclude-pid 12345
 ```
 
-`--stream-stdout` writes raw little-endian Float32 PCM to stdout and human logs
-to stderr. Mono mode emits one channel; default mode emits interleaved stereo.
+`--stream-stdout` first writes a 16-byte little-endian header
+(`ELTP` magic + u32 version + u32 sample rate + u32 channels), then raw
+Float32 PCM to stdout; human logs go to stderr. The header lets the Rust
+consumer resample/remap to the pipeline rate and channel layout. Mono mode
+requests one channel; default mode requests interleaved stereo (the header
+reports the tap's actual format). The helper releases the tap on SIGTERM/SIGINT
+and self-exits if its parent dies (no orphaned taps).
 
 The Rust CLI discovers the helper in this order:
 
