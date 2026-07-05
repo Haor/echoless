@@ -129,8 +129,12 @@ in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## Building from source
 
-Prereqs: Rust (stable), Node 22 + pnpm, and on macOS Xcode CLT + Swift
-(for the Process Tap helper).
+Prereqs: Rust (stable), Node 22 with Corepack, and on macOS Xcode CLT + Swift
+(for the Process Tap helper). The app workspace pins pnpm via
+`app/package.json`; run `corepack enable` so Node uses that pnpm version.
+`app/pnpm-workspace.yaml` also sets `minimumReleaseAge: 10080` (7 days), so a
+freshly published package can be refused until it ages into the install
+window.
 
 ```bash
 # CLI
@@ -140,7 +144,7 @@ cargo build --release                    # target/release/echoless
 tools/macos-process-tap-poc/build.sh
 
 # Desktop app (dev)
-cd app && pnpm install && pnpm tauri dev
+cd app && corepack enable && pnpm install && pnpm tauri dev
 
 # Desktop app (bundle)
 cd app && pnpm tauri build
