@@ -244,6 +244,9 @@ function smoke() {
   }
   console.log("bundle-smoke: LocalVQE native runtime present");
 
+  if (process.platform === "darwin" && !layout.helper) {
+    throw new Error("Process Tap helper missing from macOS bundle resources");
+  }
   if (layout.helper) {
     assertExecutable(layout.helper, "Process Tap helper");
   }

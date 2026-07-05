@@ -259,7 +259,7 @@ jobs:
           fi
 
           ECHOLESS_LOCALVQE_LIBRARY="${lib}" \
-            pnpm prepare:tauri-assets --skip-cli-build --require-localvqe-assets
+            pnpm prepare:tauri-assets --skip-cli-build --require-localvqe-assets --require-helper-assets
 
       - name: Tauri bundle smoke
         shell: bash

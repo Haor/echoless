@@ -22,6 +22,7 @@ const skipCliBuild = has("--skip-cli-build");
 const skipHelperBuild = has("--skip-helper-build");
 // 发布打包必须带上 LocalVQE native runtime(随包分发,2026-07-05 定案;模型走 HF 下载)。
 const requireLocalvqe = has("--require-localvqe-assets");
+const requireHelper = has("--require-helper-assets");
 const profile = dev ? "debug" : "release";
 const sharedObjectSuffix = /\.so(\.\d+)*$/i;
 
@@ -213,7 +214,9 @@ function prepareProcessTapHelper() {
     helper = existsFile(built) ? built : null;
   }
   if (!helper) {
-    console.warn("asset warning: Process Tap helper not found; macOS system reference will need ECHOLESS_PROCESS_TAP_HELPER");
+    const message = "Process Tap helper not found; macOS system reference will be unavailable";
+    if (requireHelper) throw new Error(message);
+    console.warn(`asset warning: ${message}; set ECHOLESS_PROCESS_TAP_HELPER or allow helper build`);
     return;
   }
 
