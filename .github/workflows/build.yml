@@ -296,3 +296,107 @@ jobs:
             app/src-tauri/target/debug/bundle/nsis/*.exe
             app/src-tauri/target/debug/bundle/msi/*.msi
           if-no-files-found: error
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Linux packaging dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev
+
+      - name: Install Rust stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+          cargo --version
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        shell: bash
+        run: corepack enable
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Rust workspace
+        run: cargo build --release --workspace --locked
+
+      - name: Build LocalVQE Linux native runtime
+        id: localvqe_native
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --version
+          localvqe_src="${RUNNER_TEMP}/LocalVQE"
+          shared_build="${RUNNER_TEMP}/localvqe-shared-build"
+          git clone --no-checkout https://github.com/localai-org/LocalVQE.git "${localvqe_src}"
+          git -C "${localvqe_src}" checkout "${LOCALVQE_REF}"
+          git -C "${localvqe_src}" submodule update --init --recursive
+
+          cmake -S "${localvqe_src}/ggml" \
+            -B "${shared_build}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLOCALVQE_BUILD_SHARED=ON
+          cmake --build "${shared_build}" \
+            --config Release \
+            --target localvqe_shared
+
+          lib="$(find "${shared_build}" -name 'liblocalvqe*.so*' -print -quit)"
+          if [[ -z "${lib}" || ! -f "${lib}" ]]; then
+            echo "LocalVQE shared library not found under ${shared_build}" >&2
+            exit 1
+          fi
+          echo "library=${lib}" >> "${GITHUB_OUTPUT}"
+
+      - name: Summarize LocalVQE Linux native fallback
+        if: steps.localvqe_native.outcome != 'success'
+        shell: bash
+        run: |
+          {
+            echo "### LocalVQE Linux native runtime"
+            echo ""
+            echo "Building upstream LocalVQE failed on ubuntu-latest. The Linux bundle build continues without requiring the native runtime asset."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Prepare Tauri LocalVQE native runtime
+        if: steps.localvqe_native.outcome == 'success'
+        working-directory: app
+        env:
+          ECHOLESS_LOCALVQE_LIBRARY: ${{ steps.localvqe_native.outputs.library }}
+        run: pnpm prepare:tauri-assets --skip-cli-build --require-localvqe-assets
+
+      - name: Tauri Linux bundle
+        working-directory: app
+        run: pnpm tauri build --ci --bundles deb,appimage
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: echoless-linux-${{ runner.arch }}
+          path: |
+            target/release/echoless
+            app/src-tauri/target/release/bundle/deb/*.deb
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error

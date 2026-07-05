@@ -110,7 +110,7 @@ function readTrayPrefs(): TrayPrefsState {
 // 设备选择值统一用 stable_id(跨重启稳定;mic/output 配置直接吃它)。
 // 选默认输出:优先虚拟声卡(VB-CABLE / BlackHole),否则系统默认。
 function pickDefaultOutput(outs: AudioDevice[]): string {
-  const virt = outs.find((d) => /cable|blackhole|vb-?audio/i.test(d.name));
+  const virt = outs.find((d) => /cable|blackhole|vb-?audio|echoless|null/i.test(d.name));
   if (virt) return virt.stable_id;
   return (
     outs.find((d) => d.is_default)?.stable_id ?? outs[0]?.stable_id ?? "default"
@@ -165,7 +165,36 @@ function pickReference(devices: DeviceList, current: string): string {
   if (referenceSelectionStillExists(devices, current)) return current;
   const sys = devices.reference_sources.find((r) => r.id === "system");
   if (sys?.available) return "system";
+  const monitor = devices.reference_sources.find(
+    (r) => r.available && r.kind === "input" && /monitor/i.test(r.label),
+  );
+  if (monitor) return monitor.selector ?? monitor.id;
   return "none";
+}
+
+function parseDevPlatform(value: string | null): Platform | null {
+  if (value === "win" || value === "windows") return "windows";
+  if (value === "mac" || value === "macos") return "macos";
+  if (value === "linux") return "linux";
+  return null;
+}
+
+function cycleDevPlatform(current: Platform | null): Platform | null {
+  if (current === null || current === "macos") return "windows";
+  if (current === "windows") return "linux";
+  return null;
+}
+
+function platformTag(platform: Platform): string {
+  if (platform === "windows") return "WIN";
+  if (platform === "linux") return "LINUX";
+  return "MAC";
+}
+
+function ioBackendLabel(platform: Platform): string {
+  if (platform === "macos") return "COREAUDIO";
+  if (platform === "linux") return "PIPEWIRE";
+  return "WASAPI";
 }
 
 const MODELS: { kind: string; label: string }[] = [
@@ -258,7 +287,7 @@ type AppState = {
   dev: boolean;
   devRtxState: RtxState;
   devMicState: MicState;
-  devWin: boolean;
+  devPlatform: Platform | null;
   io: IoResamplingState;
   rec: boolean;
   // P8-D1:穿透中(sidecar 活着,mic 直通,AEC 保温)。UI 的「电源 OFF」= 此态。
@@ -305,7 +334,7 @@ const INITIAL_APP_STATE: AppState = {
   dev: false,
   devRtxState: "runtime_not_installed",
   devMicState: "missing",
-  devWin: false,
+  devPlatform: null,
   io: null,
   rec: false,
   bypassed: false,
@@ -384,7 +413,7 @@ function initSelection(): SelectionState {
   };
 }
 
-// 浏览器预览直达(设计稿 hash 直链的 app 版):?view=advanced&dev=1&os=win。
+// 浏览器预览直达(设计稿 hash 直链的 app 版):?view=advanced&dev=1&os=linux。
 // Tauri 里没有 query,恒回落初始值。
 function initAppState(): AppState {
   try {
@@ -402,7 +431,7 @@ function initAppState(): AppState {
       ...INITIAL_APP_STATE,
       view: views.includes(v as View) ? (v as View) : "overview",
       dev: import.meta.env.DEV && q.has("dev"),
-      devWin: q.get("os") === "win",
+      devPlatform: parseDevPlatform(q.get("os")),
     };
   } catch {
     return INITIAL_APP_STATE;
@@ -439,7 +468,7 @@ function useAppController() {
     dev,
     devRtxState,
     devMicState,
-    devWin,
+    devPlatform,
     io,
     rec,
     bypassed,
@@ -837,7 +866,7 @@ function useAppController() {
     return () => window.removeEventListener("keydown", onTilde);
   }, []);
 
-  // 开发态下按 `(同一物理键不按 Shift)在 Windows / macOS 模拟平台间切换。
+  // 开发态下按 `(同一物理键不按 Shift)在 当前平台 / Windows / Linux 间切换。
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const onBacktick = (e: KeyboardEvent) => {
@@ -846,7 +875,10 @@ function useAppController() {
       if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
       if (!dev) return;
       e.preventDefault();
-      updateApp((state) => ({ ...state, devWin: !state.devWin }));
+      updateApp((state) => ({
+        ...state,
+        devPlatform: cycleDevPlatform(state.devPlatform),
+      }));
     };
     window.addEventListener("keydown", onBacktick);
     return () => window.removeEventListener("keydown", onBacktick);
@@ -1211,10 +1243,12 @@ function useAppController() {
     if (powerOnRef.current && recRef.current) startDiag();
   }, [startDiag]);
 
+  const platformView: Platform = dev && devPlatform ? devPlatform : platform;
+
   // dev 模拟 Windows 时,系统 render loopback 原生可用 → 注入一个 system 参考源,
   // 让 win 预览忠实(真实 win 上后端本就返回 system available;mac 才退 none)。
   const refSources =
-    dev && devWin
+    dev && platformView === "windows"
       ? [
           {
             id: "system",
@@ -1227,12 +1261,18 @@ function useAppController() {
           ...(devices?.reference_sources ?? []).filter((r) => r.id !== "system"),
         ]
       : devices?.reference_sources ?? [];
-  // dev win 下默认就选 system(否则沿用真实选择)。
-  const referenceView = dev && devWin ? "system" : reference;
+  // dev win 下默认就选 system;dev linux 没有 system 项,默认退到 none。
+  const referenceView =
+    dev && platformView === "windows"
+      ? "system"
+      : dev && platformView === "linux"
+        ? "none"
+        : reference;
   // reference 概念 = 系统正在播放的声音(输出内容)。只保留有意义的参考源:
   //   system(Process Tap / loopback)、none、output 设备回环、以及承载系统声的虚拟声卡输入
   //   (BlackHole / VB-CABLE)。隐藏物理麦克风等(选它们当参考无意义)。
-  const VIRTUAL_REF = /blackhole|vb-?cable|vb-?audio|cable|loopback|stereo\s*mix|soundflower/i;
+  const VIRTUAL_REF =
+    /blackhole|vb-?cable|vb-?audio|cable|loopback|stereo\s*mix|soundflower|monitor|echoless|null/i;
   // A2:排除自环 —— Echoless 自己的输出设备(及其同名输入侧,如 BlackHole 的 in 口)
   // 作参考会把处理后的输出再喂回来,形成回授;从候选里剔掉。
   const selOutDevName = devices?.outputs.find(
@@ -1272,8 +1312,6 @@ function useAppController() {
     };
   });
 
-  // dev 下可把平台模拟成 Windows(按 `),让 mac 也能预览 win 全流程(标题栏/引擎/虚拟麦)。
-  const platformView: Platform = dev && devWin ? "windows" : platform;
   const isMac = platformView === "macos";
   const refSel = dev ? referenceView : reference;
   // NOISE 开关三种语义:aec3 = ns 参数;localvqe = 模型版本(v1.3 带降噪 / v1.4 纯 AEC);
@@ -1382,7 +1420,7 @@ function useAppController() {
         <span className="hatch" />
         {dev && (
           <span className="devtag">
-            DEV · {platformView === "windows" ? "WIN" : "MAC"}
+            DEV · {platformTag(platformView)}
           </span>
         )}
         <span className="uid">{modelName(kind)}</span>
@@ -1430,7 +1468,7 @@ function useAppController() {
             · {pipeline.sample_rate / 1000} KHZ / {pipeline.frame_ms} MS BLOCK
             · I/O{" "}
             <b>
-              <ScrambleText text={isMac ? "COREAUDIO" : "WASAPI"} />
+              <ScrambleText text={ioBackendLabel(platformView)} />
             </b>
             {appVersion ? ` · ECHOLESS V${appVersion}` : ""}
           </div>
