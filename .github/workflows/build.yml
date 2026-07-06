@@ -25,8 +25,11 @@ jobs:
           - name: Windows
             os: windows-latest
             package: windows
-          - name: macOS
+          - name: macOS (Apple Silicon)
             os: macos-latest
+            package: macos
+          - name: macOS (Intel)
+            os: macos-13
             package: macos
 
     steps:
