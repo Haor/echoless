@@ -2,10 +2,6 @@
 
 English | [简体中文](README.zh-CN.md)
 
-<p align="center">
-  <img width="800" alt="Echoless demo" src="https://github.com/user-attachments/assets/c4d846f9-9a7b-4b2d-91ab-945ab9e0ed26" />
-</p>
-
 **Real-time acoustic echo cancellation for open-speaker setups.**
 Echoless removes what your speakers are playing from what your microphone
 hears, and hands the clean voice to Discord / any voice app through a virtual
@@ -20,6 +16,12 @@ output              echo-cancelled voice → virtual mic → voice app
 
 No special hardware required: a USB or built-in mic, ordinary speakers, and a
 virtual audio device.
+
+## Interface Preview
+
+<p align="center">
+  <img width="800" alt="Echoless main interface demo" src="https://github.com/user-attachments/assets/c4d846f9-9a7b-4b2d-91ab-945ab9e0ed26" />
+</p>
 
 ## Features
 
