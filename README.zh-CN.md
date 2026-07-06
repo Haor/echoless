@@ -2,6 +2,10 @@
 
 [English](README.md) | 简体中文
 
+<p align="center">
+  <img width="800" alt="Echoless 演示" src="https://github.com/user-attachments/assets/c4d846f9-9a7b-4b2d-91ab-945ab9e0ed26" />
+</p>
+
 **面向外放场景的实时声学回声消除(AEC)。**
 Echoless 把「音箱正在播放的声音」从「麦克风采到的声音」里消掉,再经虚拟麦克风把
 干净人声送给 Discord / 任意语音应用——这样对面永远不会听到自己的声音
