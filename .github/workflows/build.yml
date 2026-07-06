@@ -29,7 +29,7 @@ jobs:
             os: macos-latest
             package: macos
           - name: macOS (Intel)
-            os: macos-13
+            os: macos-15-intel  # macos-13 已退役;macos-15-intel 是 GitHub 的 Intel 迁移标签
             package: macos
 
     steps:
