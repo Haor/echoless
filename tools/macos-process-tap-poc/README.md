@@ -1,5 +1,7 @@
 # macOS Process Tap PoC / helper
 
+English | [简体中文](README.zh-CN.md)
+
 This is a focused probe and development helper for Echoless macOS
 `reference="system"`.
 

@@ -1,5 +1,7 @@
 # `echoless` CLI reference
 
+English | [简体中文](CLI.zh-CN.md)
+
 The CLI is fully standalone — the desktop app is a front-end for it. Build
 with `cargo build --release` (binary at `target/release/echoless`), or use
 the copy shipped next to the app executable.

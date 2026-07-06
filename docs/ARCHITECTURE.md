@@ -1,5 +1,7 @@
 # Echoless architecture
 
+English | [简体中文](ARCHITECTURE.zh-CN.md)
+
 ```
                     ┌────────────────────────── echoless run (CLI process) ─────────────────────────┐
 mic (cpal) ─────────►  near ring ─► near_delay ─┐                                                    │
@@ -27,7 +29,7 @@ commands over stdin. Anything the GUI does can be done by hand with the CLI
 | `crates/echoless-processors` | Engine implementations behind one trait: `aec3`, `localvqe`, `nvidia_afx_aec`, `speex`, `passthrough` |
 | `crates/echoless-audio-io` | WAV / sample-format helpers shared by offline and diagnostics |
 | `crates/echoless-paths` | Brand data dir resolution (models, downloads) |
-| `aec3/` | **Vendored fork of WebRTC AEC3 in Rust** — its own cargo workspace, BSD-3-Clause, see below |
+| `aec3/` | **WebRTC AEC3 in Rust** — its own cargo workspace, BSD-3-Clause, see below |
 | `app/` | Tauri desktop app: React front-end (`app/src`), Rust shell (`app/src-tauri`) |
 | `tools/macos-process-tap-poc/` | Swift helper for macOS system-audio capture |
 | `configs/example.toml` | Annotated pipeline config example |
@@ -73,19 +75,21 @@ automatically).
 engine (15 ms crossfade) but capture/output keep running and the engine keeps
 its adaptation state, so switching back on is instant and glitch-free.
 
-## The AEC3 fork (`aec3/`)
+## AEC3 (`aec3/`)
 
 A Rust port of WebRTC's AEC3 (lineage: WebRTC C++ →
-the [sonora](https://github.com/dignifiedquire/sonora) port → this fork,
-fully internalized at `aacadf0`). Kept as a separate cargo workspace so its 700+ upstream-derived tests
-run against the port unchanged. Echoless-specific modifications, all guarded
+the [sonora](https://github.com/dignifiedquire/sonora) port, pinned at
+`aacadf0` and maintained independently). Kept as a separate cargo workspace so
+its 700+ upstream-derived tests run against the port unchanged. Echoless-specific modifications, all guarded
 by config:
 
 - **Delay hold** — once the delay estimator reaches confidence, the estimate
   is pinned and re-search during reference silence is suppressed. Upstream
   AEC3 assumes delay can wander (acoustic paths); a loopback reference has a
-  stable delay, and re-searching during silence was measured to degrade
-  long-session ERLE badly (§ tests in `echoless-processors`).
+  stable delay, and re-searching during reference silence was measured to
+  degrade long-session echo attenuation badly (with `delay_hold` off, a long
+  run drops 9.6→5.6 dB; see
+  `crates/echoless-processors/tests/echo_cancellation.rs`).
 - **Render activity gate** and an explicit `aec3_delay_blocks` runtime metric.
 - Externally applied near-delay bias replaces negative-delay handling.
 
