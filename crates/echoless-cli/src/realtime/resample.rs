@@ -361,34 +361,99 @@ where
     }
 }
 
-/// T3 输出侧自适应速率匹配。
+/// 水位反馈速率控制器:PI + 软死区 + 抗饱和钳位。输出侧与参考侧共用。
 ///
-/// 生产端锁 mic 时钟(处理循环每帧恒 push frame_size),消费端是设备/虚拟端点时钟。
-/// 二者节奏不一致时 out_ring 水位会单调漂移 → 周期性 underrun(听感断续)。本重采样器
-/// 在**输出回调线程**里读 out_ring 占用量,用比例控制把有效消费比率朝"锁定水位设定点"
-/// 微调:水位偏高→多消费(step 略增),水位偏低→少消费(step 略减)。有效 trim 钳位 ±3%,
-/// 稳态漂移(实测 Voicemeeter 残留 2.2%)被完全吸收且不净变调;配置级大错配(如 22%)
-/// 会钳到边界后自然 underrun,交由 T1 的 clock_skew 检测告警,不硬追以免明显变调。
-///
-/// 线性插值 + 持久 `pos`/`buffer` 保证跨回调相位连续。稳态无堆分配(buffer 容量收敛),
-/// 满足实时线程约束。
-pub(super) struct AdaptiveOutputResampler {
-    base_ratio: f64,
-    setpoint_samples: f64,
+/// 输出 trim = 有效重采样比率相对基线的偏移(正=多消费拉低水位,负=少消费抬高水位)。
+/// **软死区**:水位误差在 ±deadband 内时视为 0,正常回调抖动不触发任何响应,trim 平滑归零
+/// → 恢复逐样本精确直通(step=1、插值系数恒 0)。只有累积漂移穿出死区才介入,且只用超出
+/// 死区的部分驱动,保证边界连续无跳变。**PI**:纯 P 有稳态误差(维持 2% trim 需水位持续偏离
+/// 上千样本、物理上买不到 → 抽干欠载),积分项在误差归零时保持 trim。**抗饱和**:钳位时不累加积分。
+struct RateController {
+    setpoint: f64,
+    deadband: f64,
     trim: f64,
     integ: f64,
     max_trim: f64,
     kp: f64,
     ki: f64,
+    clamped: bool,
+}
+
+impl RateController {
+    fn new(setpoint: f64, deadband: f64) -> Self {
+        Self {
+            setpoint,
+            deadband,
+            trim: 0.0,
+            integ: 0.0,
+            max_trim: 0.03,
+            // 慢环增益,避免可闻 pitch wobble。
+            kp: 1.5e-5,
+            ki: 6.0e-7,
+            clamped: false,
+        }
+    }
+
+    /// 用「本次消费后预测水位」更新并返回 trim。
+    fn update(&mut self, projected_level: f64) -> f64 {
+        let error = projected_level - self.setpoint;
+        let effective_error = if error > self.deadband {
+            error - self.deadband
+        } else if error < -self.deadband {
+            error + self.deadband
+        } else {
+            0.0
+        };
+        if effective_error == 0.0 {
+            // 死区内:积分与 trim 平滑归零;足够小则 snap 到严格 0,保证精确直通。
+            self.integ *= 0.9;
+            self.trim *= 0.9;
+            if self.trim.abs() < 1.0e-6 {
+                self.trim = 0.0;
+                self.integ = 0.0;
+            }
+            self.clamped = false;
+        } else {
+            let unclamped = self.kp * effective_error + self.integ + self.ki * effective_error;
+            let clamped_trim = unclamped.clamp(-self.max_trim, self.max_trim);
+            self.clamped = unclamped != clamped_trim;
+            if !self.clamped {
+                self.integ += self.ki * effective_error;
+            }
+            self.trim = clamped_trim;
+        }
+        self.trim
+    }
+}
+
+/// T3 输出侧自适应速率匹配。
+///
+/// 生产端锁 mic 时钟(处理循环每帧恒 push frame_size),消费端是设备/虚拟端点时钟。
+/// 二者节奏不一致时 out_ring 水位会单调漂移 → 周期性 underrun(听感断续)。本重采样器
+/// 在**输出回调线程**里读 out_ring 占用量,经 [`RateController`] 把有效消费比率朝设定点微调:
+/// 水位偏高→多消费(step 略增),水位偏低→少消费(step 略减)。有效 trim 钳位 ±3%,
+/// 稳态漂移(实测 Voicemeeter 残留 2.2%)被完全吸收且不净变调;配置级大错配(如 22%)
+/// 会钳到边界后自然 underrun,交由 T1 的 clock_skew 检测告警,不硬追以免明显变调。
+/// 正常设备(仅 ppm 漂移)几乎一直落在软死区内,trim=0 = 精确直通。
+///
+/// 线性插值 + 持久 `pos`/`buffer` 保证跨回调相位连续。稳态无堆分配(buffer 容量收敛),
+/// 满足实时线程约束。
+pub(super) struct AdaptiveOutputResampler {
+    base_ratio: f64,
+    controller: RateController,
     pos: f64,
     buffer: VecDeque<f32>,
-    clamped: bool,
 }
 
 impl AdaptiveOutputResampler {
     /// `in_rate`/`out_rate` 给出固定比率基线;`setpoint_samples` 是希望 out_ring 稳定的水位
-    /// (通常 = 预填样本数)。
-    pub(super) fn new(in_rate: u32, out_rate: u32, setpoint_samples: usize) -> Self {
+    /// (通常 = 预填样本数);`deadband_samples` 是软死区半宽(误差在此内不介入 = 精确直通)。
+    pub(super) fn new(
+        in_rate: u32,
+        out_rate: u32,
+        setpoint_samples: usize,
+        deadband_samples: usize,
+    ) -> Self {
         let base_ratio = if out_rate == 0 {
             1.0
         } else {
@@ -396,31 +461,22 @@ impl AdaptiveOutputResampler {
         };
         Self {
             base_ratio,
-            setpoint_samples: setpoint_samples as f64,
-            trim: 0.0,
-            integ: 0.0,
-            max_trim: 0.03,
-            // PI 控制:比例项快速响应水位偏差,积分项提供稳态 trim(纯 P 有稳态误差,
-            // 维持 2% trim 需水位持续偏离设定点上千样本、物理上买不到 → 抽干欠载)。
-            // kp/ki 取慢环值,避免可闻 pitch wobble;积分带抗饱和(钳位时不继续累加)。
-            kp: 1.5e-5,
-            ki: 6.0e-7,
+            controller: RateController::new(setpoint_samples as f64, deadband_samples as f64),
             pos: 0.0,
             buffer: VecDeque::new(),
-            clamped: false,
         }
     }
 
     /// 当前 trim(供诊断/测试断言);正=多消费,负=少消费。
     #[cfg(test)]
     pub(super) fn trim(&self) -> f64 {
-        self.trim
+        self.controller.trim
     }
 
     /// 上次填充是否触发钳位(= 水位反馈要求的比率超出 ±max_trim,即配置级错配)。
     #[cfg(test)]
     pub(super) fn is_clamped(&self) -> bool {
-        self.clamped
+        self.controller.clamped
     }
 
     /// 用当前水位 `occupied` 更新有效比率,然后连续插值填满 `output`。
@@ -433,19 +489,10 @@ impl AdaptiveOutputResampler {
     ) where
         C: Consumer<Item = f32>,
     {
-        // PI 控制:预测本次回调消费后的水位(occupied - output.len()),相对设定点的误差。
-        // 水位高于设定点 → 正误差 → trim 增 → step 增 → 多消费,拉回设定点。
+        // 预测本次回调消费后的水位(occupied - output.len()),交控制器求 trim。
         let projected = occupied as f64 - output.len() as f64;
-        let error = projected - self.setpoint_samples;
-        let unclamped = self.kp * error + self.integ + self.ki * error;
-        let clamped_trim = unclamped.clamp(-self.max_trim, self.max_trim);
-        self.clamped = unclamped != clamped_trim;
-        // 抗饱和:仅在未钳位时累加积分项,避免 windup。
-        if !self.clamped {
-            self.integ += self.ki * error;
-        }
-        self.trim = clamped_trim;
-        let step = (self.base_ratio * (1.0 + self.trim)).max(1.0e-6);
+        let trim = self.controller.update(projected);
+        let step = (self.base_ratio * (1.0 + trim)).max(1.0e-6);
 
         for sample in output.iter_mut() {
             *sample = self.next_sample(step, consumer, underruns);
@@ -494,29 +541,19 @@ impl AdaptiveOutputResampler {
 /// 多声道交织处理:每声道独立持久 `pos`/`buffer`(共享同一 step,保证声道间样本对齐)。
 pub(super) struct AdaptiveReferenceResampler {
     channels: usize,
-    setpoint_frames: f64,
-    trim: f64,
-    integ: f64,
-    max_trim: f64,
-    kp: f64,
-    ki: f64,
+    controller: RateController,
     pos: f64,
     buffers: Vec<VecDeque<f32>>,
 }
 
 impl AdaptiveReferenceResampler {
-    /// `channels` = 参考声道数;`setpoint_frames` = 希望 ref ring 稳定的**帧**水位。
-    pub(super) fn new(channels: usize, setpoint_frames: usize) -> Self {
+    /// `channels` = 参考声道数;`setpoint_frames` = 希望 ref ring 稳定的**帧**水位;
+    /// `deadband_frames` = 软死区半宽(帧,误差在此内不介入 = 连续直通)。
+    pub(super) fn new(channels: usize, setpoint_frames: usize, deadband_frames: usize) -> Self {
         let channels = channels.max(1);
         Self {
             channels,
-            setpoint_frames: setpoint_frames as f64,
-            trim: 0.0,
-            integ: 0.0,
-            max_trim: 0.03,
-            // PI 控制,与输出侧同参:比例快响应 + 积分消稳态误差 + 抗饱和。
-            kp: 1.5e-5,
-            ki: 6.0e-7,
+            controller: RateController::new(setpoint_frames as f64, deadband_frames as f64),
             pos: 0.0,
             buffers: (0..channels).map(|_| VecDeque::new()).collect(),
         }
@@ -524,7 +561,7 @@ impl AdaptiveReferenceResampler {
 
     #[cfg(test)]
     pub(super) fn trim(&self) -> f64 {
-        self.trim
+        self.controller.trim
     }
 
     /// 从交织的 `consumer` 连续重采样出 `out_frames` 帧(交织写入 `out`,长度必须
@@ -540,16 +577,10 @@ impl AdaptiveReferenceResampler {
     where
         C: Consumer<Item = f32>,
     {
-        // PI 水位反馈:预测消费后帧水位,朝设定点收敛。
+        // 预测消费后帧水位,交控制器求 trim(含软死区:正常抖动 → trim 0 = 连续直通)。
         let projected = occupied_frames as f64 - out_frames as f64;
-        let error = projected - self.setpoint_frames;
-        let unclamped = self.kp * error + self.integ + self.ki * error;
-        let clamped_trim = unclamped.clamp(-self.max_trim, self.max_trim);
-        if unclamped == clamped_trim {
-            self.integ += self.ki * error;
-        }
-        self.trim = clamped_trim;
-        let step = (1.0 + self.trim).max(1.0e-6);
+        let trim = self.controller.update(projected);
+        let step = (1.0 + trim).max(1.0e-6);
 
         let mut underrun_frames = 0;
         for frame_index in 0..out_frames {
@@ -731,8 +762,9 @@ mod tests {
     fn run_output_skew(skew: f64, frame_size: usize, ticks: usize) -> (u64, f64, f64, usize) {
         let ring_cap = frame_size * 12;
         let setpoint = frame_size * 2;
+        let deadband = frame_size / 2;
         let (mut prod, mut cons) = HeapRb::<f32>::new(ring_cap).split();
-        let mut resampler = AdaptiveOutputResampler::new(48_000, 48_000, setpoint);
+        let mut resampler = AdaptiveOutputResampler::new(48_000, 48_000, setpoint, deadband);
         let underruns = AtomicU64::new(0);
         // 预填到设定点。
         let preroll = vec![0.0f32; setpoint];
@@ -830,11 +862,48 @@ mod tests {
 
     #[test]
     fn t3_no_skew_is_transparent_passthrough() {
-        // 零漂移:trim 停在 0 附近,无 underrun,输出与输入等长逐样本对齐(无净重采样)。
+        // 零漂移:水位恒在设定点(误差落死区内),trim 严格归零 → 逐样本精确直通,无 underrun。
         let (steady, trim, clamp_ratio, _) = run_output_skew(0.0, 480, 1000);
         assert_eq!(steady, 0, "零漂移不应有稳态 underrun");
-        assert!(trim.abs() < 1.0e-3, "零漂移 trim 应≈0,实际 {trim:.5}");
+        assert_eq!(trim, 0.0, "零漂移 trim 应严格为 0(死区内),实际 {trim:.9}");
         assert!(clamp_ratio < 0.01);
+    }
+
+    #[test]
+    fn t3_deadband_holds_trim_at_zero_under_normal_jitter() {
+        // 正常设备:无净漂移,但回调帧数抖动(WASAPI GetCurrentPadding)。抖动幅度远小于半帧
+        // 死区,控制器不应介入 → trim 严格保持 0 = 精确直通,不引入 pitch wobble。
+        let frame_size = 480;
+        let ring_cap = frame_size * 12;
+        let setpoint = frame_size * 2;
+        let deadband = frame_size / 2;
+        let (mut prod, mut cons) = HeapRb::<f32>::new(ring_cap).split();
+        let mut resampler = AdaptiveOutputResampler::new(48_000, 48_000, setpoint, deadband);
+        let underruns = AtomicU64::new(0);
+        prod.push_slice(&vec![0.0f32; setpoint]);
+
+        let mut phase = 0.0f32;
+        let mut max_abs_trim = 0.0f64;
+        for tick in 0..1000 {
+            let mut block = vec![0.0f32; frame_size];
+            for s in block.iter_mut() {
+                *s = 0.2 * (phase * std::f32::consts::TAU).sin();
+                phase += 440.0 / 48_000.0;
+            }
+            prod.push_slice(&block);
+            // 回调帧数在 ±16 样本抖动(无净漂移),远小于半帧(240)死区。
+            let jitter = if tick % 2 == 0 { 16 } else { -16 };
+            let device_frames = (frame_size as isize + jitter) as usize;
+            let mut out = vec![0.0f32; device_frames];
+            let occupied = cons.occupied_len();
+            resampler.fill(&mut out, occupied, &mut cons, &underruns);
+            max_abs_trim = max_abs_trim.max(resampler.trim().abs());
+        }
+        assert_eq!(underruns.load(Ordering::Relaxed), 0, "正常抖动不应欠载");
+        assert_eq!(
+            max_abs_trim, 0.0,
+            "死区内 trim 应始终为 0,实际峰值 {max_abs_trim:.9}"
+        );
     }
 
     #[test]
@@ -843,7 +912,7 @@ mod tests {
         let frame_size = 480;
         let ring_cap = frame_size * 12;
         let (mut prod, mut cons) = HeapRb::<f32>::new(ring_cap).split();
-        let mut resampler = AdaptiveReferenceResampler::new(1, frame_size * 2);
+        let mut resampler = AdaptiveReferenceResampler::new(1, frame_size * 2, frame_size / 2);
         prod.push_slice(&vec![0.0f32; frame_size * 2]);
 
         let skew = 0.022_f64;

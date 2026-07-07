@@ -69,6 +69,14 @@ use echoless_processors::{chain_from_nodes, ProcessorChain};
 const BYPASS_CROSSFADE_MS: u32 = 15;
 const OUTPUT_PREROLL_FRAMES: usize = 2;
 
+/// T3 输出侧速率匹配参数(水位反馈自适应重采样)。`enabled=false` 时输出走 pre-T3 固定直通。
+#[derive(Clone, Copy)]
+struct OutputRateMatch {
+    enabled: bool,
+    setpoint_samples: usize,
+    deadband_samples: usize,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InputChannelMode {
     MonoDownmix,
@@ -355,13 +363,19 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
         stream_error_handler("mic", running.clone(), options.status_json),
     )?;
     let output_setpoint_samples = frame_size.saturating_mul(OUTPUT_PREROLL_FRAMES);
+    // 软死区 = 半帧:正常回调抖动(误差远小于半帧)落在死区内,控制器不介入 = 精确直通;
+    // 只有累积漂移穿出半帧才微调。半帧远小于 setpoint(2 帧),不影响漂移吸收能力。
+    let output_rate_match = OutputRateMatch {
+        enabled: cfg.output_rate_match,
+        setpoint_samples: output_setpoint_samples,
+        deadband_samples: frame_size / 2,
+    };
     let output_stream = build_output_stream(
         &output_device.device,
         &output_config,
         out_cons,
         counters.output_underruns.clone(),
-        cfg.output_rate_match,
-        output_setpoint_samples,
+        output_rate_match,
         stream_error_handler("output", running.clone(), options.status_json),
     )?;
     let mut render_prod = render_prod;
@@ -542,11 +556,13 @@ fn process_loop<M, R, O>(
     let mut near_delay = VecDeque::from(vec![0.0f32; runtime.near_delay_samples]);
     let mut output_bypassed = runtime.bypassed;
     // T3 参考侧:连续重采样吸收 far 时钟漂移,替代 skip_stale 硬丢帧(避免撕裂 AEC 参考时间轴)。
-    // 设定点 2 帧:给水位反馈留裕量,吸收收敛瞬态。关闭 output_rate_match 时回退旧 skip_stale 路径。
+    // 设定点 2 帧给收敛裕量;软死区半帧,正常抖动不介入 = 连续直通。关闭 output_rate_match 时
+    // 回退旧 skip_stale 路径。
     let mut ref_resampler = if runtime.output_rate_match {
         Some(AdaptiveReferenceResampler::new(
             runtime.reference_channels,
             frame_size * 2,
+            frame_size / 2,
         ))
     } else {
         None
@@ -996,8 +1012,7 @@ fn build_output_stream<C, E>(
     config: &StreamConfigChoice,
     consumer: C,
     underruns: Arc<AtomicU64>,
-    rate_match: bool,
-    setpoint_samples: usize,
+    rate_match: OutputRateMatch,
     on_error: E,
 ) -> Result<Stream>
 where
@@ -1012,7 +1027,6 @@ where
         consumer,
         underruns,
         rate_match,
-        setpoint_samples,
         on_error
     )
 }
@@ -1022,8 +1036,7 @@ fn build_output_stream_t<T, C, E>(
     choice: &StreamConfigChoice,
     mut consumer: C,
     underruns: Arc<AtomicU64>,
-    rate_match: bool,
-    setpoint_samples: usize,
+    rate_match: OutputRateMatch,
     on_error: E,
 ) -> Result<Stream>
 where
@@ -1041,9 +1054,10 @@ where
     let mut adaptive = AdaptiveOutputResampler::new(
         choice.pipeline_sample_rate,
         choice.stream_sample_rate(),
-        setpoint_samples,
+        rate_match.setpoint_samples,
+        rate_match.deadband_samples,
     );
-    let use_adaptive = rate_match && !needs_resampling;
+    let use_adaptive = rate_match.enabled && !needs_resampling;
     let mut adaptive_buf: Vec<f32> = Vec::new();
     device
         .build_output_stream(
