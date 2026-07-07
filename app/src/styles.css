@@ -759,6 +759,14 @@ body {
   border-color: var(--t-mut);
 }
 .lvbox.miss {
+  /* 默认与其它 pill 同为中性灰;仅悬停时逐渐亮成橙(用户 2026-07-06) */
+  color: var(--t-mut);
+  border-color: var(--t-faint);
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+.lvmod.miss:hover:not(:disabled) .lvbox.miss {
   color: var(--warn);
   border-color: var(--warn);
 }
@@ -994,7 +1002,7 @@ button.ecard:disabled {
   background: var(--live);
 }
 .espec {
-  margin-top: 10px;
+  margin-top: 8px;
   color: var(--t-soft);
   font-size: 11px;
   letter-spacing: 0.5px;
@@ -1004,10 +1012,10 @@ button.ecard:disabled {
   text-transform: uppercase;
 }
 .espec .sep {
-  color: var(--t-faint);
+  color: inherit; /* 与 cost 文本内的 · 同色,避免同一行两种点色(用户反馈) */
 }
 .espec.os {
-  margin-top: 3px;
+  margin-top: 8px;
   color: var(--t-mut);
   font-size: 10px;
   letter-spacing: 1px;
@@ -1033,13 +1041,39 @@ button.ecard:disabled {
    与左列末行(建议后接…)同基线,读作脚注(用户定位优化 2026-07-05) */
 .ecard .ecol.nvcol.nvna {
   align-self: stretch;
+}
+/* 不可用态:右栏顶部填系统信息(防空旷),末行注记沉到列底右对齐(用户 2026-07-06) */
+.nvnainfo {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  height: 100%;
+}
+.nvnarow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  line-height: 1.9;
+  text-transform: uppercase;
+}
+.nvnarow .nvnak {
+  flex: none;
+  width: 84px;
+  color: var(--t-faint);
+}
+.nvnarow .nvnav {
+  color: var(--t-soft);
+}
+.nvnainfo .cdetail.na {
+  margin-top: auto;
+  text-align: right;
+  font-size: 11px;
+  letter-spacing: 0.5px;
 }
 /* v3:B5 修正 — tips 改中性色(不再琥珀) */
 .epair {
-  margin-top: 11px;
+  margin-top: 8px;
   color: var(--t-mut);
   font-size: 11px;
   letter-spacing: 0.4px;
@@ -1406,6 +1440,20 @@ button.ecard:disabled {
 }
 .wzassets .sz {
   color: var(--t-faint);
+}
+/* 可点击资产名:在浏览器打开原始下载链接(旁路 CLI 下载器的备用路径) */
+.wzasset {
+  color: var(--t-mut);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--t-dim);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.wzasset:hover {
+  color: var(--acc);
+  text-decoration-color: var(--acc);
 }
 
 /* MIC SETUP:虚拟麦路由图 */

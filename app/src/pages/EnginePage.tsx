@@ -9,10 +9,28 @@ import type {
 import {
   downloadLocalvqeModel,
   localvqeAssets,
+  macSystemInfo,
   openPath,
   type LocalvqeAssets,
+  type MacSystemInfo,
 } from "../api";
 import { useI18n } from "../i18n";
+
+// macOS 主版本号 → 代号(sw_vers 只给版本号,代号本地映射)。落不到映射时只显版本号。
+function macOsName(version?: string | null): string | null {
+  if (!version) return null;
+  const major = version.split(".")[0];
+  const NAMES: Record<string, string> = {
+    "26": "Tahoe",
+    "15": "Sequoia",
+    "14": "Sonoma",
+    "13": "Ventura",
+    "12": "Monterey",
+    "11": "Big Sur",
+  };
+  const name = NAMES[major];
+  return name ? `macOS ${name} (${version})` : `macOS ${version}`;
+}
 
 // Official LocalVQE models from HF. The default is recommended, not bundled.
 // 行内只标参数量(体积不上行 —— 列宽预算有限,详情看 hover title)。
@@ -47,7 +65,7 @@ const PROFILES: Profile[] = [
     tier: { en: "DEFAULT", zh: "默认" },
     echo: 9,
     voice: 6,
-    cost: "CPU · light",
+    cost: "CPU · webrtc",
     sr: "48k / 16k",
     os: "Win · mac · Linux",
   },
@@ -58,18 +76,18 @@ const PROFILES: Profile[] = [
     echo: 9,
     voice: 5,
     cost: "CPU · neural",
-    sr: "16k · auto 48 ↔ 16", // A6:管线级自动重采样适配,如实标注
+    sr: "48k (src) / 16k", // 模型原生 16k;48k 管线经 SRC 重采样进出(A6)
     os: "Win · mac · Linux",
   },
   {
     kind: "nvidia_afx_aec",
     name: "NVAFX",
-    tier: { en: "CLEANEST VOICE", zh: "人声最干净" },
+    tier: { en: "ADVANCED", zh: "高级" },
     echo: 7,
     voice: 9,
     cost: "GPU · Tensor Core",
-    sr: "16k / 48k",
-    os: "Win · only",
+    sr: "48k / 16k",
+    os: "Win only",
   },
 ];
 
@@ -118,6 +136,7 @@ function NvafxCard({
   params,
   doctor,
   dev,
+  platform,
   nvSupported,
   nvReady,
   problems,
@@ -130,6 +149,7 @@ function NvafxCard({
   params: Record<string, unknown>;
   doctor: NvafxDoctor | null;
   dev: boolean;
+  platform: Platform;
   nvSupported: boolean;
   nvReady: boolean;
   problems: number;
@@ -140,6 +160,25 @@ function NvafxCard({
 }) {
   const { t, lang } = useI18n();
   const nv = doctor?.report;
+
+  // 不可用态(仅 macOS)拉本机系统信息填充右栏。dev 模拟给一份样例。
+  const [sysInfo, setSysInfo] = useState<MacSystemInfo | null>(null);
+  useEffect(() => {
+    if (nvSupported || platform !== "macos") return;
+    if (dev) {
+      setSysInfo({
+        model: "MacBook Pro",
+        os_version: "26.5.1",
+        chip: "Apple M4",
+        memory_gb: 24,
+        cores: 10,
+      });
+      return;
+    }
+    macSystemInfo()
+      .then(setSysInfo)
+      .catch(() => {});
+  }, [nvSupported, platform, dev]);
 
   async function pickRuntime() {
     try {
@@ -205,16 +244,43 @@ function NvafxCard({
             <span>{PROFILES[2].sr}</span>
           </div>
           <div className="espec os">{PROFILES[2].os}</div>
-          <div className="epair">
-            <span className="mk">»</span> {t("engPair")}
-          </div>
           {/* Maxine SDK 许可要求:集成应用须在应用内做品牌归属(README/release 已有,
               这里是 UI 侧唯一归属点)。 */}
           <div className="epair">powered by NVIDIA Maxine</div>
+          <div className="epair">{t("engPair")}</div>
         </div>
         <div className={`ecol nvcol ${nvSupported ? "" : "nvna"}`}>
           {!nvSupported ? (
-            <div className="cdetail na">{t("engWinOnly")}</div>
+            <div className="nvnainfo">
+              {sysInfo?.model && (
+                <div className="nvnarow">
+                  <span className="nvnak">{t("nvnaModel")}</span>
+                  <span className="nvnav">{sysInfo.model}</span>
+                </div>
+              )}
+              {macOsName(sysInfo?.os_version) && (
+                <div className="nvnarow">
+                  <span className="nvnak">{t("nvnaOs")}</span>
+                  <span className="nvnav">{macOsName(sysInfo?.os_version)}</span>
+                </div>
+              )}
+              {sysInfo?.chip && (
+                <div className="nvnarow">
+                  <span className="nvnak">{t("nvnaChip")}</span>
+                  <span className="nvnav">
+                    {sysInfo.chip}
+                    {sysInfo.cores ? ` · ${sysInfo.cores}${t("nvnaCoresSuffix")}` : ""}
+                  </span>
+                </div>
+              )}
+              {sysInfo?.memory_gb != null && (
+                <div className="nvnarow">
+                  <span className="nvnak">{t("nvnaMemory")}</span>
+                  <span className="nvnav">{sysInfo.memory_gb} GB</span>
+                </div>
+              )}
+              <div className="cdetail na">{t("engWinOnly")}</div>
+            </div>
           ) : (
             <>
               <div className="nvgpu">
@@ -498,6 +564,7 @@ export function EnginePage({
         params={params}
         doctor={doctor}
         dev={dev}
+        platform={platform}
         nvSupported={nvSupported}
         nvReady={nvReady}
         problems={problems}

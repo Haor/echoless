@@ -23,7 +23,10 @@ mod sidecar;
 mod tests;
 mod tray;
 
-use commands::{doctor_audio, get_platform, list_devices, list_processors, request_system_audio};
+use commands::{
+    doctor_audio, get_platform, list_devices, list_processors, mac_system_info,
+    request_system_audio,
+};
 use localvqe::{download_localvqe_model, localvqe_assets};
 use nvafx::{nvafx_doctor, nvafx_download_install, nvafx_install};
 use platform::{default_diag_dir, open_path, open_url};
@@ -53,6 +56,7 @@ pub fn run() {
             list_processors,
             doctor_audio,
             request_system_audio,
+            mac_system_info,
             probe_delay,
             localvqe_assets,
             download_localvqe_model,

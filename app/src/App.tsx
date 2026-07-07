@@ -2015,7 +2015,10 @@ function AppShell() {
             diagDir={diagDir}
             running={powerOn}
             doctor={doctorView}
+            platform={platformView}
             onMicSetup={() => gotoView("micsetup")}
+            onRequestSystemAudio={probeSystemAudio}
+            onRecheck={recheckAudio}
             onRec={setRecording}
             onSeconds={setRecSeconds}
             onDir={setRecDir}
@@ -2111,8 +2114,9 @@ function AppShell() {
         <RuntimeFooterBars telRef={telRef} powerOn={powerOn} />
       </footer>
 
-      {/* v10 动态底噪(WebGL shader,见 TvNoise 注释);OFF 时随 sysoff 渐隐停走 */}
-      <TvNoise active={uiOn} />
+      {/* v10 动态底噪(WebGL shader,见 TvNoise 注释);OFF 时随 sysoff 渐隐停走。
+          Windows 侧冻结为静帧(freeze):WebView2 上逐帧重绘拖累合成、观感抖动。 */}
+      <TvNoise active={uiOn} freeze={platformView === "windows"} />
       {/* v6 VHS 亮带(transform 合成器动画);OFF 时随 sysoff 渐隐暂停 */}
       <div className="vhs" aria-hidden="true">
         <i className="band" />
@@ -2160,10 +2164,14 @@ void main() {
 const NOISE_VS = `attribute vec2 a;
 void main() { gl_Position = vec4(a, 0.0, 1.0); }`;
 
-function TvNoise({ active }: { active: boolean }) {
+function TvNoise({ active, freeze = false }: { active: boolean; freeze?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  // freeze:静帧模式(Windows)—— 只画一帧,不进 rAF 循环。用 ref 传入,
+  // 避免因 platform 异步就绪重建 WebGL context(见下方 cleanup 注释)。
+  const freezeRef = useRef(freeze);
+  freezeRef.current = freeze;
   const scheduleRef = useRef<() => void>(() => {});
   useEffect(() => {
     const canvas = ref.current;
@@ -2231,11 +2239,16 @@ function TvNoise({ active }: { active: boolean }) {
       // t 保持小数值域(hash 的 sin 精度),循环推进
       seed = (seed + 0.618) % 61.0;
       draw();
-      // OFF(穿透/停机)时停走:动效只属于活着的系统;CSS 同步渐隐
-      if (!reduce && !document.hidden && activeRef.current)
+      // OFF(穿透/停机)/ freeze(Windows 静帧)时停走:动效只属于活着的系统
+      if (!reduce && !freezeRef.current && !document.hidden && activeRef.current)
         raf = requestAnimationFrame(frame);
     };
     const schedule = () => {
+      // reduce / freeze:画一帧静态噪点即可,不启动逐帧循环
+      if (reduce || freezeRef.current) {
+        draw();
+        return;
+      }
       if (!raf) raf = requestAnimationFrame(frame);
     };
     scheduleRef.current = schedule;
@@ -2250,8 +2263,7 @@ function TvNoise({ active }: { active: boolean }) {
     });
     ro.observe(canvas);
     document.addEventListener("visibilitychange", onVisibility);
-    if (reduce) draw();
-    else schedule();
+    schedule(); // reduce / freeze 时 schedule() 内部只画一帧
     return () => {
       // 不 loseContext:StrictMode 双挂载下同一 canvas 的 context 丢失后
       // 无法复活(getContext 返回同一个已死实例),会让噪声永久空白。
@@ -2263,8 +2275,9 @@ function TvNoise({ active }: { active: boolean }) {
     };
   }, []);
   useEffect(() => {
-    if (active) scheduleRef.current(); // 重新上电 → 恢复走噪
-  }, [active]);
+    // 重新上电 → 恢复走噪;freeze 变化 → 重画一帧或恢复循环(schedule 内部判定)
+    if (active) scheduleRef.current();
+  }, [active, freeze]);
   return (
     <div className="tvnoise" aria-hidden="true">
       <canvas ref={ref} />

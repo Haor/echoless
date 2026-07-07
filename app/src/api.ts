@@ -44,6 +44,18 @@ export function requestSystemAudio(): Promise<DoctorAudio> {
   return invoke<DoctorAudio>("request_system_audio");
 }
 
+// macOS 主机信息(NVAFX 不可用态右栏填充)。非 mac / 字段缺失时相应字段为 null。
+export interface MacSystemInfo {
+  model?: string | null;
+  os_version?: string | null;
+  chip?: string | null;
+  memory_gb?: number | null;
+  cores?: number | null;
+}
+export function macSystemInfo(): Promise<MacSystemInfo> {
+  return invoke<MacSystemInfo>("mac_system_info");
+}
+
 // LocalVQE model/runtime assets from the official HF repo.
 export interface LocalvqeModel {
   filename: string;

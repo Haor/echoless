@@ -72,15 +72,21 @@ const D: Record<string, { en: string; zh: string }> = {
   rdySetup: { en: "SET UP", zh: "待配置" },
   rdyIssues: { en: "ISSUES", zh: "项待处理" },
   engPair: {
-    en: "pair with NVIDIA Broadcast for residual noise",
-    zh: "建议后接 NVIDIA Broadcast 消残留噪声",
+    en: "pair with NVIDIA Broadcast",
+    zh: "pair with NVIDIA Broadcast",
   },
   engWinOnly: {
-    en: "Windows + RTX GPU only · unavailable on this OS",
-    zh: "仅 Windows + RTX 显卡 · 当前系统不可用",
+    en: "unavailable on this OS",
+    zh: "当前系统不可用",
   },
   windowsRtxOnly: { en: "WINDOWS · RTX ONLY", zh: "仅 WINDOWS · RTX" },
   engNoGpu: { en: "no NVIDIA GPU detected", zh: "未检测到 NVIDIA GPU" },
+  // NVAFX 不可用态右栏:本机系统信息(填补空白)
+  nvnaModel: { en: "device", zh: "机型" },
+  nvnaOs: { en: "OS", zh: "系统" },
+  nvnaChip: { en: "chip", zh: "芯片" },
+  nvnaMemory: { en: "memory", zh: "内存" },
+  nvnaCoresSuffix: { en: "-core", zh: " 核" },
   engRecheck: { en: "recheck", zh: "重检" },
   // LocalVQE 模型列表
   // 徽标重设计(2026-07-05):DEFAULT 全词太宽挤掉参数量 → 工程 BOM 的标准件记号 STD
@@ -137,6 +143,10 @@ const D: Record<string, { en: string; zh: string }> = {
   wzDownloadSrc: {
     en: "from GitHub public release · auto-matches your GPU model",
     zh: "来自 GitHub 公共 release · 自动匹配你的 GPU 模型",
+  },
+  wzAssetDownload: {
+    en: "open download link in browser",
+    zh: "在浏览器中打开下载链接",
   },
   wzDownloadInstall: { en: "download & install", zh: "下载并安装" },
   wzDownloading: { en: "downloading… ~1 GB, may take a while", zh: "下载中… 约 1 GB,可能需要一会" },
@@ -261,6 +271,16 @@ const D: Record<string, { en: string; zh: string }> = {
   openFolder: { en: "open", zh: "打开" },
   secRecord: { en: "Record", zh: "录制" },
   secHealth: { en: "Health", zh: "健康" },
+  // Diagnostics · macOS 权限检查(麦克风 + 系统录音)
+  secPermissions: { en: "System Permissions", zh: "系统权限" },
+  permMic: { en: "Microphone", zh: "麦克风" },
+  permSysAudio: { en: "System Audio", zh: "系统录音" },
+  permGranted: { en: "granted", zh: "已授予" },
+  permDenied: { en: "denied", zh: "已拒绝" },
+  permUndet: { en: "not requested", zh: "未申请" },
+  permUnknown: { en: "unknown", zh: "未知" },
+  permRequest: { en: "request", zh: "申请" },
+  permOpenSettings: { en: "open settings", zh: "打开设置" },
   record: { en: "Record", zh: "录制" },
   maxSeconds: { en: "Max Seconds", zh: "最长秒数" },
   // 74px 输入框放不下 UNLIMITED(9 字符),用 NO MAX

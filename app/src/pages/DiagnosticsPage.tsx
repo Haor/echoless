@@ -1,10 +1,17 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Health } from "../runtimeTelemetry";
-import type { DoctorAudio } from "../types";
-import { openPath } from "../api";
+import type { DoctorAudio, Platform } from "../types";
+import { openPath, openUrl } from "../api";
 import { useI18n } from "../i18n";
 import { Field } from "../components/Controls";
 import { Toggle } from "../components/Toggle";
+
+// macOS 隐私设置深链。麦克风有专属锚点;系统录音(14.4+ Audio Capture)无稳定
+// 专属锚点,回退到隐私根面板。
+const MIC_PRIVACY_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+const SYS_AUDIO_PRIVACY_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy";
 
 export interface DiagnosticsPageProps {
   rec: boolean;
@@ -13,7 +20,10 @@ export interface DiagnosticsPageProps {
   running: boolean;
   health: Health;
   doctor: DoctorAudio | null;
+  platform: Platform;
   onMicSetup: () => void;
+  onRequestSystemAudio: () => void;
+  onRecheck: () => void;
   onRec: (v: boolean) => void;
   onSeconds: (v: number | null) => void;
   onDir: (v: string) => void;
@@ -26,13 +36,17 @@ export function DiagnosticsPage({
   running,
   health,
   doctor,
+  platform,
   onMicSetup,
+  onRequestSystemAudio,
+  onRecheck,
   onRec,
   onSeconds,
   onDir,
 }: DiagnosticsPageProps) {
   const { t } = useI18n();
   const active = rec && running;
+  const isMac = platform === "macos";
 
   // 虚拟麦路由摘要(诊断行):就绪? 通话软件该选哪个 mic?
   const routeReady =
@@ -44,6 +58,19 @@ export function DiagnosticsPage({
     doctor?.candidate_inputs.find((i) => /cable output|blackhole/i.test(i.name)) ??
     doctor?.candidate_inputs[0] ??
     null;
+
+  // macOS 权限态(麦克风 + 系统录音)。缺字段 → unknown;非 mac 不渲染此区块。
+  type PermState = "granted" | "denied" | "undetermined" | "unknown";
+  const micPerm = (doctor?.permission_state ?? "unknown") as PermState;
+  const sysPerm = (doctor?.system_audio_permission ?? "unknown") as PermState;
+  const permLabel = (s: PermState) =>
+    s === "granted"
+      ? t("permGranted")
+      : s === "denied"
+        ? t("permDenied")
+        : s === "undetermined"
+          ? t("permUndet")
+          : t("permUnknown");
 
   async function pickDir() {
     try {
@@ -91,6 +118,58 @@ export function DiagnosticsPage({
           {t("setupBtn")} <span className="mk">&raquo;</span>
         </button>
       </div>
+
+      {/* macOS 权限检查:麦克风 + 系统录音(Process Tap reference)。有问题可二次申请:
+          undetermined → 直接触发系统授权弹窗;denied → 系统已记住拒绝,跳隐私设置手动开。 */}
+      {isMac && (
+        <>
+          <div className="asec">{t("secPermissions")}</div>
+          <div className="drow">
+            <span className="dk">{t("permMic")}</span>
+            <span
+              className={`dpath ${micPerm === "granted" ? "live" : ""}`}
+              style={micPerm === "denied" ? { color: "var(--warn)" } : undefined}
+            >
+              {permLabel(micPerm)}
+            </span>
+            {micPerm !== "granted" && (
+              <button
+                type="button"
+                className="dopen"
+                onClick={() =>
+                  micPerm === "denied" ? openUrl(MIC_PRIVACY_URL) : onRecheck()
+                }
+              >
+                {micPerm === "denied" ? t("permOpenSettings") : t("recheck")}{" "}
+                <span className="mk">&raquo;</span>
+              </button>
+            )}
+          </div>
+          <div className="drow">
+            <span className="dk">{t("permSysAudio")}</span>
+            <span
+              className={`dpath ${sysPerm === "granted" ? "live" : ""}`}
+              style={sysPerm === "denied" ? { color: "var(--warn)" } : undefined}
+            >
+              {permLabel(sysPerm)}
+            </span>
+            {sysPerm !== "granted" && (
+              <button
+                type="button"
+                className="dopen"
+                onClick={() =>
+                  sysPerm === "denied"
+                    ? openUrl(SYS_AUDIO_PRIVACY_URL)
+                    : onRequestSystemAudio()
+                }
+              >
+                {sysPerm === "denied" ? t("permOpenSettings") : t("permRequest")}{" "}
+                <span className="mk">&raquo;</span>
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       <div className="asec">{t("secRecord")}</div>
       <div className="acols">

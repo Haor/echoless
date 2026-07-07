@@ -7,6 +7,7 @@ import { SegButtons } from "../components/Controls";
 import {
   deriveRtxState,
   ladderStatus,
+  nvafxAssetUrl,
   nvafxModelAsset,
   NVAFX_COMMON_ASSET,
   RTX_DEV_STATES,
@@ -67,7 +68,9 @@ export function RtxSetupPage({
   onUse,
 }: Props) {
   const { t } = useI18n();
-  const [source, setSource] = useState<"local" | "download">("local");
+  // 默认落在 DOWNLOAD:多数用户直接从 GitHub public release 拉取(自动匹配 GPU);
+  // LOCAL ZIP 是已手动下好包的备用路径。
+  const [source, setSource] = useState<"local" | "download">("download");
   const [commonZip, setCommonZip] = useState("");
   const [modelZip, setModelZip] = useState("");
 
@@ -223,14 +226,29 @@ export function RtxSetupPage({
             <div className="wznote">{t("wzDownloadSrc")}</div>
             <div className="wzassets">
               <div>
-                <span className="dk">{t("wzCommon")}</span> {NVAFX_COMMON_ASSET}
+                <span className="dk">{t("wzCommon")}</span>{" "}
+                <button
+                  type="button"
+                  className="wzasset plainbtn"
+                  onClick={() => openUrl(nvafxAssetUrl(NVAFX_COMMON_ASSET))}
+                  title={t("wzAssetDownload")}
+                >
+                  {NVAFX_COMMON_ASSET}
+                </button>
                 <span className="sz"> · 955 MiB</span>
               </div>
               <div>
                 <span className="dk">{t("wzModel")}</span>{" "}
                 {arch ? (
                   <>
-                    {nvafxModelAsset(arch)}
+                    <button
+                      type="button"
+                      className="wzasset plainbtn"
+                      onClick={() => openUrl(nvafxAssetUrl(nvafxModelAsset(arch)))}
+                      title={t("wzAssetDownload")}
+                    >
+                      {nvafxModelAsset(arch)}
+                    </button>
                     <span className="sz"> · 46 MiB</span>
                   </>
                 ) : (

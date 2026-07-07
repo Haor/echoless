@@ -9,6 +9,15 @@ export function nvafxModelAsset(arch: GpuArch): string {
   return `echoless-rtx-aec-model-win64-${NVAFX_SDK_VERSION}-${arch}-aec48.zip`;
 }
 
+// GitHub public release 上 RTX runtime 资产的下载地址(与后端 nvafx_install.rs 的
+// NVAFX_RELEASE_DOWNLOAD_BASE / DEFAULT_NVAFX_RELEASE_TAG 保持一致)。用户可点资产名
+// 在浏览器里手动下载(网络不通/想旁路 CLI 下载器时的备用路径)。
+const NVAFX_RELEASE_BASE = "https://github.com/Haor/echoless/releases/download";
+const NVAFX_RELEASE_TAG = `rtx-aec-runtime-win64-${NVAFX_SDK_VERSION}-aec48-preview.1`;
+export function nvafxAssetUrl(asset: string): string {
+  return `${NVAFX_RELEASE_BASE}/${NVAFX_RELEASE_TAG}/${asset}`;
+}
+
 // 状态机(Codex handoff)。优先级见 deriveRtxState。
 export type RtxState =
   | "unsupported_platform"
