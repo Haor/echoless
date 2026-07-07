@@ -55,7 +55,10 @@ use self::devices::{
     format_device_description, is_virtual_audio_name, system_audio_permission_state,
 };
 use self::diagnostics::{DiagnosticRecorder, DiagnosticRecorderConfig, DiagnosticsStatusHandle};
-use self::resample::{InterleavedInputResampler, OutputDeviceResampler};
+use self::resample::{
+    AdaptiveOutputResampler, AdaptiveReferenceResampler, InterleavedInputResampler,
+    OutputDeviceResampler,
+};
 use self::stats::{RealtimeStats, RealtimeStatsConfig, StatsSample};
 use echoless_core::{
     apply_output_level, apply_reference_channels_to_chain, output_level_gain_db, PipelineConfig,
@@ -122,6 +125,7 @@ struct ProcessRuntime {
     near_delay_samples: usize,
     output_level: u32,
     bypassed: bool,
+    output_rate_match: bool,
     backend: String,
     algorithmic_latency_ms: f32,
     counters: RealtimeCounters,
@@ -350,11 +354,14 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
         counters.mic_input_drops.clone(),
         stream_error_handler("mic", running.clone(), options.status_json),
     )?;
+    let output_setpoint_samples = frame_size.saturating_mul(OUTPUT_PREROLL_FRAMES);
     let output_stream = build_output_stream(
         &output_device.device,
         &output_config,
         out_cons,
         counters.output_underruns.clone(),
+        cfg.output_rate_match,
+        output_setpoint_samples,
         stream_error_handler("output", running.clone(), options.status_json),
     )?;
     let mut render_prod = render_prod;
@@ -435,6 +442,7 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
         "output_preroll_frames": OUTPUT_PREROLL_FRAMES,
         "output_preroll_samples": output_preroll_samples,
         "output_preroll_ms": output_preroll_ms,
+        "output_rate_match": cfg.output_rate_match,
         "reference_source": reference_source.status_name(),
         "diagnostics_session_dir": diagnostics_session_dir.as_deref(),
         "mic_device_sample_rate": mic_config.stream_sample_rate(),
@@ -455,6 +463,7 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
         near_delay_samples,
         output_level: cfg.output_level,
         bypassed: cfg.bypass,
+        output_rate_match: cfg.output_rate_match,
         backend,
         algorithmic_latency_ms,
         counters,
@@ -532,6 +541,16 @@ fn process_loop<M, R, O>(
     let mut out = vec![0.0f32; frame_size];
     let mut near_delay = VecDeque::from(vec![0.0f32; runtime.near_delay_samples]);
     let mut output_bypassed = runtime.bypassed;
+    // T3 参考侧:连续重采样吸收 far 时钟漂移,替代 skip_stale 硬丢帧(避免撕裂 AEC 参考时间轴)。
+    // 设定点 2 帧:给水位反馈留裕量,吸收收敛瞬态。关闭 output_rate_match 时回退旧 skip_stale 路径。
+    let mut ref_resampler = if runtime.output_rate_match {
+        Some(AdaptiveReferenceResampler::new(
+            runtime.reference_channels,
+            frame_size * 2,
+        ))
+    } else {
+        None
+    };
     let mut bypass_crossfade = BypassCrossfade::new(bypass_crossfade_samples(runtime.sample_rate));
     let mut stats = runtime.stats_interval.map(|interval| {
         RealtimeStats::new(RealtimeStatsConfig {
@@ -595,12 +614,26 @@ fn process_loop<M, R, O>(
         let mut ref_underrun = 0;
         let mut ref_stale_drops = 0;
         if let Some(rc) = render_cons.as_mut() {
-            ref_stale_drops = skip_stale(rc, far_samples_per_frame);
-            if rc.occupied_len() >= far_samples_per_frame {
-                rc.pop_slice(&mut far);
-            } else {
-                far.fill(0.0); // 参考欠载 → 填静音
-                ref_underrun = 1;
+            match ref_resampler.as_mut() {
+                // T3:连续重采样,按水位吸收 far 时钟漂移,不硬丢帧。参考欠载时该帧填零并计入
+                // ref_underrun(此路径下 ref_stale_drops 恒 0)。
+                Some(resampler) => {
+                    let occ_frames = rc.occupied_len() / runtime.reference_channels.max(1);
+                    let underrun_frames = resampler.fill(&mut far, frame_size, occ_frames, rc);
+                    if underrun_frames > 0 {
+                        ref_underrun = 1;
+                    }
+                }
+                // 关闭 output_rate_match:回退旧 skip_stale 硬丢帧路径(pre-T3 行为)。
+                None => {
+                    ref_stale_drops = skip_stale(rc, far_samples_per_frame);
+                    if rc.occupied_len() >= far_samples_per_frame {
+                        rc.pop_slice(&mut far);
+                    } else {
+                        far.fill(0.0); // 参考欠载 → 填静音
+                        ref_underrun = 1;
+                    }
+                }
             }
         } else {
             far.fill(0.0);
@@ -963,6 +996,8 @@ fn build_output_stream<C, E>(
     config: &StreamConfigChoice,
     consumer: C,
     underruns: Arc<AtomicU64>,
+    rate_match: bool,
+    setpoint_samples: usize,
     on_error: E,
 ) -> Result<Stream>
 where
@@ -976,6 +1011,8 @@ where
         config,
         consumer,
         underruns,
+        rate_match,
+        setpoint_samples,
         on_error
     )
 }
@@ -985,6 +1022,8 @@ fn build_output_stream_t<T, C, E>(
     choice: &StreamConfigChoice,
     mut consumer: C,
     underruns: Arc<AtomicU64>,
+    rate_match: bool,
+    setpoint_samples: usize,
     on_error: E,
 ) -> Result<Stream>
 where
@@ -997,15 +1036,35 @@ where
     let mut resampler =
         OutputDeviceResampler::new(choice.pipeline_sample_rate, choice.stream_sample_rate());
     let needs_resampling = choice.requires_resampling();
+    // T3:设备率==管线率(Windows WASAPI shared 的活跃路径)时,用水位反馈自适应重采样
+    // 吸收生产/消费时钟漂移。设备率≠管线率时仍走固定比率 next_chunk(内部已含插值)。
+    let mut adaptive = AdaptiveOutputResampler::new(
+        choice.pipeline_sample_rate,
+        choice.stream_sample_rate(),
+        setpoint_samples,
+    );
+    let use_adaptive = rate_match && !needs_resampling;
+    let mut adaptive_buf: Vec<f32> = Vec::new();
     device
         .build_output_stream(
             &config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+                let frames = data.len() / channels;
                 if needs_resampling {
-                    let samples =
-                        resampler.next_chunk(data.len() / channels, &mut consumer, &underruns);
+                    let samples = resampler.next_chunk(frames, &mut consumer, &underruns);
                     for (frame_index, frame) in data.chunks_mut(channels).enumerate() {
                         let s = T::from_sample(samples.get(frame_index).copied().unwrap_or(0.0));
+                        for out in frame {
+                            *out = s; // 单声道铺到所有输出声道
+                        }
+                    }
+                } else if use_adaptive {
+                    let occupied = consumer.occupied_len();
+                    adaptive_buf.clear();
+                    adaptive_buf.resize(frames, 0.0);
+                    adaptive.fill(&mut adaptive_buf, occupied, &mut consumer, &underruns);
+                    for (frame_index, frame) in data.chunks_mut(channels).enumerate() {
+                        let s = T::from_sample(adaptive_buf[frame_index]);
                         for out in frame {
                             *out = s; // 单声道铺到所有输出声道
                         }

@@ -265,6 +265,19 @@ fn ratio(numerator: u64, denominator: u64) -> f64 {
     }
 }
 
+/// 参考侧「跟不上生产/消费节奏」的合并信号,供时钟错配检测用作与 output_underruns 同源的佐证。
+///
+/// - pre-T3(output_rate_match=off):ref 侧 `skip_stale` 硬丢帧 → 信号在 `ref_stale_drops`,
+///   参考 ring 被 skip_stale 约束住基本不溢出,`ref_input_drops≈0`。
+/// - T3(output_rate_match=on):ref 侧改连续重采样,`ref_stale_drops` 恒 0;大错配(超 ±3%
+///   权限)时参考 ring 溢出 → 信号迁移到 `ref_input_drops`。
+///
+/// 两者相加使 [`ClockSkewDetector`] 在 T3 开关两种模式下都能拿到参考侧佐证(各模式恰有一路≈0),
+/// 从而保住 T1 的告警能力(否则 T3 会让 `ref_stale_drops` 恒 0、`ref_correlated` 永假、告警失效)。
+fn ref_pace_loss(ref_stale_drops: u64, ref_input_drops: u64) -> u64 {
+    ref_stale_drops.saturating_add(ref_input_drops)
+}
+
 pub(super) struct RealtimeStats {
     interval: Duration,
     started: Instant,
@@ -441,10 +454,15 @@ impl RealtimeStats {
         if now.duration_since(self.last_print) < self.interval {
             return;
         }
+        // 参考侧「跟不上」信号:pre-T3 = skip_stale 硬丢帧(ref_stale_drops);
+        // T3 开启后 ref 侧改连续重采样,ref_stale_drops 恒 0,大错配时体现为参考 ring 溢出
+        // (ref_input_drops)。两者相加 → 无论 T3 开关,都能提供与 output_underruns 同源的
+        // 时钟错配佐证(pre-T3 时 ref_input_drops≈0,T3 时 ref_stale_drops≈0,各取其一)。
+        let ref_pace_loss = ref_pace_loss(self.ref_stale_drops, self.ref_input_drops);
         let clock_skew_event = self.clock_skew.observe(
             self.pushed_output_samples,
             self.output_underruns,
-            self.ref_stale_drops,
+            ref_pace_loss,
         );
         // 审计 B-02:本方法在音频处理线程上执行,写出必须走异步发射器,
         // 不许同步碰 stdout(管道满会阻塞处理循环 → 爆音)。
@@ -795,5 +813,29 @@ mod tests {
 
         assert!(detector.observe(48_000, 10_752, 0).is_none());
         assert!(!detector.warning);
+    }
+
+    #[test]
+    fn ref_pace_loss_bridges_t3_signal_migration() {
+        // pre-T3:信号在 stale_drops,input_drops≈0。
+        assert_eq!(ref_pace_loss(10_752, 0), 10_752);
+        // T3:ref 连续重采样,stale_drops=0,信号迁移到 input_drops(参考 ring 溢出)。
+        assert_eq!(ref_pace_loss(0, 10_752), 10_752);
+        // 两路都有时相加(过渡态),saturating 不溢出。
+        assert_eq!(ref_pace_loss(u64::MAX, 1), u64::MAX);
+    }
+
+    #[test]
+    fn clock_skew_still_warns_when_ref_signal_is_input_drops() {
+        // T3 场景:ref_stale_drops 恒 0,参考侧佐证经 ref_input_drops 传入。检测器仍应告警
+        // (回归护栏:T3 不得让 T1 的时钟错配告警失效)。
+        let mut detector = ClockSkewDetector::new(48_000);
+        let ref_signal = ref_pace_loss(0, 10_752); // T3: stale=0, input=10_752
+        for _ in 0..4 {
+            assert!(detector.observe(48_000, 10_752, ref_signal).is_none());
+        }
+        let event = detector.observe(48_000, 10_752, ref_signal).unwrap();
+        assert_eq!(event.kind, ClockSkewEventKind::Warning);
+        assert!(event.snapshot.ref_correlated);
     }
 }

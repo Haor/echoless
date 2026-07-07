@@ -42,6 +42,7 @@ pub(crate) fn cmd_offline(a: OfflineArgs) -> Result<()> {
         near_delay_ms: 0,
         output_level,
         bypass: false,
+        output_rate_match: echoless_core::default_output_rate_match(),
         diagnostics: DiagnosticsConfig::default(),
         chain,
     };

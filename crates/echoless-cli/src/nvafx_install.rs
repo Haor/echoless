@@ -246,6 +246,7 @@ fn cmd_nvafx_offline(a: NvafxOfflineArgs) -> Result<()> {
         near_delay_ms: 0,
         output_level: default_output_level(),
         bypass: false,
+        output_rate_match: echoless_core::default_output_rate_match(),
         diagnostics: DiagnosticsConfig::default(),
         chain: vec![NodeConfig {
             kind: "nvidia_afx_aec".into(),

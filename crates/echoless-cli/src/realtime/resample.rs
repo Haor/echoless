@@ -361,6 +361,257 @@ where
     }
 }
 
+/// T3 输出侧自适应速率匹配。
+///
+/// 生产端锁 mic 时钟(处理循环每帧恒 push frame_size),消费端是设备/虚拟端点时钟。
+/// 二者节奏不一致时 out_ring 水位会单调漂移 → 周期性 underrun(听感断续)。本重采样器
+/// 在**输出回调线程**里读 out_ring 占用量,用比例控制把有效消费比率朝"锁定水位设定点"
+/// 微调:水位偏高→多消费(step 略增),水位偏低→少消费(step 略减)。有效 trim 钳位 ±3%,
+/// 稳态漂移(实测 Voicemeeter 残留 2.2%)被完全吸收且不净变调;配置级大错配(如 22%)
+/// 会钳到边界后自然 underrun,交由 T1 的 clock_skew 检测告警,不硬追以免明显变调。
+///
+/// 线性插值 + 持久 `pos`/`buffer` 保证跨回调相位连续。稳态无堆分配(buffer 容量收敛),
+/// 满足实时线程约束。
+pub(super) struct AdaptiveOutputResampler {
+    base_ratio: f64,
+    setpoint_samples: f64,
+    trim: f64,
+    integ: f64,
+    max_trim: f64,
+    kp: f64,
+    ki: f64,
+    pos: f64,
+    buffer: VecDeque<f32>,
+    clamped: bool,
+}
+
+impl AdaptiveOutputResampler {
+    /// `in_rate`/`out_rate` 给出固定比率基线;`setpoint_samples` 是希望 out_ring 稳定的水位
+    /// (通常 = 预填样本数)。
+    pub(super) fn new(in_rate: u32, out_rate: u32, setpoint_samples: usize) -> Self {
+        let base_ratio = if out_rate == 0 {
+            1.0
+        } else {
+            in_rate as f64 / out_rate as f64
+        };
+        Self {
+            base_ratio,
+            setpoint_samples: setpoint_samples as f64,
+            trim: 0.0,
+            integ: 0.0,
+            max_trim: 0.03,
+            // PI 控制:比例项快速响应水位偏差,积分项提供稳态 trim(纯 P 有稳态误差,
+            // 维持 2% trim 需水位持续偏离设定点上千样本、物理上买不到 → 抽干欠载)。
+            // kp/ki 取慢环值,避免可闻 pitch wobble;积分带抗饱和(钳位时不继续累加)。
+            kp: 1.5e-5,
+            ki: 6.0e-7,
+            pos: 0.0,
+            buffer: VecDeque::new(),
+            clamped: false,
+        }
+    }
+
+    /// 当前 trim(供诊断/测试断言);正=多消费,负=少消费。
+    #[cfg(test)]
+    pub(super) fn trim(&self) -> f64 {
+        self.trim
+    }
+
+    /// 上次填充是否触发钳位(= 水位反馈要求的比率超出 ±max_trim,即配置级错配)。
+    #[cfg(test)]
+    pub(super) fn is_clamped(&self) -> bool {
+        self.clamped
+    }
+
+    /// 用当前水位 `occupied` 更新有效比率,然后连续插值填满 `output`。
+    pub(super) fn fill<C>(
+        &mut self,
+        output: &mut [f32],
+        occupied: usize,
+        consumer: &mut C,
+        underruns: &AtomicU64,
+    ) where
+        C: Consumer<Item = f32>,
+    {
+        // PI 控制:预测本次回调消费后的水位(occupied - output.len()),相对设定点的误差。
+        // 水位高于设定点 → 正误差 → trim 增 → step 增 → 多消费,拉回设定点。
+        let projected = occupied as f64 - output.len() as f64;
+        let error = projected - self.setpoint_samples;
+        let unclamped = self.kp * error + self.integ + self.ki * error;
+        let clamped_trim = unclamped.clamp(-self.max_trim, self.max_trim);
+        self.clamped = unclamped != clamped_trim;
+        // 抗饱和:仅在未钳位时累加积分项,避免 windup。
+        if !self.clamped {
+            self.integ += self.ki * error;
+        }
+        self.trim = clamped_trim;
+        let step = (self.base_ratio * (1.0 + self.trim)).max(1.0e-6);
+
+        for sample in output.iter_mut() {
+            *sample = self.next_sample(step, consumer, underruns);
+        }
+    }
+
+    fn next_sample<C>(&mut self, step: f64, consumer: &mut C, underruns: &AtomicU64) -> f32
+    where
+        C: Consumer<Item = f32>,
+    {
+        let needed = (self.pos.floor() as usize).saturating_add(2);
+        while self.buffer.len() < needed {
+            match consumer.try_pop() {
+                Some(sample) => self.buffer.push_back(sample.clamp(-1.0, 1.0)),
+                None => {
+                    underruns.fetch_add(1, Ordering::Relaxed);
+                    return 0.0;
+                }
+            }
+        }
+
+        let i0 = self.pos.floor() as usize;
+        let frac = (self.pos - i0 as f64) as f32;
+        let a = self.buffer.get(i0).copied().unwrap_or(0.0);
+        let b = self.buffer.get(i0 + 1).copied().unwrap_or(a);
+        let sample = (a + (b - a) * frac).clamp(-1.0, 1.0);
+
+        self.pos += step;
+        let consumed = self.pos.floor() as usize;
+        for _ in 0..consumed {
+            let _ = self.buffer.pop_front();
+        }
+        self.pos -= consumed as f64;
+        sample
+    }
+}
+
+/// T3 参考侧连续重采样。
+///
+/// 修复前 ref 流靠 `skip_stale` **硬丢帧**控制积压:每次积压超阈值就直接 `skip` 掉一段样本,
+/// 使参考时间轴出现周期性缺口。AEC 依赖 near/far 的连续对齐,ref 时间轴碎片化会直接毁掉
+/// 对齐(实测 mic↔ref 互相关峰仅 0.14~0.27、lag 乱跳)。本重采样器改为**连续重采样**:
+/// 按 ref ring 水位微调消费比率(±3% 钳位),每帧恒定产出 frame_size 个参考样本,吸收
+/// far 时钟(与输出同源的 Voicemeeter 端点)相对 mic 时钟的漂移,而不撕裂时间轴。
+///
+/// 多声道交织处理:每声道独立持久 `pos`/`buffer`(共享同一 step,保证声道间样本对齐)。
+pub(super) struct AdaptiveReferenceResampler {
+    channels: usize,
+    setpoint_frames: f64,
+    trim: f64,
+    integ: f64,
+    max_trim: f64,
+    kp: f64,
+    ki: f64,
+    pos: f64,
+    buffers: Vec<VecDeque<f32>>,
+}
+
+impl AdaptiveReferenceResampler {
+    /// `channels` = 参考声道数;`setpoint_frames` = 希望 ref ring 稳定的**帧**水位。
+    pub(super) fn new(channels: usize, setpoint_frames: usize) -> Self {
+        let channels = channels.max(1);
+        Self {
+            channels,
+            setpoint_frames: setpoint_frames as f64,
+            trim: 0.0,
+            integ: 0.0,
+            max_trim: 0.03,
+            // PI 控制,与输出侧同参:比例快响应 + 积分消稳态误差 + 抗饱和。
+            kp: 1.5e-5,
+            ki: 6.0e-7,
+            pos: 0.0,
+            buffers: (0..channels).map(|_| VecDeque::new()).collect(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn trim(&self) -> f64 {
+        self.trim
+    }
+
+    /// 从交织的 `consumer` 连续重采样出 `out_frames` 帧(交织写入 `out`,长度必须
+    /// = out_frames*channels)。`occupied_frames` = 当前 ref ring 的**帧**占用量。
+    /// 返回本次因参考欠载而填零的帧数(供 underrun 统计)。
+    pub(super) fn fill<C>(
+        &mut self,
+        out: &mut [f32],
+        out_frames: usize,
+        occupied_frames: usize,
+        consumer: &mut C,
+    ) -> usize
+    where
+        C: Consumer<Item = f32>,
+    {
+        // PI 水位反馈:预测消费后帧水位,朝设定点收敛。
+        let projected = occupied_frames as f64 - out_frames as f64;
+        let error = projected - self.setpoint_frames;
+        let unclamped = self.kp * error + self.integ + self.ki * error;
+        let clamped_trim = unclamped.clamp(-self.max_trim, self.max_trim);
+        if unclamped == clamped_trim {
+            self.integ += self.ki * error;
+        }
+        self.trim = clamped_trim;
+        let step = (1.0 + self.trim).max(1.0e-6);
+
+        let mut underrun_frames = 0;
+        for frame_index in 0..out_frames {
+            let ok = self.next_frame(step, consumer, out, frame_index * self.channels);
+            if !ok {
+                underrun_frames += 1;
+            }
+        }
+        underrun_frames
+    }
+
+    fn next_frame<C>(
+        &mut self,
+        step: f64,
+        consumer: &mut C,
+        out: &mut [f32],
+        out_base: usize,
+    ) -> bool
+    where
+        C: Consumer<Item = f32>,
+    {
+        let needed = (self.pos.floor() as usize).saturating_add(2);
+        // 交织拉取:一次补齐所有声道到 needed 深度。任一声道拉不到即判欠载填零。
+        while self.buffers[0].len() < needed {
+            let mut got_full_frame = true;
+            for ch in 0..self.channels {
+                match consumer.try_pop() {
+                    Some(v) => self.buffers[ch].push_back(v.clamp(-1.0, 1.0)),
+                    None => {
+                        got_full_frame = false;
+                        break;
+                    }
+                }
+            }
+            if !got_full_frame {
+                for sample in out.iter_mut().skip(out_base).take(self.channels) {
+                    *sample = 0.0;
+                }
+                return false;
+            }
+        }
+
+        let i0 = self.pos.floor() as usize;
+        let frac = (self.pos - i0 as f64) as f32;
+        for ch in 0..self.channels {
+            let a = self.buffers[ch].get(i0).copied().unwrap_or(0.0);
+            let b = self.buffers[ch].get(i0 + 1).copied().unwrap_or(a);
+            out[out_base + ch] = (a + (b - a) * frac).clamp(-1.0, 1.0);
+        }
+
+        self.pos += step;
+        let consumed = self.pos.floor() as usize;
+        for _ in 0..consumed {
+            for ch in 0..self.channels {
+                let _ = self.buffers[ch].pop_front();
+            }
+        }
+        self.pos -= consumed as f64;
+        true
+    }
+}
+
 fn resize_planes(planes: &mut Vec<Vec<f32>>, channels: usize, frames: usize) {
     if planes.len() != channels {
         planes.resize_with(channels, Vec::new);
@@ -381,7 +632,7 @@ fn scaled_frames(input_frames: usize, in_rate: u32, out_rate: u32) -> usize {
 mod tests {
     use std::sync::atomic::AtomicU64;
 
-    use ringbuf::traits::{Producer, Split};
+    use ringbuf::traits::{Observer, Producer, Split};
     use ringbuf::HeapRb;
 
     use super::*;
@@ -469,5 +720,162 @@ mod tests {
         caps.push(resampler.resampled_planes.capacity());
         caps.extend(resampler.resampled_planes.iter().map(Vec::capacity));
         caps
+    }
+
+    // ── T3 输出侧自适应速率匹配回归 ──────────────────────────────────────────────
+    //
+    // 模型:生产端锁 mic 时钟,每 tick 恰好 push `frame_size` 个样本。消费端锁设备时钟,
+    // 设备比 mic 快 `skew` → 每 tick 索取 `round(frame_size*(1+skew))` 个样本。跑足够多
+    // tick,观察稳态 underrun 与 out_ring 水位是否被 trim 吸收。
+
+    fn run_output_skew(skew: f64, frame_size: usize, ticks: usize) -> (u64, f64, f64, usize) {
+        let ring_cap = frame_size * 12;
+        let setpoint = frame_size * 2;
+        let (mut prod, mut cons) = HeapRb::<f32>::new(ring_cap).split();
+        let mut resampler = AdaptiveOutputResampler::new(48_000, 48_000, setpoint);
+        let underruns = AtomicU64::new(0);
+        // 预填到设定点。
+        let preroll = vec![0.0f32; setpoint];
+        prod.push_slice(&preroll);
+
+        let device_frames = ((frame_size as f64) * (1.0 + skew)).round() as usize;
+        let mut out = vec![0.0f32; device_frames];
+        let mut phase = 0.0f32;
+        let mut clamps = 0usize;
+        let mut last_half_underruns = 0u64;
+        let half = ticks / 2;
+
+        for tick in 0..ticks {
+            // 生产:一帧 440Hz 正弦(mic 时钟)。
+            let mut block = vec![0.0f32; frame_size];
+            for s in block.iter_mut() {
+                *s = 0.2 * (phase * std::f32::consts::TAU).sin();
+                phase += 440.0 / 48_000.0;
+            }
+            prod.push_slice(&block);
+
+            // 消费:设备索取 device_frames。
+            let occupied = cons.occupied_len();
+            resampler.fill(&mut out, occupied, &mut cons, &underruns);
+            if resampler.is_clamped() {
+                clamps += 1;
+            }
+            if tick == half {
+                last_half_underruns = underruns.load(Ordering::Relaxed);
+            }
+        }
+
+        let total = underruns.load(Ordering::Relaxed);
+        let steady_underruns = total - last_half_underruns;
+        let final_trim = resampler.trim();
+        let clamp_ratio = clamps as f64 / ticks as f64;
+        (
+            steady_underruns,
+            final_trim,
+            clamp_ratio,
+            steady_underruns as usize,
+        )
+    }
+
+    #[test]
+    fn t3_absorbs_small_skew_without_steady_underrun() {
+        // 明确在 ±3% 权限内的漂移(实测 Voicemeeter 残留 2.2%):trim 收敛到 1/(1+skew)-1,
+        // 稳态(后半程)underrun≈0,基本不钳位。
+        for skew in [0.005_f64, 0.01, 0.022] {
+            let expected_trim = 1.0 / (1.0 + skew) - 1.0;
+            let (steady, trim, clamp_ratio, _) = run_output_skew(skew, 480, 2000);
+            assert!(
+                steady <= 480,
+                "skew={skew}: steady underruns {steady} 应≈0(被 trim 吸收)"
+            );
+            assert!(
+                (trim - expected_trim).abs() < 0.01,
+                "skew={skew}: trim {trim:.4} 应收敛到 {expected_trim:.4}"
+            );
+            assert!(
+                clamp_ratio < 0.05,
+                "skew={skew}: clamp_ratio {clamp_ratio:.3} 应基本不钳位"
+            );
+        }
+    }
+
+    #[test]
+    fn t3_boundary_skew_still_converges() {
+        // 3% 恰在 ±3% 权限边界:收敛瞬态可能短暂钳位,但稳态 underrun 仍≈0、trim 贴边界。
+        let skew = 0.03_f64;
+        let (steady, trim, _clamp, _) = run_output_skew(skew, 480, 4000);
+        assert!(steady <= 480, "边界 skew=3%: 稳态 underrun {steady} 应≈0");
+        assert!(
+            trim < -0.025,
+            "边界 skew=3%: trim {trim:.4} 应贴近 -3% 权限"
+        );
+    }
+
+    #[test]
+    fn t3_clamps_on_config_level_skew() {
+        // 8.8% / 22% 配置级错配:设备快到需要的拉伸超出 -3% 钳位边界,trim 钳到 -3%,
+        // 不硬追(避免变调),后半程持续钳位(交由 T1 clock_skew 告警)。
+        for skew in [0.088_f64, 0.224] {
+            let (_steady, trim, clamp_ratio, _) = run_output_skew(skew, 480, 2000);
+            assert!(
+                (trim + 0.03).abs() < 0.005,
+                "skew={skew}: trim {trim:.4} 应钳在 -3% 边界"
+            );
+            assert!(
+                clamp_ratio > 0.5,
+                "skew={skew}: clamp_ratio {clamp_ratio:.3} 应长期钳位(触发 T1 告警域)"
+            );
+        }
+    }
+
+    #[test]
+    fn t3_no_skew_is_transparent_passthrough() {
+        // 零漂移:trim 停在 0 附近,无 underrun,输出与输入等长逐样本对齐(无净重采样)。
+        let (steady, trim, clamp_ratio, _) = run_output_skew(0.0, 480, 1000);
+        assert_eq!(steady, 0, "零漂移不应有稳态 underrun");
+        assert!(trim.abs() < 1.0e-3, "零漂移 trim 应≈0,实际 {trim:.5}");
+        assert!(clamp_ratio < 0.01);
+    }
+
+    #[test]
+    fn t3_reference_resampler_keeps_continuity_no_hard_drops() {
+        // 参考侧:mono 连续重采样,far 时钟快 2.2% 时稳态不欠载,trim 收敛,输出连续有限值。
+        let frame_size = 480;
+        let ring_cap = frame_size * 12;
+        let (mut prod, mut cons) = HeapRb::<f32>::new(ring_cap).split();
+        let mut resampler = AdaptiveReferenceResampler::new(1, frame_size * 2);
+        prod.push_slice(&vec![0.0f32; frame_size * 2]);
+
+        let skew = 0.022_f64;
+        let device_frames = ((frame_size as f64) * (1.0 + skew)).round() as usize;
+        let mut far = vec![0.0f32; device_frames];
+        let mut phase = 0.0f32;
+        let mut underruns_second_half = 0usize;
+        let ticks = 2000;
+
+        for tick in 0..ticks {
+            let mut block = vec![0.0f32; frame_size];
+            for s in block.iter_mut() {
+                *s = 0.2 * (phase * std::f32::consts::TAU).sin();
+                phase += 440.0 / 48_000.0;
+            }
+            prod.push_slice(&block);
+            let occ_frames = cons.occupied_len();
+            let u = resampler.fill(&mut far, device_frames, occ_frames, &mut cons);
+            if tick >= ticks / 2 {
+                underruns_second_half += u;
+            }
+            assert!(far.iter().all(|s| s.is_finite()));
+        }
+        assert!(
+            underruns_second_half <= device_frames,
+            "参考侧稳态欠载 {underruns_second_half} 应≈0(连续重采样吸收漂移)"
+        );
+        let expected_trim = 1.0 / (1.0 + skew) - 1.0;
+        assert!(
+            (resampler.trim() - expected_trim).abs() < 0.01,
+            "参考侧 trim {:.4} 应收敛到 {expected_trim:.4}",
+            resampler.trim()
+        );
     }
 }
