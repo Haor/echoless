@@ -1444,6 +1444,19 @@ function AppShell() {
     return () => window.removeEventListener("keydown", onTab);
   }, []);
 
+  // 桌面 app:禁用 WebView 默认右键菜单(重新加载/检查元素等网页项)。
+  // 输入框/文本域放行,保留右键粘贴;dev 构建放行,保留调试菜单。
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      if (import.meta.env.DEV) return;
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
+      e.preventDefault();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
+
   // 开发态快捷键:按 ~ 切换(在输入框里则正常输入,不触发)。
   // 仅 dev 构建存在:正式包 import.meta.env.DEV=false,快捷键与 dev 模式
   // 一并从产物里消失(?dev=1 直链在 Tauri 里本就没有 query,双保险)。
@@ -2114,9 +2127,8 @@ function AppShell() {
         <RuntimeFooterBars telRef={telRef} powerOn={powerOn} />
       </footer>
 
-      {/* v10 动态底噪(WebGL shader,见 TvNoise 注释);OFF 时随 sysoff 渐隐停走。
-          Windows 侧冻结为静帧(freeze):WebView2 上逐帧重绘拖累合成、观感抖动。 */}
-      <TvNoise active={uiOn} freeze={platformView === "windows"} />
+      {/* v10 动态底噪(WebGL shader,见 TvNoise 注释);OFF 时随 sysoff 渐隐停走 */}
+      <TvNoise active={uiOn} />
       {/* v6 VHS 亮带(transform 合成器动画);OFF 时随 sysoff 渐隐暂停 */}
       <div className="vhs" aria-hidden="true">
         <i className="band" />
@@ -2164,17 +2176,15 @@ void main() {
 const NOISE_VS = `attribute vec2 a;
 void main() { gl_Position = vec4(a, 0.0, 1.0); }`;
 
-function TvNoise({ active, freeze = false }: { active: boolean; freeze?: boolean }) {
+function TvNoise({ active }: { active: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
-  // freeze:静帧模式(Windows)—— 只画一帧,不进 rAF 循环。用 ref 传入,
-  // 避免因 platform 异步就绪重建 WebGL context(见下方 cleanup 注释)。
-  const freezeRef = useRef(freeze);
-  freezeRef.current = freeze;
   const scheduleRef = useRef<() => void>(() => {});
   useEffect(() => {
     const canvas = ref.current;
+    const wrap = wrapRef.current;
     if (!canvas) return;
     const gl = canvas.getContext("webgl", {
       alpha: false, // 输出全不透明(alpha 已折进颜色),跨引擎合成零歧义
@@ -2182,35 +2192,47 @@ function TvNoise({ active, freeze = false }: { active: boolean; freeze?: boolean
       depth: false,
       stencil: false,
       powerPreference: "low-power",
-      preserveDrawingBuffer: true, // 截图/快照可读回;全屏重画场景无性能代价
+      // 不设 preserveDrawingBuffer:不读回像素,省驱动保留后缓冲的开销,
+      // 也减轻 GPU 压力下 WebView2/WKWebView 主动丢弃 context 的概率。
     });
     if (!gl) return; // 无 WebGL:静默无噪点(氛围件,不值得再养 fallback)
 
-    const compile = (type: number, src: string) => {
-      const s = gl.createShader(type)!;
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      return s;
+    let tLoc: WebGLUniformLocation | null = null;
+    let pxLoc: WebGLUniformLocation | null = null;
+    let ready = false;
+    let forceFit = false;
+
+    // GL 资源建立:首次挂载 + context 恢复后都走这里重建 program/buffer。
+    const initGL = (): boolean => {
+      const compile = (type: number, src: string) => {
+        const s = gl.createShader(type)!;
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return s;
+      };
+      const prog = gl.createProgram()!;
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, NOISE_VS));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, NOISE_FS));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+      gl.useProgram(prog);
+      // 全屏三角形
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 3, -1, -1, 3]),
+        gl.STATIC_DRAW,
+      );
+      const loc = gl.getAttribLocation(prog, "a");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      tLoc = gl.getUniformLocation(prog, "t");
+      pxLoc = gl.getUniformLocation(prog, "px");
+      forceFit = true; // 恢复后 viewport 需重设,即便画布尺寸未变
+      return true;
     };
-    const prog = gl.createProgram()!;
-    gl.attachShader(prog, compile(gl.VERTEX_SHADER, NOISE_VS));
-    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, NOISE_FS));
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return;
-    gl.useProgram(prog);
-    // 全屏三角形
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      new Float32Array([-1, -1, 3, -1, -1, 3]),
-      gl.STATIC_DRAW,
-    );
-    const loc = gl.getAttribLocation(prog, "a");
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    const tLoc = gl.getUniformLocation(prog, "t");
-    const pxLoc = gl.getUniformLocation(prog, "px");
+    ready = initGL();
 
     // 画布按设备物理像素渲染(retina 不糊),噪声晶格按 CSS 像素网格
     // (px = baseFrequency / dpr)—— 两者同 feTurbulence 的栅格化行为。
@@ -2218,18 +2240,19 @@ function TvNoise({ active, freeze = false }: { active: boolean; freeze?: boolean
       const dpr = window.devicePixelRatio || 1;
       const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
       const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
-      if (canvas.width !== w || canvas.height !== h) {
+      if (forceFit || canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
         gl.viewport(0, 0, w, h);
+        forceFit = false;
       }
       // 1.35:较设计稿 baseFrequency 1.15 晶格更密 → 颗粒更细(用户定档)
       gl.uniform1f(pxLoc, 1.35 / dpr);
     };
-    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     let raf = 0;
     let seed = 2;
     const draw = () => {
+      if (!ready) return;
       fit();
       gl.uniform1f(tLoc, seed);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -2239,17 +2262,13 @@ function TvNoise({ active, freeze = false }: { active: boolean; freeze?: boolean
       // t 保持小数值域(hash 的 sin 精度),循环推进
       seed = (seed + 0.618) % 61.0;
       draw();
-      // OFF(穿透/停机)/ freeze(Windows 静帧)时停走:动效只属于活着的系统
-      if (!reduce && !freezeRef.current && !document.hidden && activeRef.current)
+      // OFF(穿透/停机)/ 后台隐藏时停走:动效只属于活着的系统。
+      // 注意:不再读 prefers-reduced-motion —— 氛围噪点恒动,不随系统减弱动效停帧。
+      if (!document.hidden && activeRef.current)
         raf = requestAnimationFrame(frame);
     };
     const schedule = () => {
-      // reduce / freeze:画一帧静态噪点即可,不启动逐帧循环
-      if (reduce || freezeRef.current) {
-        draw();
-        return;
-      }
-      if (!raf) raf = requestAnimationFrame(frame);
+      if (ready && !raf) raf = requestAnimationFrame(frame);
     };
     scheduleRef.current = schedule;
     const onVisibility = () => {
@@ -2258,28 +2277,47 @@ function TvNoise({ active, freeze = false }: { active: boolean; freeze?: boolean
         raf = 0;
       } else schedule();
     };
+    // WebView2/WKWebView 在 GPU 压力 / 驱动 TDR / 休眠唤醒时会主动丢弃 context。
+    // 不处理则画布内容变未定义(常为黑),经 multiply 把整窗 UI 乘成黑屏且不自愈。
+    const onLost = (e: Event) => {
+      e.preventDefault(); // 必须:否则浏览器永不派发 webglcontextrestored
+      ready = false;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      // 立即隐藏噪声层:宁可几秒没噪点,也不让黑画布 multiply 乘黑整窗 UI
+      if (wrap) wrap.classList.add("ctxlost");
+    };
+    const onRestored = () => {
+      ready = initGL();
+      if (wrap) wrap.classList.remove("ctxlost");
+      schedule();
+    };
+    canvas.addEventListener("webglcontextlost", onLost, false);
+    canvas.addEventListener("webglcontextrestored", onRestored, false);
     const ro = new ResizeObserver(() => {
       draw(); // resize 立即补一帧,避免拉伸残影
     });
     ro.observe(canvas);
     document.addEventListener("visibilitychange", onVisibility);
-    schedule(); // reduce / freeze 时 schedule() 内部只画一帧
+    schedule();
     return () => {
-      // 不 loseContext:StrictMode 双挂载下同一 canvas 的 context 丢失后
-      // 无法复活(getContext 返回同一个已死实例),会让噪声永久空白。
-      // 组件与 App 同生命周期,context 随窗口销毁即可。
+      // 不主动 loseContext:StrictMode 双挂载下我们若主动丢弃,同一 canvas 的
+      // context 无法复活(getContext 返回已死实例)。浏览器主动丢失走上面的
+      // lost/restored 监听恢复;组件与 App 同生命周期,context 随窗口销毁即可。
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
+      canvas.removeEventListener("webglcontextlost", onLost, false);
+      canvas.removeEventListener("webglcontextrestored", onRestored, false);
       scheduleRef.current = () => {};
     };
   }, []);
   useEffect(() => {
-    // 重新上电 → 恢复走噪;freeze 变化 → 重画一帧或恢复循环(schedule 内部判定)
+    // 重新上电 → 恢复走噪
     if (active) scheduleRef.current();
-  }, [active, freeze]);
+  }, [active]);
   return (
-    <div className="tvnoise" aria-hidden="true">
+    <div className="tvnoise" aria-hidden="true" ref={wrapRef}>
       <canvas ref={ref} />
     </div>
   );

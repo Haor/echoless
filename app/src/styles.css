@@ -181,6 +181,11 @@ body {
   height: 100%;
   display: block;
 }
+/* WebGL context 丢失止血:画布内容变未定义(常为黑),经 multiply 会把整窗
+   UI 乘成黑屏。丢失瞬间隐藏本层,恢复(webglcontextrestored)后由 JS 摘除。 */
+.tvnoise.ctxlost {
+  opacity: 0 !important;
+}
 /* OFF(穿透/停机):CRT 噪与 VHS 熄灭 —— 动效只属于活着的系统 */
 .window.sysoff > .tvnoise {
   opacity: 0;
@@ -2187,7 +2192,10 @@ hr.hair {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  /* 尊重系统减弱动效:关闭功能性 UI 动画/过渡。
+     但氛围件(VHS 亮带/细线、WebGL 底噪)是产品恒常质感,常驻不受此开关影响
+     —— 底噪走 WebGL rAF 本就不受 CSS animation 约束,VHS 在此显式豁免。 */
+  *:not(.vhs):not(.vhs *) {
     animation: none !important;
   }
 }
