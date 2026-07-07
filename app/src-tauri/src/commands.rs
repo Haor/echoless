@@ -90,7 +90,11 @@ async fn mac_system_info_impl() -> Value {
 
     // sysctl -n <key> → 去掉换行的字符串
     fn sysctl(key: &str) -> Option<String> {
-        let out = Command::new("/usr/sbin/sysctl").arg("-n").arg(key).output().ok()?;
+        let out = Command::new("/usr/sbin/sysctl")
+            .arg("-n")
+            .arg(key)
+            .output()
+            .ok()?;
         if !out.status.success() {
             return None;
         }
