@@ -58,13 +58,13 @@ While `run` is active, write one JSON object per line to stdin:
 | Command | Payload | Effect |
 |---|---|---|
 | `set_output_level` | `{"cmd":"set_output_level","level":50}` | live output gain (0 mute · 50 unity · 100 ≈ 3×) |
-| `set_near_delay_ms` | `{"cmd":"set_near_delay_ms","ms":25}` | live near/far alignment |
-| `set_bypass` | `{"cmd":"set_bypass","bypass":true}` | skip the engine, keep it warm (15 ms crossfade) |
-| `set_initial_delay_ms` | `{"cmd":"set_initial_delay_ms","ms":8}` | AEC3 initial delay hint |
+| `set_near_delay_ms` | `{"cmd":"set_near_delay_ms","near_delay_ms":25}` | live near/far alignment |
+| `set_bypass` | `{"cmd":"set_bypass","enabled":true}` | skip the engine, keep it warm (15 ms crossfade) |
+| `set_initial_delay_ms` | `{"cmd":"set_initial_delay_ms","initial_delay_ms":8}` | AEC3 initial delay hint |
 | `set_aec3_ns` | `{"cmd":"set_aec3_ns","ns":true,"ns_level":"high"}` | AEC3 noise suppression |
 | `set_aec3_agc` | `{"cmd":"set_aec3_agc","agc":false}` | AEC3 AGC |
-| `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","enabled":true,"threshold_dbfs":-45}` | LocalVQE output gate |
-| `start_diagnostics` | `{"cmd":"start_diagnostics","dir":"...","max_seconds":30}` | record mic/ref/out WAVs |
+| `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","noise_gate":true,"noise_gate_threshold_dbfs":-45}` | LocalVQE output gate |
+| `start_diagnostics` | `{"cmd":"start_diagnostics","record_dir":"...","max_seconds":30}` | record mic/ref/out WAVs |
 | `stop_diagnostics` | `{"cmd":"stop_diagnostics"}` | finalize the recording session |
 
 The `started` event's `supported_controls` array is authoritative for what a

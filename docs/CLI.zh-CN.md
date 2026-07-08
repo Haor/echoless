@@ -58,13 +58,13 @@ echoless run --config my.toml --status-json
 | Command | Payload | Effect |
 |---|---|---|
 | `set_output_level` | `{"cmd":"set_output_level","level":50}` | 实时输出增益(0 静音 · 50 原始音量 · 100 ≈ 3×) |
-| `set_near_delay_ms` | `{"cmd":"set_near_delay_ms","ms":25}` | 实时 near/far 对齐 |
-| `set_bypass` | `{"cmd":"set_bypass","bypass":true}` | 跳过引擎但保持其热态(15 ms 交叉淡化) |
-| `set_initial_delay_ms` | `{"cmd":"set_initial_delay_ms","ms":8}` | AEC3 初始延迟提示 |
+| `set_near_delay_ms` | `{"cmd":"set_near_delay_ms","near_delay_ms":25}` | 实时 near/far 对齐 |
+| `set_bypass` | `{"cmd":"set_bypass","enabled":true}` | 跳过引擎但保持其热态(15 ms 交叉淡化) |
+| `set_initial_delay_ms` | `{"cmd":"set_initial_delay_ms","initial_delay_ms":8}` | AEC3 初始延迟提示 |
 | `set_aec3_ns` | `{"cmd":"set_aec3_ns","ns":true,"ns_level":"high"}` | AEC3 噪声抑制 |
 | `set_aec3_agc` | `{"cmd":"set_aec3_agc","agc":false}` | AEC3 AGC |
-| `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","enabled":true,"threshold_dbfs":-45}` | LocalVQE 输出门限 |
-| `start_diagnostics` | `{"cmd":"start_diagnostics","dir":"...","max_seconds":30}` | 录制 mic/ref/out WAV |
+| `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","noise_gate":true,"noise_gate_threshold_dbfs":-45}` | LocalVQE 输出门限 |
+| `start_diagnostics` | `{"cmd":"start_diagnostics","record_dir":"...","max_seconds":30}` | 录制 mic/ref/out WAV |
 | `stop_diagnostics` | `{"cmd":"stop_diagnostics"}` | 结束本次录制会话 |
 
 `started` 事件中的 `supported_controls` 数组是判断某个二进制究竟接受
