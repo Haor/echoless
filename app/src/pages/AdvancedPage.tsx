@@ -329,7 +329,7 @@ function ProbeSection({
         </div>
         <div className="apright">
           <div className="prow">
-            <Hint text={t("probeRunHint")}>
+            <Hint text={t("probeRunHint")} pos="top">
               <button
                 type="button"
                 className="dopen pbtn"
