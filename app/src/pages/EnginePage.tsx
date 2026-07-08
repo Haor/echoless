@@ -10,6 +10,7 @@ import {
   downloadLocalvqeModel,
   localvqeAssets,
   macSystemInfo,
+  onLocalvqeProgress,
   openPath,
   type LocalvqeAssets,
   type MacSystemInfo,
@@ -375,13 +376,29 @@ export function EnginePage({
 
   // Available LocalVQE models/native runtime.
   const [lvAssets, setLvAssets] = useState<LocalvqeAssets | null>(null);
-  const [lvDl, setLvDl] = useState<string | null>(null);
+  // 按文件名跟踪在下载的模型:键存在=下载中,值=百分比(null=还没进度)。
+  // 单槽会串台——点了 B 就把 A 的按钮重新启用,允许对 A 发起第二次并发下载,
+  // 两个下载写同一个 .part 互相踩,导致大小/SHA 不匹配。
+  const [lvDl, setLvDl] = useState<Record<string, number | null>>({});
   const [lvErr, setLvErr] = useState<string | null>(null);
   useEffect(() => {
     localvqeAssets().then(setLvAssets).catch(() => {});
   }, []);
+  // 下载进度事件:只更新仍在下载的文件的百分比。
+  useEffect(() => {
+    const un = onLocalvqeProgress((p) => {
+      setLvDl((cur) =>
+        p.filename in cur ? { ...cur, [p.filename]: p.pct } : cur,
+      );
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
   async function downloadModel(file: string) {
-    setLvDl(file);
+    // 同名下载进行中则忽略(按钮已 disabled,这里再兜一层快速双击竞态)。
+    if (file in lvDl) return;
+    setLvDl((cur) => ({ ...cur, [file]: null }));
     setLvErr(null);
     try {
       const path = await downloadLocalvqeModel(file);
@@ -390,7 +407,11 @@ export function EnginePage({
     } catch (e) {
       setLvErr(String(e));
     } finally {
-      setLvDl(null);
+      setLvDl((cur) => {
+        const next = { ...cur };
+        delete next[file];
+        return next;
+      });
     }
   }
   const proc = (k: string) => processors.find((p) => p.kind === k);
@@ -412,8 +433,17 @@ export function EnginePage({
       {LVQE_MODELS.map((m) => {
         const found = lvAssets?.models.find((x) => x.filename === m.file);
         const selected = !!found && localvqeModel === found.path;
-        const downloading = lvDl === m.file;
-        const box = downloading ? "···" : selected ? "✓" : found ? "OK" : t("lvqeGet");
+        const downloading = m.file in lvDl;
+        const pct = lvDl[m.file];
+        const box = downloading
+          ? pct != null
+            ? `${pct}%`
+            : "···"
+          : selected
+            ? "✓"
+            : found
+              ? "OK"
+              : t("lvqeGet");
         return (
           <button
             type="button"

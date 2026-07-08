@@ -248,6 +248,38 @@ export function onProbeProgress(
   );
 }
 
+// LocalVQE 模型下载进度:后端 poller 线程轮询 .part 字节数 / pin.size。
+export interface LocalvqeProgress {
+  filename: string;
+  pct: number;
+  received: number;
+  total: number;
+}
+export function onLocalvqeProgress(
+  cb: (p: LocalvqeProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<LocalvqeProgress>("echoless://localvqe-progress", (e) =>
+    cb(e.payload),
+  );
+}
+
+// NVAFX 下载进度:CLI download-install 在 stderr 打的 nvafx_download_progress JSONL。
+// total 拿不到时(HEAD 失败)pct 为 null,前端退化为无百分比。
+export interface NvafxProgress {
+  event?: string;
+  label: string;
+  pct: number | null;
+  received: number;
+  total: number;
+}
+export function onNvafxProgress(
+  cb: (p: NvafxProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<NvafxProgress>("echoless://nvafx-progress", (e) =>
+    cb(e.payload),
+  );
+}
+
 // ---- 配置生成:把 UI 选择拼成后端 PipelineConfig(TOML) ----
 export interface PipelineCfg {
   sample_rate: number;

@@ -1,10 +1,14 @@
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::bin_resolve::{echoless_bin, localvqe_library_path, process_tap_helper_bin};
 use crate::proc::{command_output_with_timeout, command_status_error, MODEL_DOWNLOAD_TIMEOUT};
@@ -128,19 +132,30 @@ fn localvqe_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     migrate_legacy_localvqe_models(app, &dir);
     // User-supplied and in-app downloaded .gguf files both live here.
+    // Always regenerate the README so the supported-file list / SHA-256 pins
+    // track LOCALVQE_MODEL_PINS across app updates.
     let readme = dir.join("README.txt");
-    if !readme.exists() {
-        let _ = std::fs::write(
-            &readme,
-            "LocalVQE models\n\
-             ===============\n\n\
-             Put LocalVQE .gguf models in this folder. Models downloaded from\n\
-             within Echoless also land here. Any .gguf found here is detected\n\
-             automatically and can be selected on the Engine page.\n\n\
-             Official models: https://huggingface.co/LocalAI-io/LocalVQE\n",
-        );
-    }
+    let _ = std::fs::write(&readme, localvqe_models_readme());
     Ok(dir)
+}
+
+/// README.txt content for the models folder, listing every supported filename
+/// and its pinned SHA-256 (downloads are verified against these).
+fn localvqe_models_readme() -> String {
+    let mut s = String::from(
+        "LocalVQE models\n\
+         ===============\n\n\
+         Put LocalVQE .gguf models in this folder. Models downloaded from\n\
+         within Echoless also land here. Any .gguf found here is detected\n\
+         automatically and can be selected on the Engine page.\n\n\
+         Official models: https://huggingface.co/LocalAI-io/LocalVQE\n",
+    );
+    s.push_str(&format!("Pinned revision: {LOCALVQE_HF_REVISION}\n\n"));
+    s.push_str("Supported filenames (each download is verified against its SHA-256):\n\n");
+    for pin in LOCALVQE_MODEL_PINS {
+        s.push_str(&format!("  {}\n    sha256: {}\n", pin.filename, pin.sha256));
+    }
+    s
 }
 
 fn migrate_legacy_localvqe_models(app: &tauri::AppHandle, dest_dir: &Path) {
@@ -263,6 +278,25 @@ pub(crate) async fn download_localvqe_model(
         .map_err(|e| format!("download LocalVQE model task join failed: {e}"))?
 }
 
+// 同一文件的并发下载守卫:两个下载写同一个 {file}.part 会互相踩(Windows 上
+// remove_file 对已打开的文件失败,-C - 续传会接到对方的半成品 → 大小/SHA 不匹配)。
+// 同名下载进行中时直接拒绝,让前端提示「正在下载」而不是产出损坏文件。
+static DOWNLOADS_IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn downloads_in_flight() -> &'static Mutex<HashSet<String>> {
+    DOWNLOADS_IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// 持有期间把 filename 记为「下载中」,drop 时(含 ? 提前返回)自动清除。
+struct InFlightGuard(String);
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = downloads_in_flight().lock() {
+            set.remove(&self.0);
+        }
+    }
+}
+
 fn download_localvqe_model_blocking(
     app: &tauri::AppHandle,
     filename: &str,
@@ -280,6 +314,18 @@ fn download_localvqe_model_blocking(
         }
     }
 
+    // 抢占同名下载锁:已在下载则拒绝(见 DOWNLOADS_IN_FLIGHT 注释)。_inflight
+    // 在函数返回时 drop、自动释放。
+    {
+        let mut inflight = downloads_in_flight()
+            .lock()
+            .map_err(|_| "download lock poisoned".to_string())?;
+        if !inflight.insert(pin.filename.to_string()) {
+            return Err(format!("模型 {} 正在下载中,请稍候", pin.filename));
+        }
+    }
+    let _inflight = InFlightGuard(pin.filename.to_string());
+
     let tmp = dir.join(format!("{}.part", pin.filename));
     let _ = std::fs::remove_file(&tmp);
     let url = format!(
@@ -288,11 +334,65 @@ fn download_localvqe_model_blocking(
     );
     let mut curl = Command::new("curl");
     // -sS:去掉进度表(否则 curl 把整张进度表写进 stderr,报错时被原样灌进 UI)。
-    curl.args(["-sSfL", "--retry", "2", "-o"])
-        .arg(&tmp)
-        .arg(&url);
+    // 加固下载:
+    //  --http1.1        HF CDN 偶发 HTTP/2 CANCEL(curl err 92),强制 1.1 规避。
+    //  --retry-all-errors 默认只重试部分 HTTP 状态码;这个把传输层错误也纳入重试。
+    //  --retry 5 / --retry-delay 2  比原来 2 次更耐抖动。
+    //  -C -             断点续传:重试时从 .part 已下部分接着下,不从头再来。
+    //  --connect-timeout 30  连不上时早点报错,别耗满 10 分钟总超时。
+    curl.args([
+        "-sSfL",
+        "--http1.1",
+        "--retry",
+        "5",
+        "--retry-delay",
+        "2",
+        "--retry-all-errors",
+        "--connect-timeout",
+        "30",
+        "-C",
+        "-",
+        "-o",
+    ])
+    .arg(&tmp)
+    .arg(&url);
+    // 下载进度:另起 poller 线程轮询 .part 字节数 / pin.size,向前端发
+    // `echoless://localvqe-progress`。curl 本身走已测的 command_output_with_timeout
+    // 路径不动(console 抑制、超时、输出捕获照旧),进度只是旁路观测。
+    let stop = Arc::new(AtomicBool::new(false));
+    let poller = {
+        let app = app.clone();
+        let tmp = tmp.clone();
+        let filename = pin.filename.to_string();
+        let total = pin.size;
+        let stop = stop.clone();
+        std::thread::spawn(move || loop {
+            let received = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+            // 校验/落盘前封顶 99%,完成态由前端在下载 resolve 后置 100。
+            let pct = (received.min(total) * 100)
+                .checked_div(total)
+                .map(|p| (p as u32).min(99))
+                .unwrap_or(0);
+            let _ = app.emit(
+                "echoless://localvqe-progress",
+                serde_json::json!({
+                    "filename": filename,
+                    "pct": pct,
+                    "received": received,
+                    "total": total,
+                }),
+            );
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        })
+    };
     let out =
-        command_output_with_timeout(&mut curl, MODEL_DOWNLOAD_TIMEOUT, "LocalVQE model download")?;
+        command_output_with_timeout(&mut curl, MODEL_DOWNLOAD_TIMEOUT, "LocalVQE model download");
+    stop.store(true, Ordering::Relaxed);
+    let _ = poller.join();
+    let out = out?;
     if !out.status.success() {
         let _ = std::fs::remove_file(&tmp);
         return Err(format!(

@@ -1168,7 +1168,8 @@ button.ecard:disabled {
 .cdetail.warn {
   color: var(--warn);
 }
-/* LocalVQE 下载错误:最多 3 行截断(后端已截 240 字,双保险),全文在 title */
+/* LocalVQE 下载错误:小字号 mono、最多 3 行截断(后端已截 240 字,双保险),
+   全文在 title。不设 font-size 会继承卡片大字号,长 URL 撑破卡片 */
 .cdetail.warn.lverr {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1176,6 +1177,11 @@ button.ecard:disabled {
   overflow: hidden;
   overflow-wrap: anywhere;
   white-space: normal;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.35;
+  letter-spacing: 0.2px;
 }
 .drow.nvrt {
   margin-top: 9px;
