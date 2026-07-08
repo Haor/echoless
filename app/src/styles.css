@@ -764,9 +764,9 @@ body {
   border-color: var(--t-mut);
 }
 .lvbox.miss {
-  /* 默认与 OK/✓ 同色(--t-soft,消除 get 偏暗);仅悬停时逐渐亮成橙(用户 2026-07-06) */
+  /* 静态与 OK/✓ 完全同款(color+border 均 --t-soft/--t-mut,消除 get 偏暗);仅悬停亮成橙(用户 2026-07-06) */
   color: var(--t-soft);
-  border-color: var(--t-faint);
+  border-color: var(--t-mut);
   transition:
     color 0.18s ease,
     border-color 0.18s ease;
