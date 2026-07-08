@@ -13,6 +13,8 @@ pub(crate) const JSON_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const VALIDATE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) const PROBE_DELAY_TIMEOUT: Duration = Duration::from_secs(45);
 pub(crate) const NVAFX_INSTALL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+// download-install 含 ~1 GB 下载:10 分钟对慢速链路(< ~14 Mbps)会中途被杀,给 30 分钟。
+pub(crate) const NVAFX_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 pub(crate) const MODEL_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// 运行中的 echoless run 子进程 + 它专属的「正在被主动停止」标记。

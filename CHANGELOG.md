@@ -55,6 +55,11 @@ UI cleanup.
   downloads, and the backend rejects a duplicate concurrent download of the same
   file instead of letting the two clobber a shared partial file (which produced
   "size mismatch" errors until the page was reopened).
+- The bundled `echoless` CLI now reports version 1.1.0 (the Rust workspace was
+  left at 1.0.0 while the app shipped as 1.1.0).
+- NVAFX runtime download is more robust: a longer timeout for the ~1 GB fetch,
+  a byte-count readout when the server doesn't report a total size (so progress
+  isn't blank), and stderr context included on timeout.
 
 ## [1.0.0] — 2026-07-06
 

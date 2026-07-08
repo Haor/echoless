@@ -49,6 +49,7 @@ interface Props {
   busy: boolean;
   pct?: number | null;
   stage?: "runtime" | "model" | null;
+  recv?: number | null;
   dev: boolean;
   devState: RtxState;
   onDevState: (s: RtxState) => void;
@@ -63,6 +64,7 @@ export function RtxSetupPage({
   busy,
   pct,
   stage,
+  recv,
   dev,
   devState,
   onDevState,
@@ -264,7 +266,13 @@ export function RtxSetupPage({
               {busy ? (
                 <span className="wzbusy">
                   {stage != null
-                    ? `${t("wzDl")} · ${stage === "model" ? t("wzModel") : t("wzCommon")}${pct != null ? ` ${pct}%` : ""}`
+                    ? `${t("wzDl")} · ${stage === "model" ? t("wzModel") : t("wzCommon")}${
+                        pct != null
+                          ? ` ${pct}%`
+                          : recv != null && recv > 0
+                            ? ` ${(recv / 1048576).toFixed(1)} MiB`
+                            : ""
+                      }`
                     : t("wzDownloading")}
                 </span>
               ) : (

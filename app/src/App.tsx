@@ -269,6 +269,7 @@ type AppState = {
   nvafxBusy: boolean;
   nvafxPct: number | null;
   nvafxStage: "runtime" | "model" | null;
+  nvafxRecv: number | null;
   dev: boolean;
   devRtxState: RtxState;
   devMicState: MicState;
@@ -328,6 +329,7 @@ const INITIAL_APP_STATE: AppState = {
   nvafxBusy: false,
   nvafxPct: null,
   nvafxStage: null,
+  nvafxRecv: null,
   dev: false,
   devRtxState: "runtime_not_installed",
   devMicState: "missing",
@@ -1244,6 +1246,7 @@ function AppShell() {
     nvafxBusy,
     nvafxPct,
     nvafxStage,
+    nvafxRecv,
     dev,
     devRtxState,
     devMicState,
@@ -1434,12 +1437,13 @@ function AppShell() {
 
   // NVAFX 下载进度:CLI download-install 在 stderr 打的 JSONL,后端转成事件。
   // label 是「common runtime」/「model」两段,归一成 stage 让 UI 分别标注。
+  // pct 为 null(GitHub CDN 的 HEAD 拿不到 Content-Length)时,前端退化为显示已下字节数。
   useEffect(() => {
     let alive = true;
     const un = onNvafxProgress((p) => {
       if (!alive) return;
       const stage = /model/i.test(p.label) ? "model" : "runtime";
-      updateApp({ nvafxPct: p.pct, nvafxStage: stage });
+      updateApp({ nvafxPct: p.pct, nvafxStage: stage, nvafxRecv: p.received });
     });
     return () => {
       alive = false;
@@ -1563,33 +1567,74 @@ function AppShell() {
   // 从公共 GitHub release 下载并安装(按 GPU 架构自动选模型)。dev 下模拟。
   function downloadInstallNvafx() {
     if (dev) {
-      // 模拟真实下载:common runtime 0→99,再 model 0→99,然后完成。真实后端就是
-      // 两个 asset 顺序下载、各自 0→99,所以这里也走两段(各带 stage 标签),对齐 UI。
-      const stages = ["runtime", "model"] as const;
-      updateApp({ nvafxBusy: true, nvafxPct: 0, nvafxStage: stages[0], err: null });
+      // 模拟真实下载的两段(runtime → model),顺带演示两种显示模式:
+      //  runtime 段有 Content-Length → 显示百分比;
+      //  model 段模拟 GitHub CDN 的 HEAD 拿不到 Content-Length(pct=null)→ 走已下字节数兜底。
+      const RUNTIME_TOTAL = 955 * 1024 * 1024;
+      const MODEL_TOTAL = 46 * 1024 * 1024;
+      updateApp({
+        nvafxBusy: true,
+        nvafxStage: "runtime",
+        nvafxPct: 0,
+        nvafxRecv: 0,
+        err: null,
+      });
       let phase = 0;
       let pct = 0;
       const timer = window.setInterval(() => {
         pct += 6;
         if (pct >= 100) {
           phase += 1;
-          if (phase >= stages.length) {
+          if (phase >= 2) {
             window.clearInterval(timer);
-            updateApp({ devRtxState: "ready", nvafxBusy: false, nvafxPct: null, nvafxStage: null });
+            updateApp({
+              devRtxState: "ready",
+              nvafxBusy: false,
+              nvafxPct: null,
+              nvafxStage: null,
+              nvafxRecv: null,
+            });
             return;
           }
           pct = 0; // 下一个 asset 从头开始
         }
-        updateApp({ nvafxPct: Math.min(pct, 99), nvafxStage: stages[phase] });
+        if (phase === 0) {
+          const p = Math.min(pct, 99);
+          updateApp({
+            nvafxStage: "runtime",
+            nvafxPct: p,
+            nvafxRecv: Math.round((p / 100) * RUNTIME_TOTAL),
+          });
+        } else {
+          // model 段:无 total → pct=null,只报字节数
+          updateApp({
+            nvafxStage: "model",
+            nvafxPct: null,
+            nvafxRecv: Math.round((Math.min(pct, 99) / 100) * MODEL_TOTAL),
+          });
+        }
       }, 150);
       return;
     }
     const runtimeDir = (paramsRef.current.runtime_dir as string) || undefined;
-    updateApp({ nvafxBusy: true, nvafxPct: null, nvafxStage: null, err: null });
+    updateApp({
+      nvafxBusy: true,
+      nvafxPct: null,
+      nvafxStage: null,
+      nvafxRecv: null,
+      err: null,
+    });
     nvafxDownloadInstall({ runtimeDir })
       .then((nvafx) => updateApp({ nvafx }))
       .catch((e) => noteError(String(e)))
-      .finally(() => updateApp({ nvafxBusy: false, nvafxPct: null, nvafxStage: null }));
+      .finally(() =>
+        updateApp({
+          nvafxBusy: false,
+          nvafxPct: null,
+          nvafxStage: null,
+          nvafxRecv: null,
+        }),
+      );
   }
 
   const platformView: Platform = dev && devPlatform ? devPlatform : platform;
@@ -2028,6 +2073,7 @@ function AppShell() {
             busy={nvafxBusy}
             pct={nvafxPct}
             stage={nvafxStage}
+            recv={nvafxRecv}
             dev={dev}
             devState={devRtxState}
             onDevState={chooseDevRtxState}

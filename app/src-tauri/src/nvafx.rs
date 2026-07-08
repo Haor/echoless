@@ -8,8 +8,8 @@ use tauri::Emitter;
 use crate::bin_resolve::{echoless_command, suppress_child_console};
 use crate::proc::{
     command_output_with_timeout, command_status_error, parse_jsonl_line_event, push_tail_line,
-    run_json_async, run_json_blocking, JsonlLineEvent, JSON_COMMAND_TIMEOUT, NVAFX_INSTALL_TIMEOUT,
-    STREAM_TAIL_LIMIT_BYTES,
+    run_json_async, run_json_blocking, JsonlLineEvent, JSON_COMMAND_TIMEOUT,
+    NVAFX_DOWNLOAD_TIMEOUT, NVAFX_INSTALL_TIMEOUT, STREAM_TAIL_LIMIT_BYTES,
 };
 
 /// NVIDIA AFX / RTX AEC 引擎就绪探针。
@@ -136,26 +136,32 @@ pub(crate) async fn nvafx_download_install(
             })
         });
 
-        // 带超时等待。
+        // 带超时等待(下载 ~1 GB,用较宽的 NVAFX_DOWNLOAD_TIMEOUT)。超时返回 None。
         let started = Instant::now();
-        let status = loop {
+        let exit_status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if started.elapsed() >= NVAFX_INSTALL_TIMEOUT => {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if started.elapsed() >= NVAFX_DOWNLOAD_TIMEOUT => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!(
-                        "nvafx download-install timed out after {}s",
-                        NVAFX_INSTALL_TIMEOUT.as_secs()
-                    ));
+                    break None;
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(50)),
                 Err(e) => return Err(format!("wait nvafx download-install failed: {e}")),
             }
         };
 
+        // 无论成功/超时,kill 后管道 EOF、reader 线程自然收尾;join 拿到 stdout 与
+        // stderr 尾巴(诊断用),避免线程游离。
         let stdout_str = hout.and_then(|h| h.join().ok()).unwrap_or_default();
         let stderr_tail = herr.and_then(|h| h.join().ok()).unwrap_or_default();
+        let Some(status) = exit_status else {
+            return Err(format!(
+                "nvafx download-install timed out after {}s; {}",
+                NVAFX_DOWNLOAD_TIMEOUT.as_secs(),
+                stderr_tail.trim()
+            ));
+        };
         if !status.success() {
             return Err(format!(
                 "nvafx download-install failed with status {status}; {}",
