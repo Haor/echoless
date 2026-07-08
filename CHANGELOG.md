@@ -21,11 +21,18 @@ UI cleanup.
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Output clock-skew detection** in diagnostics, so a drifting device is
   reported directly instead of showing up as unexplained WAV artifacts.
+- **Live download progress.** LocalVQE model downloads show a percentage in the
+  model box (was a static "···"), and the RTX/NVAFX runtime download shows a
+  percentage during setup.
 
 ### Changed
 - Platform-aware UI polish across the Engine, Diagnostics, and RTX pages.
 - Advanced help texts rewritten as plain definitions — each option now states
   what it is, without jargon or tuning chatter.
+- **Hardened LocalVQE model downloads:** forced HTTP/1.1 (dodges the
+  Hugging Face CDN's occasional HTTP/2 stream cancels), more retries with
+  resume. The models folder's `README.txt` now lists every supported filename
+  with its pinned SHA-256.
 
 ### Fixed
 - **Delay probe** no longer hangs or fails. Fixed a dev-only freeze where the
@@ -41,6 +48,13 @@ UI cleanup.
 - macOS "Open Settings" for system-audio recording is no longer blocked by the
   deep-link allowlist.
 - LocalVQE GET badge now matches the color of the OK / checkmark states.
+- A LocalVQE download-failure message no longer overflows the Engine card — it
+  renders small and clamps to three lines, with the full text on hover.
+- Starting a second LocalVQE download while one is in flight no longer corrupts
+  the first. Each model is now tracked and disabled independently while it
+  downloads, and the backend rejects a duplicate concurrent download of the same
+  file instead of letting the two clobber a shared partial file (which produced
+  "size mismatch" errors until the page was reopened).
 
 ## [1.0.0] — 2026-07-06
 
