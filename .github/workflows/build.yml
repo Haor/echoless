@@ -547,3 +547,6 @@ jobs:
           files: release-assets/*
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # Semver pre-release tags (a hyphen suffix, e.g. v1.1.0-rc.1) publish as
+          # a GitHub pre-release; stable tags (v1.1.0) publish as a full release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
