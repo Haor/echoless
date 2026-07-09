@@ -4,10 +4,11 @@ All notable changes to Echoless are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org).
 
-## [1.1.0] — 2026-07-08
+## [1.1.0] — 2026-07-09
 
 A stability and polish release on top of 1.0.0: adaptive handling of audio
-clock drift to kill periodic dropouts, a reliable delay probe, and a wide
+clock drift to kill periodic dropouts, a reliable delay probe, a real fix for
+the random black-screen crash, persistent crash-forensics logging, and a wide
 UI cleanup.
 
 ### Added
@@ -21,6 +22,15 @@ UI cleanup.
   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Output clock-skew detection** in diagnostics, so a drifting device is
   reported directly instead of showing up as unexplained WAV artifacts.
+- **Clock skew in the Health panel.** The redundant "stale drops" counter
+  (always the sum of mic stale + ref stale) gave its slot to a live clock-skew
+  readout that turns red with the backend warning; every Health counter now
+  has a hover tooltip explaining what it measures and when to worry.
+- **Persistent crash-forensics log** at `<data dir>/logs/echoless-<stamp>.log`
+  (next to the diagnostics folder). Captures app start, engine start/exit with
+  crash attribution, full CLI stderr, and frontend errors with component
+  stacks — a bug report can now just attach the file. One file per launch,
+  pruned on startup (7 days / 20 files kept), 8 MiB per-file cap.
 - **Live download progress.** LocalVQE model downloads show a percentage in the
   model box (was a static "···"), and the RTX/NVAFX runtime download shows a
   percentage during setup.
@@ -33,8 +43,29 @@ UI cleanup.
   Hugging Face CDN's occasional HTTP/2 stream cancels), more retries with
   resume. The models folder's `README.txt` now lists every supported filename
   with its pinned SHA-256.
+- In-app tooltips unified on the themed popup (now portal-based so scrolling
+  or clipping containers can't cut it off); native tooltips are kept only
+  where long filesystem paths need unconstrained width.
 
 ### Fixed
+- **The random black screen.** Since 1.0.0 the app could go fully black and
+  unresponsive after running for a while — most often on machines whose audio
+  clock drift hovered around the warning threshold. Root cause: backend
+  `clock_skew_warning/resolved` events share the status event channel, the
+  frontend dispatcher treated every unrecognized event as a status frame, and
+  the resulting undefined telemetry values crashed a render
+  (`undefined.toFixed`) with no error boundary to contain it — React unmounted
+  the whole UI. Fixed in depth: the dispatcher now whitelists status frames,
+  telemetry values are null-coalesced, number formatting guards against
+  non-finite values, and new React error boundaries (app-wide plus around the
+  telemetry panel) turn any future render crash into a contained fallback with
+  a Retry button instead of a black window.
+- **Clock-skew warnings no longer flap on scheduler hiccups.** A window switch
+  or scheduling stall could spike one 5-second measurement window to 8%+ and
+  bounce warning/resolved back and forth. The detector now smooths readouts
+  with an EMA and only enters the warning state after two consecutive
+  over-threshold windows — isolated spikes never alert, while real sustained
+  mismatch still alerts within ~10 s.
 - **Delay probe** no longer hangs or fails. Fixed a dev-only freeze where the
   probe sat at PROBING with no progress and never completed, the `run` helper
   exiting too early or not at all, and made the probe fill the correct delay
@@ -43,8 +74,9 @@ UI cleanup.
   cached and shown immediately on entry.
 - The RUN PROBE help tooltip now opens upward so it no longer covers the
   progress dots and result beneath it.
-- Fixed a black-screen / noise-floor issue on launch, and disabled the in-app
-  right-click browser menu.
+- Fixed the frozen noise-floor grain on Windows, made the WebGL grain survive
+  GPU context loss on both platforms, and disabled the in-app right-click
+  browser menu.
 - macOS "Open Settings" for system-audio recording is no longer blocked by the
   deep-link allowlist.
 - LocalVQE GET badge now matches the color of the OK / checkmark states.
