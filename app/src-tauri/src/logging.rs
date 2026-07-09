@@ -68,9 +68,9 @@ pub(crate) fn log(level: &str, source: &str, msg: &str) {
     let line = format!("{} [{level}] {source}: {msg}\n", line_stamp());
     let bytes = line.len() as u64;
     if sink.written + bytes > MAX_BYTES {
-        let _ = sink
-            .file
-            .write_all(format!("{} [warn] log: size cap reached, truncated\n", line_stamp()).as_bytes());
+        let _ = sink.file.write_all(
+            format!("{} [warn] log: size cap reached, truncated\n", line_stamp()).as_bytes(),
+        );
         sink.truncated = true;
         return;
     }
@@ -81,7 +81,9 @@ pub(crate) fn log(level: &str, source: &str, msg: &str) {
 
 /// 清理:先删超龄,再按 mtime 新→旧只保留 KEEP_FILES-1 个(本次启动还要新建一个)。
 fn prune(dir: &std::path::Path) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     let now = SystemTime::now();
     let mut files: Vec<(PathBuf, SystemTime)> = entries
         .flatten()

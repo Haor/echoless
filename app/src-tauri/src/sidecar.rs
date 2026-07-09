@@ -183,7 +183,11 @@ pub(crate) fn start_run(
         Ok(child) => child,
         Err(err) => {
             cleanup_run_config(&path);
-            crate::logging::log("error", "sidecar", &format!("spawn echoless run failed: {err}"));
+            crate::logging::log(
+                "error",
+                "sidecar",
+                &format!("spawn echoless run failed: {err}"),
+            );
             return Err(format!("spawn echoless run failed: {err}"));
         }
     };
@@ -222,13 +226,21 @@ pub(crate) fn start_run(
                         let _ = app_out.emit("echoless://status", v);
                     }
                     JsonlLineEvent::Unparsed(line) => {
-                        crate::logging::log("warn", "sidecar", &format!("unparsed status line: {line}"));
+                        crate::logging::log(
+                            "warn",
+                            "sidecar",
+                            &format!("unparsed status line: {line}"),
+                        );
                         let _ =
                             app_out.emit("echoless://log", format!("unparsed status line: {line}"));
                     }
                 },
                 Err(err) => {
-                    crate::logging::log("error", "sidecar", &format!("failed to read echoless stdout: {err}"));
+                    crate::logging::log(
+                        "error",
+                        "sidecar",
+                        &format!("failed to read echoless stdout: {err}"),
+                    );
                     let _ = app_out.emit(
                         "echoless://log",
                         format!("failed to read echoless stdout: {err}"),
