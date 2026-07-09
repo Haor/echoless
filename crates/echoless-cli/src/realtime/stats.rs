@@ -252,7 +252,11 @@ impl ClockSkewDetector {
         // 任一平静窗立即断裂 → 孤立尖峰(切窗/调度抖动)永远凑不齐连续窗。
         let raw_win = ClockSkewSnapshot::from_ratios(raw_output, raw_ref);
         let over = raw_output > CLOCK_SKEW_ENTER_RATIO && raw_win.ref_correlated;
-        self.enter_streak = if over { self.enter_streak.saturating_add(1) } else { 0 };
+        self.enter_streak = if over {
+            self.enter_streak.saturating_add(1)
+        } else {
+            0
+        };
 
         let event = if !self.warning && self.enter_streak >= CLOCK_SKEW_ENTER_WINDOWS {
             self.warning = true;
@@ -848,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn clock_skew_detector_ignores_transient_single_window_spike(){
+    fn clock_skew_detector_ignores_transient_single_window_spike() {
         // 回归(2026-07-09 黑屏 RCA 遗留项):单个满窗的瞬时尖峰(如 cmd+tab 切窗
         // 挤出的 underrun 突发)不得触发告警 —— 尖峰过后回零,streak 断裂。
         let mut detector = ClockSkewDetector::new(48_000);
@@ -889,8 +893,8 @@ mod tests {
         // T3 场景:ref_stale_drops 恒 0,参考侧佐证经 ref_input_drops 传入。检测器仍应告警
         // (回归护栏:T3 不得让 T1 的时钟错配告警失效)。
         let mut detector = ClockSkewDetector::new(48_000);
-        let ref_signal = ref_pace_loss(0, 10_752); // T3: stale=0, input=10_752
-        // 两个连续满窗(enter_streak 消抖)后告警。
+        // T3: stale=0, input=10_752;两个连续满窗(enter_streak 消抖)后告警。
+        let ref_signal = ref_pace_loss(0, 10_752);
         for _ in 0..9 {
             assert!(detector.observe(48_000, 10_752, ref_signal).is_none());
         }
