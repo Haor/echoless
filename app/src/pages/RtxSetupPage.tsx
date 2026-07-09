@@ -4,6 +4,7 @@ import type { NvafxDoctor } from "../types";
 import { openUrl } from "../api";
 import { useI18n } from "../i18n";
 import { SegButtons } from "../components/Controls";
+import { Hint } from "../components/Hint";
 import {
   deriveRtxState,
   ladderStatus,
@@ -233,28 +234,30 @@ export function RtxSetupPage({
             <div className="wzassets">
               <div>
                 <span className="dk">{t("wzCommon")}</span>{" "}
-                <button
-                  type="button"
-                  className="wzasset plainbtn"
-                  onClick={() => openUrl(nvafxAssetUrl(NVAFX_COMMON_ASSET))}
-                  title={t("wzAssetDownload")}
-                >
-                  {NVAFX_COMMON_ASSET}
-                </button>
+                <Hint text={t("wzAssetDownload")} attach>
+                  <button
+                    type="button"
+                    className="wzasset plainbtn"
+                    onClick={() => openUrl(nvafxAssetUrl(NVAFX_COMMON_ASSET))}
+                  >
+                    {NVAFX_COMMON_ASSET}
+                  </button>
+                </Hint>
                 <span className="sz"> · 955 MiB</span>
               </div>
               <div>
                 <span className="dk">{t("wzModel")}</span>{" "}
                 {arch ? (
                   <>
-                    <button
-                      type="button"
-                      className="wzasset plainbtn"
-                      onClick={() => openUrl(nvafxAssetUrl(nvafxModelAsset(arch)))}
-                      title={t("wzAssetDownload")}
-                    >
-                      {nvafxModelAsset(arch)}
-                    </button>
+                    <Hint text={t("wzAssetDownload")} attach>
+                      <button
+                        type="button"
+                        className="wzasset plainbtn"
+                        onClick={() => openUrl(nvafxAssetUrl(nvafxModelAsset(arch)))}
+                      >
+                        {nvafxModelAsset(arch)}
+                      </button>
+                    </Hint>
                     <span className="sz"> · 46 MiB</span>
                   </>
                 ) : (

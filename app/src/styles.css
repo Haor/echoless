@@ -382,15 +382,15 @@ body {
   margin-top: 0;
 }
 
-/* 自绘悬浮提示(单色直角,匹配主题) */
+/* 自绘悬浮提示(单色直角,匹配主题)。弹层经 portal 挂 body + fixed 定位
+   (坐标由 Hint 组件按锚点矩形计算),在 overflow:hidden 容器里也不被裁剪 */
 .hint {
   position: relative;
   display: inline-flex;
+  min-width: 0;
 }
 .hint-pop {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  position: fixed;
   z-index: 80;
   background: var(--raised);
   border: 1px solid var(--line);
@@ -403,11 +403,6 @@ body {
   max-width: 260px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
   pointer-events: none;
-}
-/* 下方紧跟动态内容(RUN PROBE 的进度灯/结果)时往上弹,避免遮挡 */
-.hint-pop.top {
-  top: auto;
-  bottom: calc(100% + 6px);
 }
 /* Advanced:// 分区 + 2 列固定网格 */
 /* v3:段落头 [ 取景框 ](bh_071);// 仅保留于 slashText 行内标 */

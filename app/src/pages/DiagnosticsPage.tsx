@@ -4,6 +4,7 @@ import type { DoctorAudio, Platform } from "../types";
 import { openPath, openUrl } from "../api";
 import { useI18n } from "../i18n";
 import { Field } from "../components/Controls";
+import { Hint } from "../components/Hint";
 import { Toggle } from "../components/Toggle";
 
 // macOS 隐私设置深链。麦克风有专属锚点;系统录音(14.4+ Audio Capture)无稳定
@@ -84,15 +85,31 @@ export function DiagnosticsPage({
     }
   }
 
-  const counters: { label: string; value: number | string; warn: boolean }[] = [
-    { label: "input drops", value: health.input_drops, warn: health.input_drops > 0 },
-    { label: "ref underruns", value: health.ref_underruns, warn: health.ref_underruns > 0 },
-    { label: "output underruns", value: health.output_underruns, warn: health.output_underruns > 0 },
-    { label: "mic stale", value: health.mic_stale_drops, warn: health.mic_stale_drops > 0 },
-    { label: "ref stale", value: health.ref_stale_drops, warn: health.ref_stale_drops > 0 },
-    { label: "stale drops", value: health.stale_drops, warn: health.stale_drops > 0 },
-    { label: "runtime errors", value: health.runtime_errors, warn: health.runtime_errors > 0 },
-    { label: "diverged", value: health.diverged ? "YES" : "NO", warn: health.diverged },
+  // pos:"top" = 提示往上弹。列表按两列网格排布,最下两排(后 4 项)贴近窗口
+  // 底缘,向下弹会被视口截掉。
+  const counters: {
+    label: string;
+    value: number | string;
+    warn: boolean;
+    hint: string;
+    pos?: "top";
+  }[] = [
+    { label: "input drops", value: health.input_drops, warn: health.input_drops > 0, hint: t("hInputDrops") },
+    { label: "ref underruns", value: health.ref_underruns, warn: health.ref_underruns > 0, hint: t("hRefUnderruns") },
+    { label: "output underruns", value: health.output_underruns, warn: health.output_underruns > 0, hint: t("hOutputUnderruns") },
+    { label: "mic stale", value: health.mic_stale_drops, warn: health.mic_stale_drops > 0, hint: t("hMicStale") },
+    { label: "ref stale", value: health.ref_stale_drops, warn: health.ref_stale_drops > 0, hint: t("hRefStale"), pos: "top" },
+    // stale drops(= mic stale + ref stale 的冗余和)让位给 clock skew:
+    // 时钟漂移是断续/回声残留的常见根因,比一个可心算的加总更值得占一格。
+    {
+      label: "clock skew",
+      value: health.clock_skew_pct === null ? "—" : `${health.clock_skew_pct.toFixed(1)}%`,
+      warn: health.clock_skew_warning,
+      hint: t("clockSkewHint"),
+      pos: "top",
+    },
+    { label: "runtime errors", value: health.runtime_errors, warn: health.runtime_errors > 0, hint: t("hRuntimeErrors"), pos: "top" },
+    { label: "diverged", value: health.diverged ? "YES" : "NO", warn: health.diverged, hint: t("hDiverged"), pos: "top" },
   ];
 
   return (
@@ -241,7 +258,9 @@ export function DiagnosticsPage({
       <div className={`acols ${running ? "" : "dim-soft"}`}>
         {counters.map((c) => (
           <div className="arow" key={c.label}>
-            <span className="alabel">{c.label}</span>
+            <Hint text={c.hint} pos={c.pos}>
+              <span className="alabel">{c.label}</span>
+            </Hint>
             <span className={`aval dval ${c.warn ? "warn" : ""}`}>
               {c.value}
             </span>

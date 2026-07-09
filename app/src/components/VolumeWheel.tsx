@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { animate, scrambleText, utils } from "animejs";
 import { outputLevelToGain } from "../api";
 import { useI18n } from "../i18n";
+import { Hint } from "./Hint";
 
 // 输出音量(最终送给虚拟麦克风的人声)。刻度 0-100:0=静音 / 50=原声(0dB) / 100=3x(+9.542dB)。
 // 鼠标悬停 + 滚轮调节。暂为前端 UI,后端对输出样本乘 output_gain 后即生效。
@@ -103,9 +104,9 @@ export function VolumeWheel({
   }, [onChange]);
 
   return (
+    <Hint text={t("volMuteHint")} pos="top">
     <span
       className="vol"
-      title={t("volMuteHint")}
       role="button"
       tabIndex={0}
       aria-label={t("volMuteHint")}
@@ -138,5 +139,6 @@ export function VolumeWheel({
       {/* 悬停浮现「 · +5.4 dB」,点分隔同其它参数 */}
       <span ref={dbRef} className="voldb" />
     </span>
+    </Hint>
   );
 }

@@ -276,6 +276,40 @@ const D: Record<string, { en: string; zh: string }> = {
   openFolder: { en: "open", zh: "打开" },
   secRecord: { en: "Record", zh: "录制" },
   secHealth: { en: "Health", zh: "健康" },
+  // Health · clock skew 悬停提示(不点名任何具体虚拟音频软件)
+  clockSkewHint: {
+    en: "Output clock drift vs. the microphone clock. High or unstable drift usually means a device in the audio chain runs at a mismatched sample rate — set every input/output device (including virtual audio devices) to the same rate, e.g. 48000 Hz.",
+    zh: "输出时钟相对麦克风时钟的漂移。漂移偏高或不稳定,通常说明音频链路中有设备采样率不一致——请把所有输入/输出设备(含虚拟音频设备)统一为同一采样率,如 48000 Hz。",
+  },
+  // Health · 其余计数器悬停提示
+  hInputDrops: {
+    en: "Microphone/reference frames dropped before processing — the capture side couldn't keep up. Occasional drops are harmless; a steadily growing count means CPU pressure or a misbehaving input device.",
+    zh: "进入处理前被丢弃的麦克风/参考帧——采集侧没跟上。偶发丢帧无碍;持续增长说明 CPU 吃紧或输入设备异常。",
+  },
+  hRefUnderruns: {
+    en: "The echo canceller needed reference audio (system playback) but none had arrived yet. Frequent underruns weaken echo cancellation — often a sign of reference capture stalling.",
+    zh: "回声消除需要参考音频(系统播放声)时参考还没到。频繁欠载会削弱回声消除效果——常见原因是参考采集卡顿。",
+  },
+  hOutputUnderruns: {
+    en: "The output device asked for audio but the processed stream wasn't ready — heard as clicks or dropouts. Usually clock drift or CPU pressure.",
+    zh: "输出设备要数据时处理后的音频还没就绪——听感为咔哒/断续。通常是时钟漂移或 CPU 吃紧。",
+  },
+  hMicStale: {
+    en: "Microphone frames discarded for arriving too late to be useful. Growing count points at input-side stalls (device sleep, USB hiccups, scheduling).",
+    zh: "因到得太晚而被丢弃的麦克风帧。持续增长指向输入侧卡顿(设备休眠、USB 抖动、系统调度)。",
+  },
+  hRefStale: {
+    en: "Reference frames discarded for arriving too late to align with the microphone. Growing count degrades echo cancellation — check reference capture stability.",
+    zh: "因到得太晚、无法与麦克风对齐而被丢弃的参考帧。持续增长会劣化回声消除——检查参考采集是否稳定。",
+  },
+  hRuntimeErrors: {
+    en: "Errors thrown by the processing engine at runtime. Any non-zero value is worth a look — check the session log for details.",
+    zh: "处理引擎运行期抛出的错误数。非零就值得关注——详情看会话日志。",
+  },
+  hDiverged: {
+    en: "The echo canceller's internal filter has diverged (output no longer trustworthy). The engine flags this state; if it persists, restart the run and check clock skew.",
+    zh: "回声消除内部滤波器已发散(输出不再可信)。若持续出现,重启运行并检查时钟漂移。",
+  },
   // Diagnostics · macOS 权限检查(麦克风 + 系统录音)
   secPermissions: { en: "System Permissions", zh: "系统权限" },
   permMic: { en: "Microphone", zh: "麦克风" },
