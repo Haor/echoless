@@ -107,7 +107,7 @@ fn prune(dir: &std::path::Path) {
         }
         !expired
     });
-    files.sort_by(|a, b| b.1.cmp(&a.1)); // 新在前
+    files.sort_by_key(|entry| std::cmp::Reverse(entry.1)); // 新在前
     for (p, _) in files.into_iter().skip(KEEP_FILES.saturating_sub(1)) {
         let _ = fs::remove_file(p);
     }
