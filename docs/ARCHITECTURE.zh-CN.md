@@ -25,7 +25,7 @@ CLI 手动完成(见 [CLI.zh-CN.md](CLI.zh-CN.md))。
 |---|---|
 | `crates/echoless-cli` | `echoless` 二进制:实时管线、设备 I/O(cpal)、延迟探测、doctor、NVAFX 安装器 |
 | `crates/echoless-core` | 配置模型(TOML)、帧/链原语、平台默认值 |
-| `crates/echoless-processors` | 统一 trait 之下的引擎实现:`aec3`、`localvqe`、`nvidia_afx_aec`、`speex`、`passthrough` |
+| `crates/echoless-processors` | 统一 trait 之下的引擎实现:`aec3`、`localvqe`、`nvidia_afx_aec`、`passthrough` |
 | `crates/echoless-audio-io` | 离线与诊断共用的 WAV / 采样格式辅助工具 |
 | `crates/echoless-paths` | 品牌数据目录解析(模型、下载) |
 | `aec3/` | **Rust 实现的 WebRTC AEC3** —— 独立的 cargo workspace,BSD-3-Clause,详见下文 |

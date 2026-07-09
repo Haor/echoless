@@ -26,7 +26,7 @@ commands over stdin. Anything the GUI does can be done by hand with the CLI
 |---|---|
 | `crates/echoless-cli` | The `echoless` binary: realtime pipeline, device I/O (cpal), delay probe, doctor, NVAFX installer |
 | `crates/echoless-core` | Config model (TOML), frame/chain primitives, platform defaults |
-| `crates/echoless-processors` | Engine implementations behind one trait: `aec3`, `localvqe`, `nvidia_afx_aec`, `speex`, `passthrough` |
+| `crates/echoless-processors` | Engine implementations behind one trait: `aec3`, `localvqe`, `nvidia_afx_aec`, `passthrough` |
 | `crates/echoless-audio-io` | WAV / sample-format helpers shared by offline and diagnostics |
 | `crates/echoless-paths` | Brand data dir resolution (models, downloads) |
 | `aec3/` | **WebRTC AEC3 in Rust** — its own cargo workspace, BSD-3-Clause, see below |
