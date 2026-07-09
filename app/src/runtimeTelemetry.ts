@@ -19,6 +19,9 @@ export interface Health {
   stale_drops: number;
   runtime_errors: number;
   diverged: boolean;
+  // 时钟漂移:输出时钟相对麦克风时钟的偏差百分比 + 后端告警位(带滞回)。
+  clock_skew_pct: number | null;
+  clock_skew_warning: boolean;
   session_dir: string | null;
   backend_error: string | null;
   recording: boolean;
@@ -44,6 +47,8 @@ const ZERO_HEALTH: Health = {
   stale_drops: 0,
   runtime_errors: 0,
   diverged: false,
+  clock_skew_pct: null,
+  clock_skew_warning: false,
   session_dir: null,
   backend_error: null,
   recording: false,
@@ -80,15 +85,22 @@ export function setDiagnosticsSessionDir(sessionDir: string | null) {
   emit();
 }
 
-export function publishRuntimeStatus(s: RuntimeStatus) {
-  liveSnapshot = {
-    mic: s.mic_dbfs,
-    ref: s.ref_dbfs,
-    out: s.out_dbfs,
-    lat: s.estimated_user_latency_ms,
+// status → Live 的纯映射(可单测的回归 seam)。?? null 兜底:后端某帧缺这些
+// 字段时裸取会得到 undefined(非 null),流进 dash 的 toFixed 会抛错卸载整树
+// (黑屏)。与下方 healthSnapshot 的兜底对齐。
+export function statusToLive(s: RuntimeStatus): Live {
+  return {
+    mic: s.mic_dbfs ?? null,
+    ref: s.ref_dbfs ?? null,
+    out: s.out_dbfs ?? null,
+    lat: s.estimated_user_latency_ms ?? null,
     healthy: !s.diverged && s.runtime_errors === 0 && !s.last_backend_error,
     seq: s.frames,
   };
+}
+
+export function publishRuntimeStatus(s: RuntimeStatus) {
+  liveSnapshot = statusToLive(s);
   healthSnapshot = {
     input_drops: s.input_drops ?? 0,
     ref_underruns: s.ref_underruns ?? 0,
@@ -98,6 +110,10 @@ export function publishRuntimeStatus(s: RuntimeStatus) {
     stale_drops: s.stale_drops ?? 0,
     runtime_errors: s.runtime_errors ?? 0,
     diverged: Boolean(s.diverged),
+    clock_skew_pct: Number.isFinite(s.output_skew_pct as number)
+      ? (s.output_skew_pct as number)
+      : null,
+    clock_skew_warning: Boolean(s.clock_skew_warning),
     session_dir: s.diagnostics_session_dir ?? healthSnapshot.session_dir,
     backend_error: s.last_backend_error ?? null,
     recording: Boolean(s.recording),

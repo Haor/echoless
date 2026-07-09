@@ -70,6 +70,8 @@ import { VolumeWheel } from "./components/VolumeWheel";
 import { RuntimeDiagnosticsPage } from "./components/RuntimeDiagnosticsPage";
 import { RuntimeFooterBars } from "./components/RuntimeFooterBars";
 import { RuntimeSignalPanel } from "./components/RuntimeSignalPanel";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { Hint } from "./components/Hint";
 import {
   RuntimeStatusStrip,
   RuntimeSubline,
@@ -939,7 +941,11 @@ function useRunLifecycle({
             }
             return;
           }
-          // status
+          // status —— 白名单判定,绝不兜底。此前这里是「黑名单排除已知事件、
+          // 剩余全当 status」:后端每加一种新事件(实锤案例:clock_skew_warning
+          // 走同一条 echoless://status 通道)就会掉进兜底、被当 status 读出一堆
+          // undefined,灌进遥测后在 dash 的 toFixed 上炸掉整棵 React 树(黑屏)。
+          if (ev.type !== "status") return;
           const s = ev;
           // Process Tap 参考收到真实信号 = 系统音频录制权限确已授予 →
           // 把 doctor 的 system_audio_permission 修正为 granted,清掉「请求权限」提示。
@@ -2044,11 +2050,18 @@ function AppShell() {
 
         {/* ---- D 仪器区 ---- */}
         <section className="zone zd">
-          <RuntimeSignalPanel
-            telRef={telRef}
-            powerOn={powerOn}
-            statusKind={statusKind}
-          />
+          {/* 局部隔离墙:遥测面板是高频刷新、最易受后端异常数据影响的地方。
+              包一层边界 → 即便它渲染出错,也只降级本面板,主控制/引擎照常可用。 */}
+          <ErrorBoundary
+            label="signal-panel"
+            fallback={<div className="sig" style={{ opacity: 0.35 }} />}
+          >
+            <RuntimeSignalPanel
+              telRef={telRef}
+              powerOn={powerOn}
+              statusKind={statusKind}
+            />
+          </ErrorBoundary>
         </section>
         </div>
         )}
@@ -2197,15 +2210,16 @@ function AppShell() {
             invertWheel={isMac}
           />
           {err ? (
-            <button
-              type="button"
-              className="stamp err plainbtn"
-              title={`${err} · 点击关闭`}
-              onClick={() => noteError(null)}
-            >
-              {err.length > 44 ? err.slice(0, 44) + "…" : err}{" "}
-              <span className="mk">✕</span>
-            </button>
+            <Hint text={`${err} · 点击关闭`} pos="top" attach>
+              <button
+                type="button"
+                className="stamp err plainbtn"
+                onClick={() => noteError(null)}
+              >
+                {err.length > 44 ? err.slice(0, 44) + "…" : err}{" "}
+                <span className="mk">✕</span>
+              </button>
+            </Hint>
           ) : (
             <>
               <span className="fdot">·</span>

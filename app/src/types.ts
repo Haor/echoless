@@ -116,6 +116,11 @@ export interface RuntimeStatus {
   output_underruns: number;
   output_overruns: number;
   stale_drops: number;
+  // 时钟漂移(2026-07 起 status 常驻):输出/参考时钟相对麦克风的偏差百分比。
+  // 旧 CLI 无此字段,须按可选处理。
+  output_skew_pct?: number;
+  ref_skew_pct?: number;
+  clock_skew_warning?: boolean;
   node_process_time_ms: number;
   runtime_errors: number;
   diverged: boolean;
