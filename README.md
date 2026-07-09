@@ -34,8 +34,18 @@ virtual audio device.
   Core Audio Process Tap (macOS 14.4+), PipeWire monitor (Linux)
 - **Delay probe** — plays a short beep train and measures your actual
   mic-to-reference delay, then applies it (cross-correlation, ~ms accuracy)
+- **Adaptive clock matching** — mic, speakers and virtual devices each run on
+  their own clock; a feedback controller continuously retunes the pipeline
+  (up to ±3%) to absorb the drift, so long sessions stay aligned instead of
+  accumulating glitches — the DRIFT readout on the Health page converges to
+  zero as the controller locks in
+- **Noise suppression and dereverberation** — beyond echo removal, AEC3 offers
+  optional noise suppression, and LocalVQE performs echo cancellation, noise
+  suppression and dereverberation in a single pass (see [Engines](#engines))
 - **Power-off = bypass, not mute** — the mic path never dies; turning AEC off
   passes your voice through untouched
+- **Output gain trim** — a per-run output level (0 = mute up to ≈3×) to match
+  your voice to the level the other end expects, adjustable live from the app
 - **Diagnostics recording** — capture mic / reference / output tracks to WAV
   for troubleshooting
 - **Desktop app + standalone CLI** — the Tauri GUI drives the same `echoless`

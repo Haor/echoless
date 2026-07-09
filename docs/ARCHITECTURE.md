@@ -60,7 +60,9 @@ Fixed-rate (default 48 kHz), fixed-frame (default 10 ms) loop:
 2. Pull the matching frame from the far ring.
 3. Feed both to the processor chain (usually a single AEC engine).
 4. Push the processed frame to the output device.
-5. Every ~100 ms, emit a status JSON line (levels, latency, engine metrics).
+5. At the status interval, emit a status JSON line (levels, latency, engine
+   metrics). The interval is configurable; the app requests 80 ms, and the CLI
+   defaults to 1000 ms under `--status-json`/`--verbose`.
 
 Engines declare themselves in a manifest (`echoless processors --json`):
 kind, platforms, parameters with types/defaults. The GUI renders its controls
