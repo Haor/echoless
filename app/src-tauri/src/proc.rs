@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -21,11 +21,23 @@ pub(crate) const MODEL_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60)
 pub(crate) const RUN_CONTROL_ACK_TIMEOUT: Duration = Duration::from_millis(250);
 const RUN_CONTROL_QUEUE_CAPACITY: usize = 8;
 const RUN_CONTROL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+const CHILD_GRACEFUL_SHUTDOWN_POLL_ATTEMPTS: usize = 40;
+const CHILD_FORCED_SHUTDOWN_POLL_ATTEMPTS: usize = 8;
+const CHILD_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(25);
 pub(crate) type RunId = u64;
 
 struct RunControlRequest {
     line: String,
     ack: mpsc::SyncSender<Result<(), String>>,
+    phase: Arc<AtomicU8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum RunControlPhase {
+    Queued,
+    Writing,
+    Cancelled,
 }
 
 enum RunControlMessage {
@@ -49,9 +61,11 @@ impl RunControlSender {
             return Err("run control writer is not running".to_string());
         }
         let (ack, confirmation) = mpsc::sync_channel(1);
+        let phase = Arc::new(AtomicU8::new(RunControlPhase::Queued as u8));
         let request = RunControlMessage::Write(RunControlRequest {
             line: line.to_string(),
             ack,
+            phase: phase.clone(),
         });
         match self.sender.try_send(request) {
             Ok(()) => {}
@@ -65,10 +79,28 @@ impl RunControlSender {
 
         match confirmation.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
-                "run control writer timed out after {}ms",
-                timeout.as_millis()
-            )),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let cancelled = match phase.compare_exchange(
+                    RunControlPhase::Queued as u8,
+                    RunControlPhase::Cancelled as u8,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => true,
+                    Err(value) => value == RunControlPhase::Cancelled as u8,
+                };
+                if cancelled {
+                    Err(format!(
+                        "run control writer timed out after {}ms; command was cancelled before writing",
+                        timeout.as_millis()
+                    ))
+                } else {
+                    Err(format!(
+                        "run control writer timed out after {}ms while writing; outcome is unknown",
+                        timeout.as_millis()
+                    ))
+                }
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 Err("run control writer exited before acknowledging command".to_string())
             }
@@ -86,12 +118,35 @@ impl Drop for WriterDone {
     }
 }
 
+type WriterIoCanceller = Arc<dyn Fn(&JoinHandle<()>) + Send + Sync>;
+
 pub(crate) struct RunControlWriter {
     sender: Option<mpsc::SyncSender<RunControlMessage>>,
     closing: Arc<AtomicBool>,
     done: mpsc::Receiver<()>,
     join: Option<JoinHandle<()>>,
+    cancel_io: WriterIoCanceller,
 }
+
+#[cfg(windows)]
+fn cancel_synchronous_writer_io(thread: &JoinHandle<()>) {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        #[link_name = "CancelSynchronousIo"]
+        fn cancel_synchronous_io(thread: *mut c_void) -> i32;
+    }
+
+    // SAFETY: `thread` owns a valid Windows thread handle for this call, and the
+    // API neither retains nor closes it. FALSE/ERROR_NOT_FOUND only means that no
+    // matching synchronous I/O was pending, which is safe to ignore here.
+    let _ = unsafe { cancel_synchronous_io(thread.as_raw_handle()) };
+}
+
+#[cfg(not(windows))]
+fn cancel_synchronous_writer_io(_thread: &JoinHandle<()>) {}
 
 impl RunControlWriter {
     pub(crate) fn spawn<W>(writer: W) -> Result<Self, String>
@@ -102,6 +157,34 @@ impl RunControlWriter {
     }
 
     pub(crate) fn spawn_with_capacity<W>(writer: W, capacity: usize) -> Result<Self, String>
+    where
+        W: Write + Send + 'static,
+    {
+        Self::spawn_with_capacity_and_cancel(
+            writer,
+            capacity,
+            Arc::new(cancel_synchronous_writer_io),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spawn_with_capacity_and_canceller<W, F>(
+        writer: W,
+        capacity: usize,
+        cancel_io: F,
+    ) -> Result<Self, String>
+    where
+        W: Write + Send + 'static,
+        F: Fn(&JoinHandle<()>) + Send + Sync + 'static,
+    {
+        Self::spawn_with_capacity_and_cancel(writer, capacity, Arc::new(cancel_io))
+    }
+
+    fn spawn_with_capacity_and_cancel<W>(
+        writer: W,
+        capacity: usize,
+        cancel_io: WriterIoCanceller,
+    ) -> Result<Self, String>
     where
         W: Write + Send + 'static,
     {
@@ -121,6 +204,18 @@ impl RunControlWriter {
                     match message {
                         RunControlMessage::Shutdown => break,
                         RunControlMessage::Write(request) => {
+                            if request
+                                .phase
+                                .compare_exchange(
+                                    RunControlPhase::Queued as u8,
+                                    RunControlPhase::Writing as u8,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_err()
+                            {
+                                continue;
+                            }
                             let result = write_run_control(&mut writer, &request.line);
                             let failed = result.is_err();
                             let _ = request.ack.send(result);
@@ -137,6 +232,7 @@ impl RunControlWriter {
             closing,
             done,
             join: Some(join),
+            cancel_io,
         })
     }
 
@@ -176,6 +272,9 @@ impl RunControlWriter {
     }
 
     fn finish_after_child_shutdown(&mut self, timeout: Duration) {
+        if let Some(join) = self.join.as_ref() {
+            (self.cancel_io)(join);
+        }
         if !self.wait_for_done(timeout) {
             drop(self.join.take());
         }
@@ -232,20 +331,63 @@ impl Drop for RunChild {
     }
 }
 
-/// 优雅停机协议(审计 B-01):正常 RunChild 路径已由 control writer 关闭 stdin；
-/// 启动失败等 writer 尚未接管的路径仍在这里关闭 child.stdin。随后限时等待，
-/// 超时才兜底 kill，保住 CLI 的 stdin EOF 清理契约且不无限阻塞。
-pub(crate) fn shutdown_child_gracefully(child: &mut Child) {
-    drop(child.stdin.take());
-    for _ in 0..40 {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
-            Err(_) => break,
+pub(crate) trait ChildShutdownTarget {
+    fn try_wait_for_exit(&mut self) -> std::io::Result<bool>;
+    fn force_kill(&mut self) -> std::io::Result<()>;
+}
+
+struct ProcessChildShutdownTarget<'a>(&'a mut Child);
+
+impl ChildShutdownTarget for ProcessChildShutdownTarget<'_> {
+    fn try_wait_for_exit(&mut self) -> std::io::Result<bool> {
+        self.0.try_wait().map(|status| status.is_some())
+    }
+
+    fn force_kill(&mut self) -> std::io::Result<()> {
+        self.0.kill()
+    }
+}
+
+fn poll_child_exit(
+    target: &mut impl ChildShutdownTarget,
+    attempts: usize,
+    pause: &mut impl FnMut(),
+) -> bool {
+    for _ in 0..attempts {
+        match target.try_wait_for_exit() {
+            Ok(true) => return true,
+            Ok(false) => pause(),
+            Err(_) => return false,
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    false
+}
+
+pub(crate) fn shutdown_target_bounded(
+    target: &mut impl ChildShutdownTarget,
+    graceful_attempts: usize,
+    forced_attempts: usize,
+    mut pause: impl FnMut(),
+) -> bool {
+    if poll_child_exit(target, graceful_attempts, &mut pause) {
+        return true;
+    }
+    let _ = target.force_kill();
+    poll_child_exit(target, forced_attempts, &mut pause)
+}
+
+/// 优雅停机协议(审计 B-01):正常 RunChild 路径已由 control writer 关闭 stdin；
+/// 启动失败等 writer 尚未接管的路径仍在这里关闭 child.stdin。优雅等待与 kill 后
+/// reaping 都只做有界 try_wait 轮询，任何 OS kill/wait 异常都不能无限阻塞 GUI。
+pub(crate) fn shutdown_child_gracefully(child: &mut Child) {
+    drop(child.stdin.take());
+    let mut target = ProcessChildShutdownTarget(child);
+    let _ = shutdown_target_bounded(
+        &mut target,
+        CHILD_GRACEFUL_SHUTDOWN_POLL_ATTEMPTS,
+        CHILD_FORCED_SHUTDOWN_POLL_ATTEMPTS,
+        || std::thread::sleep(CHILD_SHUTDOWN_POLL_INTERVAL),
+    );
 }
 
 /// 当前运行中的 echoless run 子进程及其代际。

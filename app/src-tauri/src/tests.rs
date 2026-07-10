@@ -20,8 +20,8 @@ use crate::platform::{
 use crate::proc::{
     cancel_run_start, command_output_with_timeout, commit_run_finalization, commit_run_start,
     install_test_generation, is_active_run, parse_jsonl_line_event, push_tail_line,
-    reserve_run_start, run_state_guard, terminate_run, JsonlLineEvent, RunChild, RunControlWriter,
-    RunFinalization, RunState,
+    reserve_run_start, run_state_guard, shutdown_target_bounded, terminate_run,
+    ChildShutdownTarget, JsonlLineEvent, RunChild, RunControlWriter, RunFinalization, RunState,
 };
 use crate::sidecar::write_run_control_line;
 use crate::sidecar::{attach_run_id, bypass_control_line};
@@ -132,6 +132,29 @@ impl Drop for BlockingWriter {
     }
 }
 
+struct GatedRecordingWriter {
+    entered: Option<mpsc::Sender<()>>,
+    release: mpsc::Receiver<()>,
+    output: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Write for GatedRecordingWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some(entered) = self.entered.take() {
+            let _ = entered.send(());
+            self.release.recv().map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "recording writer release closed")
+            })?;
+        }
+        self.output.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 struct DropTrackingWriter(Option<mpsc::Sender<()>>);
 
 impl Write for DropTrackingWriter {
@@ -174,6 +197,34 @@ impl Write for FailingWriter {
             WriterFailure::Flush => Err(io::Error::other("flush boom")),
         }
     }
+}
+
+#[derive(Default)]
+struct StubbornShutdownTarget {
+    try_wait_calls: usize,
+    kill_calls: usize,
+}
+
+impl ChildShutdownTarget for StubbornShutdownTarget {
+    fn try_wait_for_exit(&mut self) -> io::Result<bool> {
+        self.try_wait_calls += 1;
+        Ok(false)
+    }
+
+    fn force_kill(&mut self) -> io::Result<()> {
+        self.kill_calls += 1;
+        Ok(())
+    }
+}
+
+#[test]
+fn forced_child_shutdown_stays_bounded_when_kill_does_not_exit() {
+    let mut target = StubbornShutdownTarget::default();
+    let exited = shutdown_target_bounded(&mut target, 2, 3, || {});
+
+    assert!(!exited);
+    assert_eq!(target.kill_calls, 1);
+    assert_eq!(target.try_wait_calls, 5);
 }
 
 #[test]
@@ -599,6 +650,70 @@ fn blocked_control_writer_times_out_without_holding_run_state_lock() {
 }
 
 #[test]
+fn queued_control_timeout_cancels_request_before_writer_executes_it() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let mut writer = RunControlWriter::spawn_with_capacity(
+        GatedRecordingWriter {
+            entered: Some(entered_tx),
+            release: release_rx,
+            output: output.clone(),
+        },
+        2,
+    )
+    .unwrap();
+    let sender = writer.sender().unwrap();
+    let first_sender = sender.clone();
+    let first = std::thread::spawn(move || {
+        first_sender.send_line_with_timeout("first", Duration::from_secs(1))
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("writer did not block");
+
+    let err = sender
+        .send_line_with_timeout("cancelled", Duration::from_millis(30))
+        .unwrap_err();
+    assert!(err.contains("cancelled before writing"), "{err}");
+
+    release_tx.send(()).unwrap();
+    first.join().unwrap().unwrap();
+    sender
+        .send_line_with_timeout("third", Duration::from_millis(200))
+        .unwrap();
+    assert!(writer.shutdown_with_timeout(Duration::from_millis(200)));
+    assert_eq!(output.lock().unwrap().as_slice(), b"first\nthird\n");
+}
+
+#[test]
+fn writing_control_timeout_reports_unknown_outcome() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut writer = RunControlWriter::spawn_with_capacity(
+        BlockingWriter {
+            entered: Some(entered_tx),
+            release: release_rx,
+            dropped: None,
+        },
+        1,
+    )
+    .unwrap();
+    let sender = writer.sender().unwrap();
+
+    let err = sender
+        .send_line_with_timeout("writing", Duration::from_millis(30))
+        .unwrap_err();
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("writer did not start writing");
+    assert!(err.contains("outcome is unknown"), "{err}");
+
+    release_tx.send(()).unwrap();
+    assert!(writer.shutdown_with_timeout(Duration::from_millis(200)));
+}
+
+#[test]
 fn full_control_queue_returns_diagnostic_error() {
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -707,6 +822,57 @@ fn blocked_writer_does_not_make_run_child_drop_unbounded() {
     writer_dropped_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("detached writer did not finish after release");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn child_shutdown_cancels_blocked_writer_and_joins_after_release() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (cancelled_tx, cancelled_rx) = mpsc::channel();
+    let (writer_dropped_tx, writer_dropped_rx) = mpsc::channel();
+    let writer = RunControlWriter::spawn_with_capacity_and_canceller(
+        BlockingWriter {
+            entered: Some(entered_tx),
+            release: release_rx,
+            dropped: Some(writer_dropped_tx),
+        },
+        1,
+        move |_| {
+            let _ = cancelled_tx.send(());
+            let _ = release_tx.send(());
+        },
+    )
+    .unwrap();
+    let sender = writer.sender().unwrap();
+    let request = std::thread::spawn(move || {
+        sender.send_line_with_timeout("control", Duration::from_secs(2))
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("writer did not block");
+
+    let dir = unique_temp_dir("echoless-cancel-writer-drop");
+    let config_path = dir.join("run.toml");
+    std::fs::write(&config_path, "run = 1").unwrap();
+    let run_child = RunChild {
+        run_id: 1,
+        child: exited_child_command().spawn().unwrap(),
+        stopping: Arc::new(AtomicBool::new(false)),
+        config_path: config_path.clone(),
+        control_writer: Some(writer),
+    };
+
+    drop(run_child);
+
+    cancelled_rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("blocked writer I/O was not cancelled");
+    writer_dropped_rx
+        .recv_timeout(Duration::from_millis(200))
+        .expect("cancelled writer was not joined before RunChild drop returned");
+    assert!(request.join().unwrap().is_ok());
+    assert!(!config_path.exists());
     let _ = std::fs::remove_dir_all(dir);
 }
 
