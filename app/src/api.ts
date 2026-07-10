@@ -320,8 +320,42 @@ export interface ConfigChoice {
   diagnostics?: DiagnosticsCfg | null; // 开启录制时写入 [diagnostics]
 }
 
-function tomlString(v: string): string {
-  return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+export function tomlString(v: string): string {
+  let escaped = "";
+  for (const char of v) {
+    switch (char) {
+      case "\\":
+        escaped += "\\\\";
+        break;
+      case '"':
+        escaped += '\\"';
+        break;
+      case "\b":
+        escaped += "\\b";
+        break;
+      case "\t":
+        escaped += "\\t";
+        break;
+      case "\n":
+        escaped += "\\n";
+        break;
+      case "\f":
+        escaped += "\\f";
+        break;
+      case "\r":
+        escaped += "\\r";
+        break;
+      default: {
+        const codePoint = char.codePointAt(0)!;
+        if (codePoint <= 0x1f || codePoint === 0x7f) {
+          escaped += `\\u${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
+        } else {
+          escaped += char;
+        }
+      }
+    }
+  }
+  return `"${escaped}"`;
 }
 
 function tomlValue(v: unknown): string | null {

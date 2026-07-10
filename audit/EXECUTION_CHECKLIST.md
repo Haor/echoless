@@ -139,11 +139,11 @@
 
 ### 10. B-31【P3】TOML string 控制字符转义
 
-- [ ] 在 `app/src/api.ts` 完整处理 TOML basic string 不允许的控制字符；不只做模糊删除，必须保证合法字符 round-trip。
-- [ ] 增加 LF、CR、BS、FF、NUL、ESC、DEL、quote、backslash、Unicode 测试。
-- [ ] 确认引号/反斜杠仍安全，不引入配置注入或静默数据损坏。
-- [ ] 验证：`(cd app && pnpm exec tsc --noEmit && pnpm test)`，并让生成结果通过后端 TOML validation。
-- [ ] 独立 commit：`B-31`。
+- [x] 在 `app/src/api.ts` 完整处理 TOML basic string 不允许的控制字符；不只做模糊删除，必须保证合法字符 round-trip。
+- [x] 增加 LF、CR、BS、FF、NUL、ESC、DEL、quote、backslash、Unicode 测试。
+- [x] 确认引号/反斜杠仍安全，不引入配置注入或静默数据损坏。
+- [x] 验证：`(cd app && pnpm exec tsc --noEmit && pnpm test)`，并让生成结果通过后端 TOML validation。
+- [x] 独立 commit：`B-31`。
 
 ### 11. B-32【P3】日志文件名秒级碰撞
 
