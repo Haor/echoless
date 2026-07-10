@@ -335,10 +335,8 @@ impl OutputLinearFallback {
     {
         let needed = (self.pos.floor() as usize).saturating_add(2);
         while self.buffer.len() < needed {
-            match consumer.try_pop() {
-                Some(sample) => self.buffer.push_back(sample.clamp(-1.0, 1.0)),
-                None => return None,
-            }
+            let sample = consumer.try_pop()?;
+            self.buffer.push_back(sample.clamp(-1.0, 1.0));
         }
 
         let i0 = self.pos.floor() as usize;
