@@ -36,5 +36,5 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_LibraryLoader",
 ] }
-# rubato 留作处理器边界 SRC 的正式实现(蓝本 §10);骨架先用 chain.rs 里的占位线性重采样
+# 处理器边界 SRC 的正式实现(蓝本 §10):chain.rs 使用 rubato 同步 FFT resampler
 rubato = "0.15"

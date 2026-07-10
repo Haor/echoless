@@ -170,10 +170,10 @@
 
 ### 14. D-12【P2】收口已经存在的 example.toml/SRC 注释修复
 
-- [ ] 复核当前 `Cargo.toml`、`configs/example.toml` diff，只包含 rubato FFT 与 GUI/CLI 资产分发说明纠错。
-- [ ] 对照 `crates/echoless-processors/src/chain.rs`、`.github/workflows/build.yml` 与 `docs/CLI.md`，确认新文案准确。
-- [ ] 运行 root fmt/test 或最小文档相关质量门，记录 D-12 已修。
-- [ ] 将现有修改作为独立 commit 收口，不与其他条目混合。
+- [x] 复核当前 `Cargo.toml`、`configs/example.toml` diff，只包含 rubato FFT 与 GUI/CLI 资产分发说明纠错。
+- [x] 对照 `crates/echoless-processors/src/chain.rs`、`.github/workflows/build.yml` 与 `docs/CLI.md`，确认新文案准确。
+- [x] 运行 root fmt/test 或最小文档相关质量门，记录 D-12 已修。
+- [x] 将现有修改作为独立 commit 收口，不与其他条目混合。
 
 ### 15. D-13【P3】Linux 数据目录大小写文档
 

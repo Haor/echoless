@@ -33,8 +33,9 @@ ns = false                   # 保真人声优先:默认不在 AEC3 内额外降
 agc = false                  # 保持电平自然,避免双讲时忽大忽小
 
 # LocalVQE 是独立可选方案。
-# CI artifact 会把 Windows 所需 DLL 与当前 v1.3 模型一起放入包内。
-# 注意:当前链路边界 SRC 仍是占位线性重采样,LocalVQE 可测真实推理,但不是最终音质版 SRC。
+# GUI 安装包随附 native runtime,模型在 GUI 内按需下载;单独使用 CLI archive 时需自行
+# 放置 DLL 与模型文件(路径见下方参数注释与 docs/CLI.md)。
+# 链路边界 SRC 已是 rubato 同步 FFT resampler(异常时回退线性)。
 # [[chain]]
 # kind = "localvqe"
 # model = "models/localvqe-v1.3-4.8M-f32.gguf"
