@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Mutex;
 
 use tauri::Emitter;
@@ -66,6 +67,23 @@ fn try_remove_client(
     }
 }
 
+fn run_callback_boundary(body: impl FnOnce()) -> bool {
+    if catch_unwind(AssertUnwindSafe(body)).is_ok() {
+        return true;
+    }
+
+    // The diagnostic path is also contained so no secondary logging panic can
+    // escape through CoreAudio's C callback boundary.
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        crate::logging::log(
+            "error",
+            "device-watch",
+            "panic caught in CoreAudio device-change callback",
+        );
+    }));
+    false
+}
+
 // HAL 通知线程回调:只透传「变了」,枚举仍由前端调 list_devices 完成。
 extern "C" fn on_devices_changed(
     _object_id: u32,
@@ -73,8 +91,12 @@ extern "C" fn on_devices_changed(
     _addresses: *const AudioObjectPropertyAddress,
     client_data: *mut c_void,
 ) -> i32 {
-    let app = unsafe { &*(client_data as *const tauri::AppHandle) };
-    let _ = app.emit("echoless://devices-changed", ());
+    run_callback_boundary(|| {
+        // SAFETY: `start` registers a non-null `Box<AppHandle>` as client_data and
+        // keeps it alive until CoreAudio confirms listener removal.
+        let app = unsafe { &*(client_data as *const tauri::AppHandle) };
+        let _ = app.emit("echoless://devices-changed", ());
+    });
     0
 }
 
@@ -177,6 +199,12 @@ pub fn stop(state: &DeviceWatchState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn callback_boundary_catches_injected_panic_before_ffi_boundary() {
+        assert!(!run_callback_boundary(|| panic!("injected callback panic")));
+        assert!(run_callback_boundary(|| {}));
+    }
 
     #[test]
     fn successful_remove_releases_the_registered_client() {
