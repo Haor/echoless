@@ -39,6 +39,9 @@ UI cleanup.
 - Platform-aware UI polish across the Engine, Diagnostics, and RTX pages.
 - Advanced help texts rewritten as plain definitions — each option now states
   what it is, without jargon or tuning chatter.
+- Pull requests to `dev` and `main` now run the existing release quality gates,
+  and the Windows and macOS package jobs explicitly run the desktop backend
+  tests before building installers.
 - **Hardened LocalVQE model downloads:** forced HTTP/1.1 (dodges the
   Hugging Face CDN's occasional HTTP/2 stream cancels), more retries with
   resume. The models folder's `README.txt` now lists every supported filename
@@ -104,6 +107,34 @@ UI cleanup.
   the system temp directory is cleared automatically once the runtime and model
   are extracted and the doctor check passes. The cache is kept on failure so a
   retry doesn't re-download.
+- macOS system-audio capture now has a strict readiness handshake. The engine
+  cannot report a healthy run until Process Tap produces a valid stream header,
+  and an unexpected helper exit stops the run instead of silently processing a
+  zero reference.
+- Restarting the engine can no longer let a stale sidecar overwrite the active
+  run, tray state, or frontend status.
+- LocalVQE native processing failures now clear stale queued audio, preserve
+  failure telemetry, and pass through the current microphone frame while the
+  backend recovers instead of accumulating or replaying old samples.
+- Stereo reference audio stays frame-aligned when its ring buffer is full or
+  stale data is trimmed, preventing left/right channel desynchronization under
+  pressure.
+- Clock-skew diagnostics now detect both faster and slower output/reference
+  clocks and normalize loss counters to audio frames, including stereo paths.
+- Device selectors containing quotes, backslashes, or control characters now
+  round-trip through generated TOML without being changed or rejected.
+- CoreAudio device-change callbacks remain valid when listener removal fails,
+  avoiding a rare hot-plug crash on macOS.
+- Timed-out Windows commands now terminate their complete child-process tree,
+  so a descendant cannot keep the desktop backend waiting past its timeout.
+- Simultaneous app launches now always reserve distinct crash-forensics logs
+  with independent size accounting.
+
+### Security
+- Audio-device names are rendered strictly as text during the scramble
+  animation and never enter the HTML parser.
+- External HTTPS links are checked using canonical URL components; credentials
+  and non-default ports are rejected before the hostname allowlist is applied.
 
 ## [1.0.0] — 2026-07-06
 
