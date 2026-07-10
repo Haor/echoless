@@ -247,8 +247,12 @@ impl OutputDeviceResampler {
             return &self.output;
         }
 
-        self.linear_fallback
-            .fill_chunk(output_frames, consumer, underruns, &mut self.output);
+        let missing_device_frames =
+            self.linear_fallback
+                .fill_chunk(output_frames, consumer, &mut self.output);
+        let missing_pipeline_frames =
+            scaled_frames(missing_device_frames, self.out_rate, self.in_rate);
+        underruns.fetch_add(missing_pipeline_frames as u64, Ordering::Relaxed);
         &self.output
     }
 
@@ -306,18 +310,26 @@ impl OutputLinearFallback {
         &mut self,
         output_frames: usize,
         consumer: &mut C,
-        underruns: &AtomicU64,
         output: &mut Vec<f32>,
-    ) where
+    ) -> usize
+    where
         C: Consumer<Item = f32>,
     {
         output.resize(output_frames, 0.0);
+        let mut missing_device_frames = 0;
         for sample in output.iter_mut() {
-            *sample = self.next_sample(consumer, underruns);
+            match self.next_sample(consumer) {
+                Some(value) => *sample = value,
+                None => {
+                    *sample = 0.0;
+                    missing_device_frames += 1;
+                }
+            }
         }
+        missing_device_frames
     }
 
-    fn next_sample<C>(&mut self, consumer: &mut C, underruns: &AtomicU64) -> f32
+    fn next_sample<C>(&mut self, consumer: &mut C) -> Option<f32>
     where
         C: Consumer<Item = f32>,
     {
@@ -325,10 +337,7 @@ impl OutputLinearFallback {
         while self.buffer.len() < needed {
             match consumer.try_pop() {
                 Some(sample) => self.buffer.push_back(sample.clamp(-1.0, 1.0)),
-                None => {
-                    underruns.fetch_add(1, Ordering::Relaxed);
-                    return 0.0;
-                }
+                None => return None,
             }
         }
 
@@ -344,7 +353,7 @@ impl OutputLinearFallback {
             let _ = self.buffer.pop_front();
         }
         self.pos -= consumed as f64;
-        sample
+        Some(sample)
     }
 }
 
@@ -732,6 +741,35 @@ mod tests {
 
         assert_eq!(output, &[0.0, 0.25, 0.5, 0.75]);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn output_resampler_underruns_count_pipeline_frames_with_fft() {
+        let underruns = AtomicU64::new(0);
+        let (_producer, mut consumer) = HeapRb::<f32>::new(1024).split();
+        let mut resampler = OutputDeviceResampler::new(48_000, 44_100);
+
+        let output_frames = resampler.next_chunk(441, &mut consumer, &underruns).len();
+
+        assert_eq!(output_frames, 441);
+        assert!(resampler.resampler.is_some());
+        assert_eq!(underruns.load(Ordering::Relaxed), 480);
+    }
+
+    #[test]
+    fn output_resampler_underruns_count_pipeline_frames_with_linear_fallback() {
+        let underruns = AtomicU64::new(0);
+        let (_producer, mut consumer) = HeapRb::<f32>::new(1024).split();
+        let mut resampler = OutputDeviceResampler::new(48_000, 44_100);
+        resampler.ensure_layout(441);
+        assert!(resampler.resampler.is_some());
+        resampler.resampler = None;
+
+        let output_frames = resampler.next_chunk(441, &mut consumer, &underruns).len();
+
+        assert_eq!(output_frames, 441);
+        assert!(resampler.resampler.is_none());
+        assert_eq!(underruns.load(Ordering::Relaxed), 480);
     }
 
     fn sine_block(frames: usize, hz: f32, rate: u32) -> Vec<f32> {
