@@ -430,6 +430,7 @@ export function AdvancedPage({
   const { t, lang, setLang } = useI18n();
   const proc = processors.find((p) => p.kind === kind);
   const desc = (k: string) => DESC[k]?.[lang];
+  const pipelineDisabled = kind === "nvidia_afx_aec";
 
   const reqMet = (spec: ParamSpec) =>
     !spec.requires ||
@@ -512,6 +513,7 @@ export function AdvancedPage({
           <span className="aval">
             <SegButtons
               value={String(pipeline.sample_rate)}
+              disabled={pipelineDisabled}
               options={[16000, 48000].map((n) => ({
                 value: String(n),
                 label: String(n),
@@ -527,6 +529,7 @@ export function AdvancedPage({
           <span className="aval">
             <SegButtons
               value={String(pipeline.frame_ms)}
+              disabled={pipelineDisabled}
               options={[10, 20].map((n) => ({
                 value: String(n),
                 label: `${n} MS`,
@@ -542,6 +545,7 @@ export function AdvancedPage({
           <span className="aval">
             <SegButtons
               value={pipeline.reference_channels}
+              disabled={pipelineDisabled}
               options={[
                 { value: "mono", label: "MONO" },
                 { value: "stereo", label: "STEREO" },

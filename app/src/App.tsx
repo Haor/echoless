@@ -102,6 +102,8 @@ import {
   settleBypassObservation,
   clearBypassPending,
   claimEngineKindChange,
+  canChangePipeline,
+  pipelineForEngineKind,
 } from "./engineLogic";
 import {
   publishRuntimeStatus,
@@ -395,23 +397,24 @@ const SAVED_ENGINE = readSavedEngineState();
 function initEngineState(): EngineState {
   const pl = SAVED_ENGINE.pipeline ?? {};
   const kind = SAVED_ENGINE.kind ?? INITIAL_ENGINE_STATE.kind;
+  const savedPipeline: PipelineCfg = {
+    sample_rate:
+      typeof pl.sample_rate === "number"
+        ? pl.sample_rate
+        : INITIAL_PIPELINE.sample_rate,
+    frame_ms:
+      typeof pl.frame_ms === "number"
+        ? pl.frame_ms
+        : INITIAL_PIPELINE.frame_ms,
+    reference_channels: pl.reference_channels === "stereo" ? "stereo" : "mono",
+    near_delay_ms:
+      typeof pl.near_delay_ms === "number" ? pl.near_delay_ms : undefined,
+    output_level:
+      typeof pl.output_level === "number" ? pl.output_level : undefined,
+  };
   return {
     kind,
-    pipeline: {
-      sample_rate:
-        typeof pl.sample_rate === "number"
-          ? pl.sample_rate
-          : INITIAL_PIPELINE.sample_rate,
-      frame_ms:
-        typeof pl.frame_ms === "number"
-          ? pl.frame_ms
-          : INITIAL_PIPELINE.frame_ms,
-      reference_channels: pl.reference_channels === "stereo" ? "stereo" : "mono",
-      near_delay_ms:
-        typeof pl.near_delay_ms === "number" ? pl.near_delay_ms : undefined,
-      output_level:
-        typeof pl.output_level === "number" ? pl.output_level : undefined,
-    },
+    pipeline: pipelineForEngineKind(kind, savedPipeline),
     params: SAVED_ENGINE.paramsByKind?.[kind] ?? {},
   };
 }
@@ -607,7 +610,9 @@ function useEngineConfig({
     const np =
       paramsByKind.current[k] ??
       defaultParams(processors.find((p) => p.kind === k));
-    updateEngine({ kind: k, params: np });
+    const nextPipeline = pipelineForEngineKind(k, pipelineRef.current);
+    pipelineRef.current = nextPipeline;
+    updateEngine({ kind: k, params: np, pipeline: nextPipeline });
     // 目标引擎未就绪(如首次选 LocalVQE 但还没选模型)→ 只切换选择,不去 validate/启动
     // 一份缺 model 的配置(否则 config validate 会以退出码 1 抛「配置校验失败」弹窗)。
     // 当前在运行则停掉旧引擎并置 OFF —— 待用户在引擎页配好目标引擎再开机。
@@ -615,7 +620,7 @@ function useEngineConfig({
       if (powerOnRef.current) stop();
       return;
     }
-    applyChangeRef.current({ kind: k, params: np });
+    applyChangeRef.current({ kind: k, params: np, pipeline: nextPipeline });
   }
 
   // 改单个 chain 参数(NOISE / Advanced)。
@@ -717,6 +722,7 @@ function useEngineConfig({
 
   // 改管线项。near_delay_ms 可运行中热控;采样率/帧长/参考声道仍需重启。
   function changePipeline(patch: Partial<PipelineCfg>) {
+    if (!canChangePipeline(kindRef.current, patch)) return;
     const npl = { ...pipelineRef.current, ...patch };
     pipelineRef.current = npl; // 同步更新 ref:探测后自动恢复引擎时能立刻读到新 near_delay
     updateEngine({ pipeline: npl });
@@ -1959,7 +1965,12 @@ function AppShell() {
                       // 未就绪(LocalVQE 无模型 / NVAFX doctor 未过):跳 Engine 配置,不生成非法配置。
                       if (!rdy) {
                         if (!claimEngineKindChange(kindRef, m.kind)) return;
-                        updateEngine({ kind: m.kind });
+                        const nextPipeline = pipelineForEngineKind(
+                          m.kind,
+                          pipelineRef.current,
+                        );
+                        pipelineRef.current = nextPipeline;
+                        updateEngine({ kind: m.kind, pipeline: nextPipeline });
                         gotoView("engine");
                       } else {
                         changeKind(m.kind);

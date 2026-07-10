@@ -23,6 +23,38 @@ export function claimEngineKindChange(
   return true;
 }
 
+export function canChangePipeline(
+  kind: string,
+  patch: Partial<PipelineCfg>,
+): boolean {
+  if (kind !== "nvidia_afx_aec") return true;
+  return !(
+    "sample_rate" in patch ||
+    "frame_ms" in patch ||
+    "reference_channels" in patch
+  );
+}
+
+export function pipelineForEngineKind(
+  kind: string,
+  pipeline: PipelineCfg,
+): PipelineCfg {
+  if (kind !== "nvidia_afx_aec") return pipeline;
+  if (
+    pipeline.sample_rate === 48_000 &&
+    pipeline.frame_ms === 10 &&
+    pipeline.reference_channels === "mono"
+  ) {
+    return pipeline;
+  }
+  return {
+    ...pipeline,
+    sample_rate: 48_000,
+    frame_ms: 10,
+    reference_channels: "mono",
+  };
+}
+
 /** 仅改 near_delay_ms 的补丁走热控路径,不需重建 sidecar。 */
 export function isNearDelayOnlyPatch(patch: Partial<PipelineCfg>): boolean {
   const keys = Object.keys(patch);

@@ -5,18 +5,24 @@ export function SegButtons<T extends string>({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (v: T) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="segg">
+    <div
+      className={`segg ${disabled ? "dim" : ""}`}
+      aria-disabled={disabled || undefined}
+    >
       {options.map((o) => (
         <button
           type="button"
           key={o.value}
           className={`b ${o.value === value ? "active" : ""}`}
+          disabled={disabled}
           onClick={() => onChange(o.value)}
         >
           {o.label}
