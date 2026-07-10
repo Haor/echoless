@@ -33,8 +33,8 @@ where
     try_push_frame_with(producer, frame.len(), |channel| frame[channel])
 }
 
-/// Commit complete interleaved frames. B-25 preserves the historical sample-based
-/// drop counter; B-29 converts runtime counters to frame units separately.
+/// Commit complete interleaved frames and count rejected frames, independent of
+/// channel count.
 pub(super) fn push_interleaved_frames<P>(
     producer: &mut P,
     samples: &[f32],
@@ -47,7 +47,7 @@ pub(super) fn push_interleaved_frames<P>(
     let mut frames = samples.chunks_exact(channels);
     for frame in &mut frames {
         if !try_push_frame(producer, frame) {
-            drops.fetch_add(channels as u64, Ordering::Relaxed);
+            drops.fetch_add(1, Ordering::Relaxed);
         }
     }
     debug_assert!(

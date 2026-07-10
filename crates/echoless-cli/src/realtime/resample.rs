@@ -944,4 +944,16 @@ mod tests {
             resampler.trim()
         );
     }
+
+    #[test]
+    fn reference_resampler_reports_missing_stereo_frames_not_a_boolean() {
+        let (_producer, mut consumer) = HeapRb::<f32>::new(16).split();
+        let mut resampler = AdaptiveReferenceResampler::new(2, 8, 2);
+        let mut out = [1.0f32; 8];
+
+        let underrun_frames = resampler.fill(&mut out, 4, 0, &mut consumer);
+
+        assert_eq!(underrun_frames, 4);
+        assert_eq!(out, [0.0; 8]);
+    }
 }

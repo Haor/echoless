@@ -22,8 +22,8 @@
 | 1 | B-26 | 第一 | done | `c61195e` | focused 10 passed；CLI 81 passed；clippy clean | ELTP v1 ready + EOF/read-error single fatal report；真实系统音频权限/硬件未自动触发 |
 | 2 | B-28 | 第一 | done | `5dab0f1` | Tauri 23 passed；frontend 28 passed + tsc；clippy clean | active generation 将 RunState/tray/status/exit 副作用收口在同一锁内；stderr log 事件仍无 run_id，不影响运行状态所有权 |
 | 3 | B-27 | 第一 | done | `0de5877` | processors 44 passed / 3 ignored；clippy clean | native error 立即 reset 并清空 near/far/out；recovery warm-up 期 near passthrough；故障注入覆盖连续/瞬态/重复恢复 |
-| 4 | B-25 | 第一 | done-pending-commit | this commit | CLI 88 passed；clippy clean | CPAL/Process Tap 共用完整 frame push；adaptive/direct consumer 只弹整帧；stale skip 按声道对齐；drop 计数单位留给 B-29 收口 |
-| 5 | B-29 | 第一 | pending | — | — | clock-skew frame units/directions |
+| 4 | B-25 | 第一 | done | `9ad04cb` | CLI 88 passed；clippy clean | CPAL/Process Tap 共用完整 frame push；adaptive/direct consumer 只弹整帧；stale skip 按声道对齐；drop 计数单位留给 B-29 收口 |
+| 5 | B-29 | 第一 | done-pending-commit | this commit | CLI 90 passed；clippy clean | reference/output loss 统一 frame 单位；真实 underrun 帧数；有符号 ±22.4% 双向检测；live/summary 共用 snapshot 与 direction；告警阈值不变 |
 | 6 | T-11 | 第一 | pending | — | — | supported-platform Tauri tests in CI |
 | 7 | A-09 | 第二 | pending | — | — | complete frontend event types |
 | 8 | S-13 | 第二 | pending | — | — | text-only scramble animation |

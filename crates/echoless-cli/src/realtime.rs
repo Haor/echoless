@@ -638,7 +638,7 @@ fn process_loop<M, R, O>(
             runtime.near_delay_samples,
         );
 
-        let mut ref_underrun = 0;
+        let mut ref_underrun_frames = 0;
         let mut ref_stale_drops = 0;
         if let Some(rc) = render_cons.as_mut() {
             match ref_resampler.as_mut() {
@@ -647,17 +647,16 @@ fn process_loop<M, R, O>(
                 Some(resampler) => {
                     let occ_frames = rc.occupied_len() / runtime.reference_channels.max(1);
                     let underrun_frames = resampler.fill(&mut far, frame_size, occ_frames, rc);
-                    if underrun_frames > 0 {
-                        ref_underrun = 1;
-                    }
+                    ref_underrun_frames = underrun_frames;
                 }
                 // 关闭 output_rate_match:回退旧 skip_stale 硬丢帧路径(pre-T3 行为)。
                 None => {
                     ref_stale_drops =
-                        skip_stale_aligned(rc, far_samples_per_frame, runtime.reference_channels);
+                        skip_stale_aligned(rc, far_samples_per_frame, runtime.reference_channels)
+                            / runtime.reference_channels.max(1);
                     if !try_pop_frame(rc, &mut far) {
                         far.fill(0.0); // 参考欠载 → 填静音
-                        ref_underrun = 1;
+                        ref_underrun_frames = frame_size;
                     }
                 }
             }
@@ -701,7 +700,7 @@ fn process_loop<M, R, O>(
             ref_input_drops: runtime.counters.ref_input_drops.swap(0, Ordering::Relaxed),
             mic_stale_drops: mic_stale_drops as u64,
             ref_stale_drops: ref_stale_drops as u64,
-            ref_underruns: ref_underrun,
+            ref_underruns: ref_underrun_frames as u64,
             output_overruns,
             output_underruns: runtime.counters.output_underruns.swap(0, Ordering::Relaxed),
             node_stats: &node_stats,
@@ -976,7 +975,7 @@ fn push_input_frame<T, P>(
                     .map(f32::from_sample)
                     .unwrap_or(0.0)
             }) {
-                drops.fetch_add(channels as u64, Ordering::Relaxed);
+                drops.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -1729,7 +1728,7 @@ mod tests {
             &drops,
         );
 
-        assert_eq!(drops.load(Ordering::Relaxed), 2);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
         let mut existing = [0.0; 2];
         assert!(try_pop_frame(&mut consumer, &mut existing));
         assert_eq!(existing, [10.0, 11.0]);

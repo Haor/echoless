@@ -79,13 +79,13 @@
 
 ### 5. B-29【P2】clock-skew 单向失明与 stereo 计数单位错误
 
-- [ ] 将 output/reference 的 underrun、overrun、drop 全部统一为 frames，不再混用 interleaved samples。
-- [ ] 同时检测两个漂移方向；使用真实欠载帧数，不把计数压缩为布尔值后再参与相关性计算。
-- [ ] 让 live detector 与 diagnostics summary 共用计算逻辑，并输出方向。
-- [ ] 增加 ±22.4% 双向漂移、stereo 2N samples→N frames、T3 开关一致性测试。
-- [ ] 与 B-25 完成集成联调，确认 frame 对齐修复不会改变告警阈值语义。
-- [ ] 验证：`cargo test -p echoless-cli --locked`。
-- [ ] 独立 commit：`B-29`。
+- [x] 将 output/reference 的 underrun、overrun、drop 全部统一为 frames，不再混用 interleaved samples。
+- [x] 同时检测两个漂移方向；使用真实欠载帧数，不把计数压缩为布尔值后再参与相关性计算。
+- [x] 让 live detector 与 diagnostics summary 共用计算逻辑，并输出方向。
+- [x] 增加 ±22.4% 双向漂移、stereo 2N samples→N frames、T3 开关一致性测试。
+- [x] 与 B-25 完成集成联调，确认 frame 对齐修复不会改变告警阈值语义。
+- [x] 验证：`cargo test -p echoless-cli --locked`。
+- [x] 独立 commit：`B-29`。
 
 ### 6. T-11【P1】Tauri 后端 21 tests 接入 CI
 

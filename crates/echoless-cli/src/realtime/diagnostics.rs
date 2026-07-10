@@ -18,7 +18,8 @@ use super::print_human;
 use super::stats::{
     aggregate_aec3_delay_blocks, aggregate_diverged, aggregate_estimated_delay_ms,
     aggregate_last_error, aggregate_process_time_ms, aggregate_runtime_errors,
-    estimate_user_latency_ms, input_queue_latency_ms, output_queue_latency_ms, StatsSample,
+    estimate_user_latency_ms, input_queue_latency_ms, output_queue_latency_ms, ref_pace_loss,
+    ClockSkewDirection, ClockSkewSnapshot, StatsSample,
 };
 
 const DIAGNOSTIC_QUEUE_FRAMES: usize = 128;
@@ -303,10 +304,12 @@ impl DiagnosticRecorder {
             max_frames,
             written_frames: 0,
             frame_index: 0,
-            output_pushed_samples: 0,
+            output_observed_frames: 0,
             total_output_underruns: 0,
             total_output_overruns: 0,
+            total_ref_input_drops: 0,
             total_ref_stale_drops: 0,
+            total_ref_underruns: 0,
             human_to_stderr: config.status_json,
             status_json: config.status_json,
             status: status.clone(),
@@ -425,10 +428,12 @@ struct DiagnosticWriter {
     max_frames: Option<u64>,
     written_frames: u64,
     frame_index: u64,
-    output_pushed_samples: u64,
+    output_observed_frames: u64,
     total_output_underruns: u64,
     total_output_overruns: u64,
+    total_ref_input_drops: u64,
     total_ref_stale_drops: u64,
+    total_ref_underruns: u64,
     human_to_stderr: bool,
     status_json: bool,
     status: DiagnosticsStatusHandle,
@@ -494,21 +499,22 @@ impl DiagnosticWriter {
                 writer.write_sample(*v)?;
             }
         }
-        self.output_pushed_samples = self.output_pushed_samples.saturating_add(
-            frame
-                .out
-                .len()
-                .saturating_sub(frame.output_overruns as usize) as u64,
-        );
+        self.output_observed_frames = self
+            .output_observed_frames
+            .saturating_add(frame.frame_size as u64);
         self.total_output_underruns = self
             .total_output_underruns
             .saturating_add(frame.output_underruns);
         self.total_output_overruns = self
             .total_output_overruns
             .saturating_add(frame.output_overruns);
+        self.total_ref_input_drops = self
+            .total_ref_input_drops
+            .saturating_add(frame.ref_input_drops);
         self.total_ref_stale_drops = self
             .total_ref_stale_drops
             .saturating_add(frame.ref_stale_drops);
+        self.total_ref_underruns = self.total_ref_underruns.saturating_add(frame.ref_underruns);
 
         let Some(stats) = self.stats.as_mut() else {
             bail!("diagnostics stats writer is closed");
@@ -614,11 +620,19 @@ impl DiagnosticWriter {
         ok
     }
 
+    fn clock_skew_snapshot(&self) -> ClockSkewSnapshot {
+        ClockSkewSnapshot::from_frame_counts(
+            self.output_observed_frames,
+            self.total_output_underruns,
+            self.total_output_overruns,
+            ref_pace_loss(self.total_ref_stale_drops, self.total_ref_input_drops),
+            self.total_ref_underruns,
+        )
+    }
+
     fn write_summary(&self, reason: DiagnosticDoneReason) -> bool {
-        let output_skew_pct = skew_pct(self.total_output_underruns, self.output_pushed_samples);
-        let ref_skew_pct = skew_pct(self.total_ref_stale_drops, self.output_pushed_samples);
-        let clock_skew_detected =
-            output_skew_pct > 2.0 && ref_skew_is_correlated(output_skew_pct, ref_skew_pct);
+        let skew = self.clock_skew_snapshot();
+        let clock_skew_detected = skew.output_skew_pct.abs() > 2.0 && skew.ref_correlated;
         let mut file = match File::create(&self.summary_path) {
             Ok(file) => BufWriter::new(file),
             Err(err) => {
@@ -630,16 +644,30 @@ impl DiagnosticWriter {
             writeln!(file, "reason={}", reason.as_str())?;
             writeln!(file, "frames={}", self.written_frames)?;
             writeln!(file, "seconds={:.3}", self.status.elapsed_s())?;
-            writeln!(file, "output_pushed_samples={}", self.output_pushed_samples)?;
+            writeln!(
+                file,
+                "output_observed_frames={}",
+                self.output_observed_frames
+            )?;
             writeln!(
                 file,
                 "output_underruns_total={}",
                 self.total_output_underruns
             )?;
             writeln!(file, "output_overruns_total={}", self.total_output_overruns)?;
+            writeln!(file, "ref_input_drops_total={}", self.total_ref_input_drops)?;
             writeln!(file, "ref_stale_drops_total={}", self.total_ref_stale_drops)?;
-            writeln!(file, "output_skew_pct={output_skew_pct:.3}")?;
-            writeln!(file, "ref_skew_pct={ref_skew_pct:.3}")?;
+            writeln!(file, "ref_underruns_total={}", self.total_ref_underruns)?;
+            writeln!(file, "output_skew_pct={:.3}", skew.output_skew_pct)?;
+            writeln!(file, "ref_skew_pct={:.3}", skew.ref_skew_pct)?;
+            writeln!(
+                file,
+                "clock_skew_direction={}",
+                skew.direction
+                    .map(ClockSkewDirection::as_str)
+                    .unwrap_or("none")
+            )?;
+            writeln!(file, "clock_skew_ref_correlated={}", skew.ref_correlated)?;
             writeln!(file, "clock_skew_detected={clock_skew_detected}")?;
             writeln!(file, "out_wav_capture_point=pre_output_ring")?;
             writeln!(file, "out_wav_device_underrun_blind_spot=true")?;
@@ -659,6 +687,7 @@ impl DiagnosticWriter {
     }
 
     fn emit_done(&self, reason: DiagnosticDoneReason, ok: bool) {
+        let skew = self.clock_skew_snapshot();
         if self.status_json {
             let event = json!({
                 "type": "diagnostics_done",
@@ -671,9 +700,13 @@ impl DiagnosticWriter {
                 "summary_path": self.summary_path.display().to_string(),
                 "output_underruns": self.total_output_underruns,
                 "output_overruns": self.total_output_overruns,
+                "ref_input_drops": self.total_ref_input_drops,
                 "ref_stale_drops": self.total_ref_stale_drops,
-                "output_skew_pct": skew_pct(self.total_output_underruns, self.output_pushed_samples),
-                "ref_skew_pct": skew_pct(self.total_ref_stale_drops, self.output_pushed_samples),
+                "ref_underruns": self.total_ref_underruns,
+                "output_skew_pct": skew.output_skew_pct,
+                "ref_skew_pct": skew.ref_skew_pct,
+                "clock_skew_direction": skew.direction.map(ClockSkewDirection::as_str),
+                "clock_skew_ref_correlated": skew.ref_correlated,
             });
             println!("{event}");
         } else {
@@ -685,7 +718,7 @@ impl DiagnosticWriter {
                     ok,
                     self.status.drops(),
                     self.total_output_underruns,
-                    skew_pct(self.total_output_underruns, self.output_pushed_samples),
+                    skew.output_skew_pct,
                     self.dir.display()
                 ),
             );
@@ -787,18 +820,6 @@ fn csv_escape(value: &str) -> String {
     } else {
         value.to_string()
     }
-}
-
-fn skew_pct(extra_samples: u64, pushed_samples: u64) -> f64 {
-    if pushed_samples == 0 {
-        0.0
-    } else {
-        extra_samples as f64 / pushed_samples as f64 * 100.0
-    }
-}
-
-fn ref_skew_is_correlated(output_skew_pct: f64, ref_skew_pct: f64) -> bool {
-    output_skew_pct > 0.0 && (output_skew_pct - ref_skew_pct).abs() <= output_skew_pct * 0.5
 }
 
 #[cfg(test)]
@@ -955,6 +976,11 @@ mod tests {
         let summary = std::fs::read_to_string(dir.join("summary.txt"))?;
         assert!(summary.contains("output_underruns_total=1"));
         assert!(summary.contains("ref_stale_drops_total=1"));
+        assert!(summary.contains("output_observed_frames=2"));
+        assert!(summary.contains("output_skew_pct=50.000"));
+        assert!(summary.contains("ref_skew_pct=50.000"));
+        assert!(summary.contains("clock_skew_direction=output_faster_than_capture"));
+        assert!(summary.contains("clock_skew_ref_correlated=true"));
         assert!(summary.contains("out_wav_capture_point=pre_output_ring"));
         assert!(summary.contains("out_wav_device_underrun_blind_spot=true"));
 

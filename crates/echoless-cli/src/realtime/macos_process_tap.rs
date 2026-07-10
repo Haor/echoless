@@ -592,7 +592,7 @@ mod tests {
         assert!(matches!(exit, ReaderExit::Failed(message) if message.contains("EOF")));
         let out: Vec<f32> = std::iter::from_fn(|| consumer.try_pop()).collect();
         assert_eq!(out, vec![1.0, -1.0]);
-        assert_eq!(drops.load(Ordering::Relaxed), 2);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
     }
 
     #[test]
