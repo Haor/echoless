@@ -189,12 +189,12 @@
 
 ### 第二梯队批次门
 
-- [ ] 重跑第一梯队全部质量门。
-- [ ] `(cd app && pnpm tauri build --debug --no-bundle --ci)`。
-- [ ] 检查所有新测试确实被执行，不接受只编译未运行。
-- [ ] 检查 `git log --oneline`：每个条目一个 commit，提交信息遵循 Lore protocol。
-- [ ] 检查 `git status --short`：无未说明文件、无覆盖用户已有改动。
-- [ ] 更新 `audit/FIX_PROGRESS.md`，逐项记录完成证据与未解决风险。
+- [x] 重跑第一梯队全部质量门。
+- [x] `(cd app && pnpm tauri build --debug --no-bundle --ci)`。
+- [x] 检查所有新测试确实被执行，不接受只编译未运行。
+- [x] 检查 `git log --oneline`：每个条目一个 commit，提交信息遵循 Lore protocol。
+- [x] 检查 `git status --short`：无未说明文件、无覆盖用户已有改动。
+- [x] 更新 `audit/FIX_PROGRESS.md`，逐项记录完成证据与未解决风险。
 
 ## 停止条件
 
