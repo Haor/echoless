@@ -14,6 +14,15 @@ export const lvqePureAec = (model: unknown): boolean =>
 export const lvqeNoiseTargetFile = (on: boolean): string =>
   on ? LVQE_NS_ON_FILE : LVQE_NS_OFF_FILE;
 
+export function claimEngineKindChange(
+  current: { current: string },
+  next: string,
+): boolean {
+  if (current.current === next) return false;
+  current.current = next;
+  return true;
+}
+
 /** 仅改 near_delay_ms 的补丁走热控路径,不需重建 sidecar。 */
 export function isNearDelayOnlyPatch(patch: Partial<PipelineCfg>): boolean {
   const keys = Object.keys(patch);

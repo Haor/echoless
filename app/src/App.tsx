@@ -101,6 +101,7 @@ import {
   bypassToggleTarget,
   settleBypassObservation,
   clearBypassPending,
+  claimEngineKindChange,
 } from "./engineLogic";
 import {
   publishRuntimeStatus,
@@ -600,6 +601,7 @@ function useEngineConfig({
 
   // 切 backend:优先恢复该引擎上次的参数(保住 LocalVQE 选过的模型),否则用 manifest 默认。
   function changeKind(k: string) {
+    if (!claimEngineKindChange(kindRef, k)) return;
     paramsByKind.current[kind] = paramsRef.current; // 存下当前引擎的参数
     const np =
       paramsByKind.current[k] ??
@@ -1942,17 +1944,19 @@ function AppShell() {
                 const supported =
                   !proc || proc.platforms.includes(platform) || dev;
                 const rdy = engineReady(m.kind);
+                const active = kind === m.kind;
                 return (
                   <button
                     type="button"
                     key={m.kind}
-                    className={`b ${kind === m.kind ? "active" : ""} ${
+                    className={`b ${active ? "active" : ""} ${
                       supported && !rdy ? "unready" : ""
                     }`}
-                    disabled={!supported}
+                    disabled={!supported || active}
                     onClick={() => {
                       // 未就绪(LocalVQE 无模型 / NVAFX doctor 未过):跳 Engine 配置,不生成非法配置。
                       if (!rdy) {
+                        if (!claimEngineKindChange(kindRef, m.kind)) return;
                         updateEngine({ kind: m.kind });
                         gotoView("engine");
                       } else {

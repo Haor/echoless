@@ -166,6 +166,7 @@ function NvafxCard({
 }) {
   const { t, lang } = useI18n();
   const nv = doctor?.report;
+  const active = kind === "nvidia_afx_aec";
 
   // 不可用态(仅 macOS)拉本机系统信息填充右栏。dev 模拟给一份样例。
   const [sysInfo, setSysInfo] = useState<MacSystemInfo | null>(macSysInfoCache);
@@ -206,15 +207,18 @@ function NvafxCard({
 
   return (
     <div
-      className={`ecard wide ${kind === "nvidia_afx_aec" ? "active" : ""} ${
-        nvSupported ? "" : "na"
-      }`}
+      className={`ecard wide ${active ? "active" : ""} ${nvSupported ? "" : "na"}`}
       role="button"
-      tabIndex={nvSupported ? 0 : -1}
-      aria-pressed={kind === "nvidia_afx_aec"}
-      onClick={() => nvSupported && onSelect("nvidia_afx_aec")}
+      tabIndex={nvSupported && !active ? 0 : -1}
+      aria-pressed={active}
+      aria-disabled={!nvSupported || active}
+      onClick={() => nvSupported && !active && onSelect("nvidia_afx_aec")}
       onKeyDown={(e) => {
-        if (nvSupported && (e.key === "Enter" || e.key === " ")) {
+        if (
+          nvSupported &&
+          !active &&
+          (e.key === "Enter" || e.key === " ")
+        ) {
           e.preventDefault();
           onSelect("nvidia_afx_aec");
         }
@@ -227,19 +231,19 @@ function NvafxCard({
         <button
           type="button"
           className={`etag plainbtn ${nvReady ? "" : nvSupported ? "warn" : "na"}`}
-          disabled={!nvSupported}
-          aria-pressed={kind === "nvidia_afx_aec"}
+          disabled={!nvSupported || active}
+          aria-pressed={active}
           onClick={() => onSelect("nvidia_afx_aec")}
         >
-          {kind === "nvidia_afx_aec" && <i className="dot" />}{" "}
+          {active && <i className="dot" />}{" "}
           {dev && !doctor?.ok
-            ? kind === "nvidia_afx_aec"
+            ? active
               ? `${t("active")} · DEV`
               : `${t("rdyReady")} · DEV`
             : !nvSupported
               ? t("windowsRtxOnly")
               : doctor?.ok
-                ? kind === "nvidia_afx_aec"
+                ? active
                   ? t("active")
                   : t("rdyReady")
                 : `${problems} ${t("rdyIssues")}`}
@@ -546,11 +550,12 @@ export function EnginePage({
         <div
           className={`ecard ${active ? "active" : ""} ${sup ? "" : "na"} lvwide`}
           role="button"
-          tabIndex={sup ? 0 : -1}
+          tabIndex={sup && !active ? 0 : -1}
           aria-pressed={active}
-          onClick={() => sup && onSelect(p.kind)}
+          aria-disabled={!sup || active}
+          onClick={() => sup && !active && onSelect(p.kind)}
           onKeyDown={(e) => {
-            if (sup && (e.key === "Enter" || e.key === " ")) {
+            if (sup && !active && (e.key === "Enter" || e.key === " ")) {
               e.preventDefault();
               onSelect(p.kind);
             }
@@ -564,7 +569,7 @@ export function EnginePage({
       <button
         type="button"
         aria-pressed={active}
-        disabled={!sup}
+        disabled={!sup || active}
         className={`ecard cardbtn ${active ? "active" : ""} ${sup ? "" : "na"}`}
         onClick={() => onSelect(p.kind)}
       >

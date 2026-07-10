@@ -913,6 +913,10 @@ button.ecard:disabled {
 .ecard.lvwide:not(.na) {
   cursor: pointer;
 }
+.ecard.wide[aria-disabled="true"],
+.ecard.lvwide[aria-disabled="true"] {
+  cursor: default;
+}
 .ecard.wide {
   margin-top: 14px;
 }
