@@ -123,11 +123,11 @@
 
 ### 8. S-13【P2】ScrambleText 设备名 HTML 注入
 
-- [ ] 修改 `app/src/components/ScrambleText.tsx`，动画全程只写安全文本，不再以 `innerHTML` 为动画目标。
-- [ ] 保留 scramble 动画、语言切换与中断清理行为。
-- [ ] 用 `<>&"'`、`<style>`、`<meta http-equiv=refresh>` payload 做手工 WebView/浏览器回归，确认只显示文本、无新增 DOM element、无外部请求。
-- [ ] 验证：`(cd app && pnpm exec tsc --noEmit && pnpm test && pnpm build)`。
-- [ ] 独立 commit：`S-13`。
+- [x] 修改 `app/src/components/ScrambleText.tsx`，动画全程只写安全文本，不再以 `innerHTML` 为动画目标。
+- [x] 保留 scramble 动画、语言切换与中断清理行为。
+- [x] 用 `<>&"'`、`<style>`、`<meta http-equiv=refresh>` payload 做手工 WebView/浏览器回归，确认只显示文本、无新增 DOM element、无外部请求。
+- [x] 验证：`(cd app && pnpm exec tsc --noEmit && pnpm test && pnpm build)`。
+- [x] 独立 commit：`S-13`。
 
 ### 9. B-30【P3】CoreAudio listener remove 失败后的 context 生命周期
 
