@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -57,8 +57,8 @@ pub(crate) fn shutdown_child_gracefully(child: &mut Child) {
 }
 
 /// 当前运行中的 echoless run 子进程及其代际。
-/// `active_run_id` 与 `child` 分开保存:主动停止会先取走 child,但 reader
-/// 尚未收尾时仍需保留代际,才能拒绝旧 exit 污染随后启动的新 run。
+/// 主动停止会在同一短临界区摘走代际和 child,使 reader 尾部 status/exit
+/// 立即失效；reader 自然退出则在主线程按代际提交最终状态。
 pub(crate) struct RunStateInner {
     pub(crate) child: Option<RunChild>,
     pub(crate) active_run_id: Option<RunId>,
@@ -112,48 +112,41 @@ pub(crate) fn with_active_run(state: &RunState, run_id: RunId, action: impl FnOn
 }
 
 pub(crate) fn terminate_run(state: &RunState) -> Option<RunId> {
-    // 锁外 drop:RunChild::Drop 的限时等待(最长 1s)不占 run_state 锁。
+    // 锁内只提交停止状态；RunChild::Drop 的 stdin EOF、限时等待、kill 与
+    // 临时配置清理全部在锁外执行。
     let (run_id, child_opt) = {
         let mut guard = run_state_guard(state);
-        (guard.active_run_id, guard.child.take())
+        (guard.active_run_id.take(), guard.child.take())
     };
     drop(child_opt);
     run_id
 }
 
-/// reader 收尾只允许当前代执行 tray/exit 副作用。旧代只清理自己的临时配置,
-/// 绝不触碰新 child；当前代的判断、状态清除与副作用在同一把锁内完成。
-pub(crate) fn finish_run_if_active(
-    state: &RunState,
-    run_id: RunId,
-    config_path: &Path,
-    on_active: impl FnOnce(),
-) -> bool {
-    let mut child_opt = None;
-    let active = {
-        let mut guard = run_state_guard(state);
-        if guard.active_run_id != Some(run_id) {
-            false
-        } else {
-            if guard
-                .child
-                .as_ref()
-                .is_some_and(|child| child.run_id == run_id)
-            {
-                child_opt = guard.child.take();
-            }
-            guard.active_run_id = None;
-            on_active();
-            true
-        }
-    };
-    if active {
-        // Some(_) 由 RunChild::Drop 收尾(子进程已自行退出,try_wait 立即命中)。
-        drop(child_opt);
-    } else {
-        crate::platform::cleanup_run_config(config_path);
+/// reader 代际提交的纯状态结果。外部资源回收、配置清理和 GUI/event 副作用
+/// 由 sidecar 的私有主线程 finalizer 消费，不能从任意线程把 callback 带进锁域。
+#[must_use = "finalization outcomes own child cleanup and must be consumed"]
+pub(crate) enum RunFinalization {
+    Stale,
+    ActiveWithoutChild,
+    ActiveWithChild(RunChild),
+    ActiveChildMismatch { child: RunChild },
+}
+
+/// 在短临界区内提交 reader finalization：只判断代际、摘 child、清 active。
+/// 即使状态出现 active/child 代际不一致，也会摘走 child 交给调用者诊断并回收，
+/// 不把无法再由正常 reader 命中的进程永久遗留在 RunState。
+pub(crate) fn commit_run_finalization(state: &RunState, run_id: RunId) -> RunFinalization {
+    let mut guard = run_state_guard(state);
+    if guard.active_run_id != Some(run_id) {
+        return RunFinalization::Stale;
     }
-    active
+
+    guard.active_run_id = None;
+    match guard.child.take() {
+        None => RunFinalization::ActiveWithoutChild,
+        Some(child) if child.run_id == run_id => RunFinalization::ActiveWithChild(child),
+        Some(child) => RunFinalization::ActiveChildMismatch { child },
+    }
 }
 
 #[cfg(test)]

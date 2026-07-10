@@ -3,7 +3,7 @@ use std::process::Command;
 #[cfg(unix)]
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
@@ -19,9 +19,9 @@ use crate::platform::{
     validate_open_path, write_toml_create_new, write_transient_config_toml,
 };
 use crate::proc::{
-    command_output_with_timeout, finish_run_if_active, install_test_generation,
-    parse_jsonl_line_event, push_tail_line, run_state_guard, terminate_run, JsonlLineEvent,
-    RunChild, RunState,
+    command_output_with_timeout, commit_run_finalization, install_test_generation,
+    parse_jsonl_line_event, push_tail_line, run_state_guard, terminate_run, with_active_run,
+    JsonlLineEvent, RunChild, RunFinalization, RunState,
 };
 #[cfg(unix)]
 use crate::sidecar::write_run_control_line;
@@ -51,6 +51,26 @@ fn with_test_data_root<T>(root: &Path, run: impl FnOnce() -> T) -> T {
         std::env::remove_var(echoless_paths::DATA_ROOT_ENV_VAR);
     }
     result
+}
+
+fn complete_test_finalization(
+    outcome: RunFinalization,
+    config_path: &Path,
+    on_active: impl FnOnce(),
+) -> bool {
+    let child = match outcome {
+        RunFinalization::Stale => {
+            cleanup_run_config(config_path);
+            return false;
+        }
+        RunFinalization::ActiveWithoutChild => None,
+        RunFinalization::ActiveWithChild(child)
+        | RunFinalization::ActiveChildMismatch { child } => Some(child),
+    };
+    drop(child);
+    cleanup_run_config(config_path);
+    on_active();
+    true
 }
 
 #[cfg(unix)]
@@ -173,7 +193,7 @@ fn migrate_legacy_localvqe_models_moves_only_missing_gguf_files() {
 }
 
 #[test]
-fn terminate_run_marks_stopping_waits_and_cleans_config() {
+fn terminate_run_clears_generation_and_rejects_tail_status() {
     let dir = unique_temp_dir("echoless-terminate-run");
     let config_path = dir.join("run.toml");
     std::fs::write(&config_path, "stub = true").unwrap();
@@ -191,13 +211,20 @@ fn terminate_run_marks_stopping_waits_and_cleans_config() {
         });
     }
 
-    terminate_run(&state);
+    assert_eq!(terminate_run(&state), Some(1));
 
     assert!(stopping.load(Ordering::SeqCst));
     let guard = run_state_guard(&state);
     assert!(guard.child.is_none());
-    assert_eq!(guard.active_run_id, Some(1));
+    assert_eq!(guard.active_run_id, None);
     assert!(!config_path.exists());
+    drop(guard);
+
+    let tail_effects = AtomicUsize::new(0);
+    assert!(!with_active_run(&state, 1, || {
+        tail_effects.fetch_add(1, Ordering::SeqCst);
+    }));
+    assert_eq!(tail_effects.load(Ordering::SeqCst), 0);
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -248,45 +275,241 @@ fn write_run_control_line_reaps_exited_child_after_successful_write() {
 }
 
 #[test]
-fn stale_reader_cannot_finalize_new_generation() {
+fn finalization_side_effect_does_not_hold_run_state_lock() {
     let state = Arc::new(RunState::default());
     install_test_generation(&state, 1);
-    let old_config_dir = unique_temp_dir("echoless-stale-run-a");
-    let old_config = old_config_dir.join("run.toml");
-    std::fs::write(&old_config, "run = 1").unwrap();
-    let barrier = Arc::new(Barrier::new(2));
+    let config_dir = unique_temp_dir("echoless-finalize-lock");
+    let config = config_dir.join("run.toml");
+    std::fs::write(&config, "run = 1").unwrap();
     let side_effects = Arc::new(AtomicUsize::new(0));
+    let (effect_entered_tx, effect_entered_rx) = mpsc::channel();
+    let (release_effect_tx, release_effect_rx) = mpsc::channel();
 
     let worker_state = state.clone();
-    let worker_barrier = barrier.clone();
     let worker_effects = side_effects.clone();
-    let worker_config = old_config.clone();
-    let old_reader = std::thread::spawn(move || {
-        worker_barrier.wait();
-        finish_run_if_active(&worker_state, 1, &worker_config, || {
+    let worker_config = config.clone();
+    let finalizer = std::thread::spawn(move || {
+        let outcome = commit_run_finalization(&worker_state, 1);
+        complete_test_finalization(outcome, &worker_config, || {
             worker_effects.fetch_add(1, Ordering::SeqCst);
+            let _ = effect_entered_tx.send(());
+            let _ = release_effect_rx.recv();
         })
     });
 
-    install_test_generation(&state, 2);
-    barrier.wait();
+    let effect_entered = effect_entered_rx.recv_timeout(Duration::from_secs(1));
+    let (lock_acquired_tx, lock_acquired_rx) = mpsc::channel();
+    let lock_state = state.clone();
+    let lock_attempt = std::thread::spawn(move || {
+        let _guard = run_state_guard(&lock_state);
+        let _ = lock_acquired_tx.send(());
+    });
 
-    assert!(!old_reader.join().unwrap());
+    let acquired_while_effect_blocked = lock_acquired_rx
+        .recv_timeout(Duration::from_secs(1))
+        .is_ok();
+    let released = release_effect_tx.send(()).is_ok();
+    let finalization_result = finalizer.join();
+    let lock_result = lock_attempt.join();
+
+    assert!(
+        effect_entered.is_ok(),
+        "finalization did not reach its GUI side effect"
+    );
+    assert!(released, "GUI side effect stopped waiting before release");
+    assert!(finalization_result.unwrap());
+    assert!(lock_result.is_ok());
+    assert!(
+        acquired_while_effect_blocked,
+        "RunState stayed locked while the GUI side effect was blocked"
+    );
+    assert_eq!(side_effects.load(Ordering::SeqCst), 1);
+
+    let _ = std::fs::remove_dir_all(config_dir);
+}
+
+#[test]
+fn current_generation_finalization_runs_once_and_cleans_before_side_effects() {
+    let state = RunState::default();
+    install_test_generation(&state, 7);
+    let config_dir = unique_temp_dir("echoless-current-finalize");
+    let config = config_dir.join("run.toml");
+    std::fs::write(&config, "run = 7").unwrap();
+    let side_effects = AtomicUsize::new(0);
+    let config_present_during_effect = AtomicBool::new(false);
+
+    let first = commit_run_finalization(&state, 7);
+    let first_was_active = complete_test_finalization(first, &config, || {
+        config_present_during_effect.store(config.exists(), Ordering::SeqCst);
+        side_effects.fetch_add(1, Ordering::SeqCst);
+    });
+    let second = commit_run_finalization(&state, 7);
+    let second_was_active = complete_test_finalization(second, &config, || {
+        side_effects.fetch_add(1, Ordering::SeqCst);
+    });
+
+    assert!(first_was_active);
+    assert!(!second_was_active);
+    assert!(!config_present_during_effect.load(Ordering::SeqCst));
+    assert!(!config.exists());
+    assert_eq!(side_effects.load(Ordering::SeqCst), 1);
+    assert_eq!(run_state_guard(&state).active_run_id, None);
+
+    let _ = std::fs::remove_dir_all(config_dir);
+}
+
+#[test]
+fn active_child_generation_mismatch_is_extracted_for_diagnostic_reaping() {
+    let config_dir = unique_temp_dir("echoless-finalize-mismatch");
+    let reader_config = config_dir.join("run-7.toml");
+    let child_config = config_dir.join("run-8.toml");
+    std::fs::write(&reader_config, "run = 7").unwrap();
+    std::fs::write(&child_config, "run = 8").unwrap();
+    let stopping = Arc::new(AtomicBool::new(false));
+    let child = slow_child_command().spawn().unwrap();
+    let state = RunState::default();
+    {
+        let mut guard = run_state_guard(&state);
+        guard.active_run_id = Some(7);
+        guard.child = Some(RunChild {
+            run_id: 8,
+            child,
+            stopping: stopping.clone(),
+            config_path: child_config.clone(),
+        });
+    }
+
+    let outcome = commit_run_finalization(&state, 7);
+    let mismatched_child_run_id = match &outcome {
+        RunFinalization::ActiveChildMismatch { child } => Some(child.run_id),
+        _ => None,
+    };
+    let state_was_cleared = {
+        let guard = run_state_guard(&state);
+        guard.active_run_id.is_none() && guard.child.is_none()
+    };
+    let finalized = complete_test_finalization(outcome, &reader_config, || {});
+
+    assert_eq!(mismatched_child_run_id, Some(8));
+    assert!(state_was_cleared);
+    assert!(finalized);
+    assert!(stopping.load(Ordering::SeqCst));
+    assert!(!reader_config.exists());
+    assert!(!child_config.exists());
+
+    let _ = std::fs::remove_dir_all(config_dir);
+}
+
+#[test]
+fn stale_reader_cleans_only_its_config_and_keeps_new_generation() {
+    let state = RunState::default();
+    install_test_generation(&state, 2);
+    let config_dir = unique_temp_dir("echoless-stale-run-a");
+    let old_config = config_dir.join("run.toml");
+    std::fs::write(&old_config, "run = 1").unwrap();
+    let side_effects = AtomicUsize::new(0);
+
+    let outcome = commit_run_finalization(&state, 1);
+    let was_active = complete_test_finalization(outcome, &old_config, || {
+        side_effects.fetch_add(1, Ordering::SeqCst);
+    });
+
+    assert!(!was_active);
     assert_eq!(run_state_guard(&state).active_run_id, Some(2));
     assert_eq!(side_effects.load(Ordering::SeqCst), 0);
     assert!(!old_config.exists());
 
-    let current_config = old_config_dir.join("run-b.toml");
-    assert!(finish_run_if_active(&state, 2, &current_config, || {
-        side_effects.fetch_add(1, Ordering::SeqCst);
-    }));
-    assert!(!finish_run_if_active(&state, 2, &current_config, || {
-        side_effects.fetch_add(1, Ordering::SeqCst);
-    }));
-    assert_eq!(side_effects.load(Ordering::SeqCst), 1);
-    assert_eq!(run_state_guard(&state).active_run_id, None);
+    let _ = std::fs::remove_dir_all(config_dir);
+}
 
-    let _ = std::fs::remove_dir_all(old_config_dir);
+#[test]
+fn serialized_main_thread_queues_next_generation_until_finalization_finishes() {
+    type MainThreadTask = Box<dyn FnOnce() + Send>;
+
+    let state = Arc::new(RunState::default());
+    install_test_generation(&state, 1);
+    let config_dir = unique_temp_dir("echoless-main-thread-order");
+    let old_config = config_dir.join("run.toml");
+    std::fs::write(&old_config, "run = 1").unwrap();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let (effect_entered_tx, effect_entered_rx) = mpsc::channel();
+    let (release_effect_tx, release_effect_rx) = mpsc::channel();
+    let (finalized_tx, finalized_rx) = mpsc::channel();
+    let (task_tx, task_rx) = mpsc::channel::<MainThreadTask>();
+    let dispatcher = std::thread::spawn(move || {
+        while let Ok(task) = task_rx.recv() {
+            task();
+        }
+    });
+
+    let finalize_state = state.clone();
+    let finalize_config = old_config.clone();
+    let finalize_order = order.clone();
+    let queued_a = task_tx
+        .send(Box::new(move || {
+            let outcome = commit_run_finalization(&finalize_state, 1);
+            let finalized = complete_test_finalization(outcome, &finalize_config, || {
+                finalize_order
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push("a-enter");
+                let _ = effect_entered_tx.send(());
+                let _ = release_effect_rx.recv();
+                finalize_order
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push("a-exit");
+            });
+            let _ = finalized_tx.send(finalized);
+        }))
+        .is_ok();
+
+    let effect_entered = effect_entered_rx.recv_timeout(Duration::from_secs(1));
+    let (installed_tx, installed_rx) = mpsc::channel();
+    let install_state = state.clone();
+    let install_order = order.clone();
+    // Queue B on the same serial dispatcher used by A; installing it directly from this
+    // test thread would model an interleaving that production's main thread cannot create.
+    let queued_b = task_tx
+        .send(Box::new(move || {
+            install_test_generation(&install_state, 2);
+            install_order
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push("b-install");
+            let _ = installed_tx.send(());
+        }))
+        .is_ok();
+
+    let active_before_release = state.0.try_lock().map(|guard| guard.active_run_id).ok();
+    let released = release_effect_tx.send(()).is_ok();
+    let finalized = finalized_rx.recv_timeout(Duration::from_secs(1));
+    let installed = installed_rx.recv_timeout(Duration::from_secs(1));
+    drop(task_tx);
+    let dispatcher_result = dispatcher.join();
+
+    assert!(queued_a);
+    assert!(
+        effect_entered.is_ok(),
+        "generation A did not reach its main-thread side effect"
+    );
+    assert!(queued_b);
+    assert_eq!(
+        active_before_release,
+        Some(None),
+        "generation B ran while generation A still occupied the main-thread dispatcher"
+    );
+    assert!(released);
+    assert!(finalized.unwrap());
+    assert!(installed.is_ok());
+    assert!(dispatcher_result.is_ok());
+    assert_eq!(
+        order.lock().unwrap().as_slice(),
+        ["a-enter", "a-exit", "b-install"]
+    );
+    assert_eq!(run_state_guard(&state).active_run_id, Some(2));
+
+    let _ = std::fs::remove_dir_all(config_dir);
 }
 
 #[test]

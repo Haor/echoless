@@ -1,4 +1,5 @@
 use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,10 +11,10 @@ use tauri::{Emitter, Manager, State};
 use crate::bin_resolve::{echoless_command, suppress_child_console};
 use crate::platform::{cleanup_run_config, transient_config_dir, write_transient_config_toml};
 use crate::proc::{
-    allocate_run_id, finish_run_if_active, parse_jsonl_line_event, push_tail_line, run_json_async,
-    run_state_guard, shutdown_child_gracefully, terminate_run, with_active_run, JsonlLineEvent,
-    RunChild, RunId, RunState, PROBE_DELAY_TIMEOUT, STREAM_TAIL_LIMIT_BYTES,
-    VALIDATE_COMMAND_TIMEOUT,
+    allocate_run_id, commit_run_finalization, parse_jsonl_line_event, push_tail_line,
+    run_json_async, run_state_guard, shutdown_child_gracefully, terminate_run, with_active_run,
+    JsonlLineEvent, RunChild, RunFinalization, RunId, RunState, PROBE_DELAY_TIMEOUT,
+    STREAM_TAIL_LIMIT_BYTES, VALIDATE_COMMAND_TIMEOUT,
 };
 use crate::tray::update_tray_tooltip;
 
@@ -149,6 +150,66 @@ pub(crate) async fn validate_config(
     result
 }
 
+/// 仅由 `schedule_run_finalization` 投递到 Tauri 主线程。状态提交后再在锁外
+/// 回收 child/配置并更新 tray/event，保证下一次主线程生命周期动作不会插队。
+fn finalize_run_on_main_thread(
+    app: &tauri::AppHandle,
+    run_id: RunId,
+    config_path: &Path,
+    intentional: bool,
+) {
+    let outcome = commit_run_finalization(&app.state::<RunState>(), run_id);
+    let child = match outcome {
+        RunFinalization::Stale => {
+            cleanup_run_config(config_path);
+            return;
+        }
+        RunFinalization::ActiveWithoutChild => None,
+        RunFinalization::ActiveWithChild(child) => Some(child),
+        RunFinalization::ActiveChildMismatch { child } => {
+            crate::logging::log(
+                "error",
+                "sidecar",
+                &format!(
+                    "run state mismatch while finalizing {run_id}: child belongs to {}; reaping it",
+                    child.run_id
+                ),
+            );
+            Some(child)
+        }
+    };
+
+    drop(child);
+    cleanup_run_config(config_path);
+    update_tray_tooltip(app, false);
+    let _ = app.emit(
+        "echoless://exit",
+        serde_json::json!({ "run_id": run_id, "intentional": intentional }),
+    );
+}
+
+/// stdout reader 的唯一 finalization 入口：fire-and-forget 投递整个代际提交和
+/// GUI/event 收尾。调度失败时事件循环已不可用，仍诊断并幂等清理 reader 配置。
+fn schedule_run_finalization(
+    app: &tauri::AppHandle,
+    run_id: RunId,
+    config_path: PathBuf,
+    intentional: bool,
+) {
+    let finalizer_app = app.clone();
+    let fallback_config_path = config_path.clone();
+    if let Err(err) = app.run_on_main_thread(move || {
+        finalize_run_on_main_thread(&finalizer_app, run_id, &config_path, intentional);
+    }) {
+        crate::logging::log(
+            "error",
+            "sidecar",
+            &format!("failed to schedule run {run_id} finalization on main thread: {err}"),
+        );
+        cleanup_run_config(&fallback_config_path);
+    }
+}
+
 #[tauri::command]
 pub(crate) fn start_run(
     app: tauri::AppHandle,
@@ -274,14 +335,7 @@ pub(crate) fn start_run(
             "sidecar",
             &format!("echoless run {run_id} exited (intentional={intentional})"),
         );
-        let run_state = app_out.state::<RunState>();
-        finish_run_if_active(&run_state, run_id, &reader_config_path, || {
-            update_tray_tooltip(&app_out, false);
-            let _ = app_out.emit(
-                "echoless://exit",
-                serde_json::json!({ "run_id": run_id, "intentional": intentional }),
-            );
-        });
+        schedule_run_finalization(&app_out, run_id, reader_config_path, intentional);
     });
 
     // stderr = 人类日志(转发事件 + 落盘取证)
@@ -393,7 +447,11 @@ pub(crate) fn stop_run(
 ) -> Result<Option<RunId>, String> {
     let run_id = terminate_run(&state);
     if let Some(run_id) = run_id {
-        with_active_run(&state, run_id, || update_tray_tooltip(&app, false));
+        update_tray_tooltip(&app, false);
+        let _ = app.emit(
+            "echoless://exit",
+            serde_json::json!({ "run_id": run_id, "intentional": true }),
+        );
     }
     Ok(run_id)
 }
