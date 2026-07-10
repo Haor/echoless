@@ -142,4 +142,4 @@ parameters.
 | `ECHOLESS_LOCALVQE_LIBRARY` | path to `liblocalvqe` (otherwise: app bundle resources, then the brand data dir) |
 
 Model/data directory: `~/Library/Application Support/Echoless` (macOS),
-`%LOCALAPPDATA%\Echoless` (Windows), `~/.local/share/echoless` (Linux).
+`%LOCALAPPDATA%\Echoless` (Windows), `~/.local/share/Echoless` (Linux).

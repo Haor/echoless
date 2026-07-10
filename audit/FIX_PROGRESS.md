@@ -32,8 +32,8 @@
 | 11 | B-32 | 第二 | done | `f6d9aac` | Tauri 28 passed；clippy clean | 纳秒 stamp + PID + attempt + create_new；8-worker 同 stamp 冲突与独立 cap 覆盖；8 MiB/7 天/20 文件策略不变 |
 | 12 | S-14 | 第二 | done | `de2d1a4` | Tauri 28 passed；clippy clean | tauri::Url 规范化 scheme/host/port；拒 credentials/non-443；覆盖 backslash/userinfo/encoded delimiter/case/trailing dot |
 | 13 | T-12 | 第二 | implemented-pending-remote-ci | `a709ab3` | workflow YAML parsed | pull_request 仅覆盖 main/dev；现有 jobs 与 Linux 发布行为不变；测试 PR 待最终推送阶段验收 |
-| 14 | D-12 | 第二 | done-pending-commit | this commit | root 137 passed / 3 ignored；fmt clean | 基线既有 diff 仅纠正 rubato FFT SRC 状态与 GUI native/模型下载/CLI archive 资产分发事实 |
-| 15 | D-13 | 第二 | pending | — | — | docs-only Linux path casing |
+| 14 | D-12 | 第二 | done | `e017a99` | root 137 passed / 3 ignored；fmt clean | 基线既有 diff 仅纠正 rubato FFT SRC 状态与 GUI native/模型下载/CLI archive 资产分发事实 |
+| 15 | D-13 | 第二 | done-pending-commit | this commit | English/Chinese path grep matched implementation | 仅修正公开 CLI 文档的默认 Linux 路径大小写；XDG_DATA_HOME 语义和 Linux 代码/保证均不变 |
 | 16 | D-14 | 第二 | pending | — | — | sidecar resolution docs |
 
 ## 批次门

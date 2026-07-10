@@ -177,9 +177,9 @@
 
 ### 15. D-13【P3】Linux 数据目录大小写文档
 
-- [ ] 将 `docs/CLI.md`、`docs/CLI.zh-CN.md` 的 Linux 数据根从 `~/.local/share/echoless` 改为实现使用的 `~/.local/share/Echoless`，并保留 `XDG_DATA_HOME` 语义。
-- [ ] 仅纠正公开 deb/AppImage/CLI 用户会读取的事实性路径；不修改 Linux 代码，不新增 Linux 支持或质量保证。
-- [ ] 独立 commit：`D-13`，不与 D-14 混合。
+- [x] 将 `docs/CLI.md`、`docs/CLI.zh-CN.md` 的 Linux 数据根从 `~/.local/share/echoless` 改为实现使用的 `~/.local/share/Echoless`，并保留 `XDG_DATA_HOME` 语义。
+- [x] 仅纠正公开 deb/AppImage/CLI 用户会读取的事实性路径；不修改 Linux 代码，不新增 Linux 支持或质量保证。
+- [x] 独立 commit：`D-13`，不与 D-14 混合。
 
 ### 16. D-14【P3】app README sidecar 解析顺序
 

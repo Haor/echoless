@@ -138,4 +138,4 @@ echoless nvafx offline --mic ... --reference ... --out ...
 | `ECHOLESS_LOCALVQE_LIBRARY` | `liblocalvqe` 的路径(否则:先找应用 bundle 资源,再找品牌数据目录) |
 
 模型/数据目录:`~/Library/Application Support/Echoless`(macOS)、
-`%LOCALAPPDATA%\Echoless`(Windows)、`~/.local/share/echoless`(Linux)。
+`%LOCALAPPDATA%\Echoless`(Windows)、`~/.local/share/Echoless`(Linux)。
