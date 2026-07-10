@@ -9,7 +9,6 @@ import {
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getVersion } from "@tauri-apps/api/app";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   buildConfigToml,
   defaultDiagDir,
@@ -110,6 +109,7 @@ import {
   setDiagnosticsSessionDir,
 } from "./runtimeTelemetry";
 import { REQUIRED_RUN_CONTROLS } from "./runtimeControls";
+import { createAsyncListenerScope } from "./asyncListener";
 
 const appWindow = getCurrentWindow();
 
@@ -860,10 +860,8 @@ function useRunLifecycle({
   useEffect(() => {
     // 清理可能残留的 sidecar(前端 reload 后 Rust 子进程可能还活着 → 状态脱同步)。
     stopRun().catch(() => {});
-    const uns: UnlistenFn[] = [];
-    (async () => {
-      uns.push(
-        await onRunEvent((ev) => {
+    const listeners = createAsyncListenerScope();
+    listeners.listen(onRunEvent, (ev) => {
           const decision = acceptRunEvent(runGenerationRef.current, ev);
           runGenerationRef.current = decision.generation;
           if (!decision.accepted) return;
@@ -994,10 +992,8 @@ function useRunLifecycle({
           tel.refWave = s.ref_wave;
           tel.outWave = s.out_wave;
           publishRuntimeStatus(s);
-        }),
-      );
-      uns.push(
-        await onRunExit((ev) => {
+    });
+    listeners.listen(onRunExit, (ev) => {
           const decision = acceptRunExit(runGenerationRef.current, ev);
           runGenerationRef.current = decision.generation;
           if (!decision.accepted) return;
@@ -1020,17 +1016,11 @@ function useRunLifecycle({
               });
             }, 150);
           }
-        }),
-      );
-      uns.push(
-        await onRunLog((line) => {
-          if (line.trim()) lastLogRef.current = line;
-        }),
-      );
-    })();
-    return () => {
-      uns.forEach((u) => u());
-    };
+    });
+    listeners.listen(onRunLog, (line) => {
+      if (line.trim()) lastLogRef.current = line;
+    });
+    return () => listeners.dispose();
   }, [hasRunControl, noteError, startDiag, updateApp]);
 
   function currentToml(over?: Override) {
@@ -1456,10 +1446,8 @@ function AppShell() {
     );
     window.addEventListener("focus", refreshDevicesSoon);
 
-    const uns: UnlistenFn[] = [];
-    (async () => {
-      uns.push(await onDevicesChanged(refreshDevicesSoon));
-    })();
+    const listeners = createAsyncListenerScope();
+    listeners.listen(onDevicesChanged, refreshDevicesSoon);
     return () => {
       window.clearTimeout(devChangeTimer);
       navigator.mediaDevices?.removeEventListener?.(
@@ -1467,7 +1455,7 @@ function AppShell() {
         refreshDevicesSoon,
       );
       window.removeEventListener("focus", refreshDevicesSoon);
-      uns.forEach((u) => u());
+      listeners.dispose();
     };
   }, [noteError, refreshDevices]);
 

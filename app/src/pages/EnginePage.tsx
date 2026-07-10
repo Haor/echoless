@@ -16,6 +16,7 @@ import {
   type MacSystemInfo,
 } from "../api";
 import { useI18n } from "../i18n";
+import { createAsyncListenerScope } from "../asyncListener";
 
 // macOS 主版本号 → 代号(sw_vers 只给版本号,代号本地映射)。落不到映射时只显版本号。
 function macOsName(version?: string | null): string | null {
@@ -386,14 +387,13 @@ export function EnginePage({
   }, []);
   // 下载进度事件:只更新仍在下载的文件的百分比。
   useEffect(() => {
-    const un = onLocalvqeProgress((p) => {
+    const listeners = createAsyncListenerScope();
+    listeners.listen(onLocalvqeProgress, (p) => {
       setLvDl((cur) =>
         p.filename in cur ? { ...cur, [p.filename]: p.pct } : cur,
       );
     });
-    return () => {
-      un.then((f) => f());
-    };
+    return () => listeners.dispose();
   }, []);
   async function downloadModel(file: string) {
     // 同名下载进行中则忽略(按钮已 disabled,这里再兜一层快速双击竞态)。
