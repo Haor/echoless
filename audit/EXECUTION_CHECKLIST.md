@@ -87,14 +87,14 @@
 - [x] 验证：`cargo test -p echoless-cli --locked`。
 - [x] 独立 commit：`B-29`。
 
-### 6. T-11【P1】Tauri 后端 21 tests 接入 CI
+### 6. T-11【P1】Tauri 后端 tests 接入 CI
 
-- [ ] 在 `.github/workflows/build.yml` 的 Windows/macOS build matrix 中加入 `(cd app/src-tauri && cargo test --locked)`。
-- [ ] 不新增 Linux 质量承诺；不为 Linux 单独补测试或 fail-closed 门。
-- [ ] 保留现有 clippy/build，不能用 test 替代静态检查或构建 smoke。
-- [ ] 本地验证 21 tests 全执行，并确认 workflow YAML 可解析。
+- [x] 在 `.github/workflows/build.yml` 的 Windows/macOS build matrix 中加入 `(cd app/src-tauri && cargo test --locked)`。
+- [x] 不新增 Linux 质量承诺；不为 Linux 单独补测试或 fail-closed 门。
+- [x] 保留现有 clippy/build，不能用 test 替代静态检查或构建 smoke。
+- [x] 本地验证 23 tests（B-28 新增后的实际数量）全执行，并确认 workflow YAML 可解析。
 - [ ] 推送后验证 supported-platform jobs 的 Tauri tests 日志；预计净增约 5 秒。
-- [ ] 独立 commit：`T-11`。
+- [x] 独立 commit：`T-11`。
 
 ### 第一梯队批次门
 

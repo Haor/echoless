@@ -110,6 +110,10 @@ jobs:
         working-directory: app/src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
 
+      - name: Tauri backend tests
+        working-directory: app/src-tauri
+        run: cargo test --locked
+
       - name: Tauri backend build
         working-directory: app/src-tauri
         run: cargo build --locked
