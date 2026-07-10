@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { writeSafeText } from "./ScrambleText";
 
@@ -10,19 +9,21 @@ const hostileText = [
 
 describe("ScrambleText", () => {
   it.each(hostileText)("preserves hostile input as text: %s", (text) => {
-    const sink = { textContent: null as string | null };
+    let written: string | null = null;
+    const sink = {
+      get textContent() {
+        return written;
+      },
+      set textContent(value: string | null) {
+        written = value;
+      },
+      set innerHTML(_value: string) {
+        throw new Error("hostile text reached an HTML-writing sink");
+      },
+    };
 
     writeSafeText(sink, text);
 
-    expect(sink.textContent).toBe(text);
-  });
-
-  it("does not expose an HTML-writing sink", () => {
-    const source = readFileSync(
-      new URL("./ScrambleText.tsx", import.meta.url),
-      "utf8",
-    );
-
-    expect(source).not.toMatch(/\binnerHTML\b/);
+    expect(written).toBe(text);
   });
 });
