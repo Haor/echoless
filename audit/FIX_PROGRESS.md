@@ -26,8 +26,8 @@
 | 5 | B-29 | 第一 | done | `360eb06` | CLI 90 passed；clippy clean | reference/output loss 统一 frame 单位；真实 underrun 帧数；有符号 ±22.4% 双向检测；live/summary 共用 snapshot 与 direction；告警阈值不变 |
 | 6 | T-11 | 第一 | implemented-pending-remote-ci | `b3f8e90` | Tauri 23 passed；clippy clean；workflow YAML parsed | Windows + macOS matrix 新增独立 backend test step；保留 clippy/build/smoke；远程日志待推送后验收 |
 | 7 | A-09 | 第二 | done | `9d20ca7` | frontend 31 passed + tsc + build | 补齐 17 个 runtime discriminator 的 union；覆盖 stream/skew/serde error、status correlation/direction 与 null control command；复用 run_id |
-| 8 | S-13 | 第二 | done-pending-commit | this commit | frontend 35 passed + tsc + build；Chromium 3 payload regression | anime.js 在普通对象上生成 scramble 帧，DOM 仅接收 textContent；无新增 element、导航或外部请求 |
-| 9 | B-30 | 第二 | pending | — | — | CoreAudio listener lifetime |
+| 8 | S-13 | 第二 | done | `c1b33c8` | frontend 35 passed + tsc + build；Chromium 3 payload regression | anime.js 在普通对象上生成 scramble 帧，DOM 仅接收 textContent；无新增 element、导航或外部请求 |
+| 9 | B-30 | 第二 | done-pending-commit | this commit | Tauri 26 passed；clippy clean | remove success 才释放 context；失败保留 state/OSStatus 并阻止重复注册；poisoned-state fallback 保持 context 存活 |
 | 10 | B-31 | 第二 | pending | — | — | TOML control escaping |
 | 11 | B-32 | 第二 | pending | — | — | unique log files |
 | 12 | S-14 | 第二 | pending | — | — | normalized URL allowlist |

@@ -41,6 +41,31 @@ pub struct DeviceWatchState {
     client: Mutex<Option<usize>>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum RemoveClientResult {
+    Inactive,
+    Removed(usize),
+    Retained { client: usize, status: i32 },
+}
+
+fn try_remove_client(
+    client: &mut Option<usize>,
+    remove: impl FnOnce(usize) -> i32,
+) -> RemoveClientResult {
+    let Some(raw) = *client else {
+        return RemoveClientResult::Inactive;
+    };
+    let status = remove(raw);
+    if status == 0 {
+        RemoveClientResult::Removed(client.take().expect("registered client must exist"))
+    } else {
+        RemoveClientResult::Retained {
+            client: raw,
+            status,
+        }
+    }
+}
+
 // HAL 通知线程回调:只透传「变了」,枚举仍由前端调 list_devices 完成。
 extern "C" fn on_devices_changed(
     _object_id: u32,
@@ -54,7 +79,13 @@ extern "C" fn on_devices_changed(
 }
 
 pub fn start(app: &tauri::AppHandle, state: &DeviceWatchState) {
-    stop(state);
+    if !stop(state) {
+        let _ = app.emit(
+            "echoless://log",
+            "device watch: previous CoreAudio listener is still registered; restart skipped",
+        );
+        return;
+    }
     let client = Box::into_raw(Box::new(app.clone()));
     let status = unsafe {
         AudioObjectAddPropertyListener(
@@ -81,29 +112,116 @@ pub fn start(app: &tauri::AppHandle, state: &DeviceWatchState) {
             "echoless://log",
             "device watch: failed to store CoreAudio listener state",
         );
-        unsafe {
-            let _ = AudioObjectRemovePropertyListener(
+        let status = unsafe {
+            AudioObjectRemovePropertyListener(
                 SYSTEM_OBJECT,
                 &DEVICES_ADDRESS,
                 on_devices_changed,
                 client as *mut c_void,
+            )
+        };
+        if status == 0 {
+            unsafe {
+                drop(Box::from_raw(client));
+            }
+        } else {
+            let message = format!(
+                "device watch: AudioObjectRemovePropertyListener failed ({status}); retaining callback context"
             );
-            drop(Box::from_raw(client));
+            crate::logging::log("error", "device-watch", &message);
+            let _ = app.emit("echoless://log", message);
         }
     }
 }
 
-pub fn stop(state: &DeviceWatchState) {
-    let Some(client) = state.client.lock().ok().and_then(|mut guard| guard.take()) else {
-        return;
+pub fn stop(state: &DeviceWatchState) -> bool {
+    let Ok(mut guard) = state.client.lock() else {
+        crate::logging::log(
+            "error",
+            "device-watch",
+            "failed to lock CoreAudio listener state; callback context retained",
+        );
+        return false;
     };
-    unsafe {
-        let _ = AudioObjectRemovePropertyListener(
+    let result = try_remove_client(&mut guard, |client| unsafe {
+        AudioObjectRemovePropertyListener(
             SYSTEM_OBJECT,
             &DEVICES_ADDRESS,
             on_devices_changed,
             client as *mut c_void,
+        )
+    });
+    drop(guard);
+
+    match result {
+        RemoveClientResult::Inactive => true,
+        RemoveClientResult::Removed(client) => {
+            unsafe {
+                drop(Box::from_raw(client as *mut tauri::AppHandle));
+            }
+            true
+        }
+        RemoveClientResult::Retained { status, .. } => {
+            crate::logging::log(
+                "error",
+                "device-watch",
+                &format!(
+                    "AudioObjectRemovePropertyListener failed ({status}); callback context retained"
+                ),
+            );
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn successful_remove_releases_the_registered_client() {
+        let mut client = Some(41);
+
+        let result = try_remove_client(&mut client, |raw| {
+            assert_eq!(raw, 41);
+            0
+        });
+
+        assert_eq!(result, RemoveClientResult::Removed(41));
+        assert_eq!(client, None);
+    }
+
+    #[test]
+    fn failed_remove_retains_the_registered_client_and_status() {
+        let mut client = Some(42);
+
+        let result = try_remove_client(&mut client, |raw| {
+            assert_eq!(raw, 42);
+            -50
+        });
+
+        assert_eq!(
+            result,
+            RemoveClientResult::Retained {
+                client: 42,
+                status: -50,
+            }
         );
-        drop(Box::from_raw(client as *mut tauri::AppHandle));
+        assert_eq!(client, Some(42));
+    }
+
+    #[test]
+    fn retained_client_can_be_removed_by_a_later_attempt() {
+        let mut client = Some(43);
+
+        assert!(matches!(
+            try_remove_client(&mut client, |_| -1),
+            RemoveClientResult::Retained { .. }
+        ));
+        assert_eq!(
+            try_remove_client(&mut client, |_| 0),
+            RemoveClientResult::Removed(43)
+        );
+        assert_eq!(client, None);
     }
 }

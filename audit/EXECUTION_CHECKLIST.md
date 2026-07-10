@@ -131,11 +131,11 @@
 
 ### 9. B-30【P3】CoreAudio listener remove 失败后的 context 生命周期
 
-- [ ] 在 `app/src-tauri/src/device_watch.rs` 检查 remove 的 `OSStatus`；只有确认移除成功后才释放 callback context。
-- [ ] 失败路径保留 ownership 并记录 OSStatus，避免 UAF；不扩大为新的常驻泄漏循环。
-- [ ] 增加 remove success/failure 的可注入测试或最小纯逻辑测试。
-- [ ] 验证：`(cd app/src-tauri && cargo test --locked && cargo clippy --all-targets --locked -- -D warnings)`。
-- [ ] 独立 commit：`B-30`。
+- [x] 在 `app/src-tauri/src/device_watch.rs` 检查 remove 的 `OSStatus`；只有确认移除成功后才释放 callback context。
+- [x] 失败路径保留 ownership 并记录 OSStatus，避免 UAF；不扩大为新的常驻泄漏循环。
+- [x] 增加 remove success/failure 的可注入测试或最小纯逻辑测试。
+- [x] 验证：`(cd app/src-tauri && cargo test --locked && cargo clippy --all-targets --locked -- -D warnings)`。
+- [x] 独立 commit：`B-30`。
 
 ### 10. B-31【P3】TOML string 控制字符转义
 
