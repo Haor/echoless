@@ -158,6 +158,17 @@ UI cleanup.
   combines its nominal conversion ratio with device-clock drift correction,
   while input conversion preserves phase and buffers across variable callback
   sizes instead of rebuilding its FFT layout and inserting silence.
+- Large-ratio output conversion now consumes every skipped source sample. A
+  48→16 kHz endpoint previously advanced the interpolation phase by three while
+  removing only two samples, producing the wrong speed/pitch and steadily
+  filling the output ring.
+- Entering an unavailable engine's setup flow now invalidates queued and
+  in-flight restart work. A device refresh can no longer restart the old
+  sidecar after the user has already moved into LocalVQE/NVAFX setup.
+- Delay probing now waits for both the audio pipeline and diagnostics writer to
+  become ready before its stabilization delay and beep train begin. Successful
+  measurements are still returned when best-effort session cleanup is blocked
+  by an external file lock.
 
 ### Security
 - Audio-device names are rendered strictly as text during the scramble
