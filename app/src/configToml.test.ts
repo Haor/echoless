@@ -105,4 +105,23 @@ describe("TOML basic string encoding", () => {
     expect(config).not.toContain("runtime_dir");
     expect(config).toContain("intensity_ratio = 0.8");
   });
+
+  it("serializes diagnostics without a custom directory", () => {
+    const config = buildConfigToml({
+      mic: "default",
+      reference: "system",
+      output: "default",
+      kind: "aec3",
+      pipeline: {
+        sample_rate: 48_000,
+        frame_ms: 10,
+        reference_channels: "mono",
+      },
+      params: {},
+      diagnostics: { max_seconds: 30 },
+    });
+
+    expect(config).toContain("[diagnostics]\nmax_seconds = 30");
+    expect(config).not.toContain("record_dir");
+  });
 });

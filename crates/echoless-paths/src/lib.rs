@@ -12,6 +12,10 @@ pub fn brand_data_root() -> (PathBuf, String) {
     default_brand_data_root()
 }
 
+pub fn diagnostics_dir() -> PathBuf {
+    brand_data_root().0.join("diagnostics")
+}
+
 pub fn default_brand_data_root() -> (PathBuf, String) {
     #[cfg(windows)]
     {

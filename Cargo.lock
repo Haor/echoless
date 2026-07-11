@@ -479,6 +479,7 @@ dependencies = [
  "ctrlc",
  "echoless-audio-io",
  "echoless-core",
+ "echoless-paths",
  "echoless-processors",
  "hound",
  "ringbuf",

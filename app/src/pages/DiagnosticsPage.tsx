@@ -1,7 +1,6 @@
-import { open } from "@tauri-apps/plugin-dialog";
 import type { Health } from "../runtimeTelemetry";
 import type { DoctorAudio, Platform } from "../types";
-import { openPath, openUrl } from "../api";
+import { openDiagnosticsDir, openPath, openUrl } from "../api";
 import { useI18n } from "../i18n";
 import { Field } from "../components/Controls";
 import { Hint } from "../components/Hint";
@@ -27,7 +26,6 @@ export interface DiagnosticsPageProps {
   onRecheck: () => void;
   onRec: (v: boolean) => void;
   onSeconds: (v: number | null) => void;
-  onDir: (v: string) => void;
 }
 
 export function DiagnosticsPage({
@@ -43,7 +41,6 @@ export function DiagnosticsPage({
   onRecheck,
   onRec,
   onSeconds,
-  onDir,
 }: DiagnosticsPageProps) {
   const { t } = useI18n();
   const active = rec && running;
@@ -72,18 +69,6 @@ export function DiagnosticsPage({
         : s === "undetermined"
           ? t("permUndet")
           : t("permUnknown");
-
-  async function pickDir() {
-    try {
-      const sel = await open({
-        directory: true,
-        defaultPath: diagDir || undefined,
-      });
-      if (typeof sel === "string") onDir(sel);
-    } catch {
-      /* cancelled */
-    }
-  }
 
   // pos:"top" = 提示往上弹。列表按两列网格排布,最下两排(后 4 项)贴近窗口
   // 底缘,向下弹会被视口截掉。
@@ -213,15 +198,10 @@ export function DiagnosticsPage({
 
       <div className="drow">
         <span className="dk">{t("recordDir")}</span>
-        <button
-          type="button"
-          className="dpick plainbtn"
-          onClick={pickDir}
-          title={diagDir}
-        >
+        <span className="dpath" title={diagDir}>
           {diagDir || t("choose")}
-        </button>
-        <button type="button" className="dopen" onClick={() => openPath(diagDir)}>
+        </span>
+        <button type="button" className="dopen" onClick={() => openDiagnosticsDir()}>
           {t("openFolder")} <span className="mk">&raquo;</span>
         </button>
       </div>

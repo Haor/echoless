@@ -23,6 +23,7 @@ toml.workspace = true
 zip.workspace = true
 echoless-audio-io = { path = "../echoless-audio-io" }
 echoless-core = { path = "../echoless-core" }
+echoless-paths = { path = "../echoless-paths" }
 echoless-processors = { path = "../echoless-processors" }
 hound.workspace = true
 cpal = { version = "0.17", optional = true }

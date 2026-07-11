@@ -157,10 +157,7 @@ pub(crate) struct RunArgs {
     /// Emit JSONL runtime status for GUI/sidecar consumers
     #[arg(long)]
     pub(crate) status_json: bool,
-    /// Directory to save realtime diagnostic recordings; a timestamped session is created beneath it
-    #[arg(long)]
-    pub(crate) diagnostic_dir: Option<String>,
-    /// Diagnostic recording cap in seconds; records until stopped when omitted
+    /// Record diagnostics in the managed diagnostics directory for this many seconds
     #[arg(long)]
     pub(crate) diagnostic_seconds: Option<u32>,
 }
@@ -223,5 +220,14 @@ mod tests {
             };
             assert_eq!(error.kind(), ErrorKind::UnknownArgument);
         }
+    }
+
+    #[test]
+    fn run_rejects_removed_diagnostic_dir_option() {
+        let error = match Cli::try_parse_from(["echoless", "run", "--diagnostic-dir", "custom"]) {
+            Ok(_) => panic!("removed --diagnostic-dir option was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
     }
 }

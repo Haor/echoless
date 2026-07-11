@@ -33,7 +33,7 @@ use commands::{
 };
 use localvqe::{download_localvqe_model, localvqe_assets};
 use nvafx::{nvafx_doctor, nvafx_download_install, nvafx_install};
-use platform::{default_diag_dir, open_path, open_url};
+use platform::{default_diag_dir, open_diagnostics_dir, open_path, open_url};
 use proc::{terminate_run, RunState};
 use sidecar::{probe_delay, send_run_control, set_bypass, start_run, stop_run, validate_config};
 use tray::{close_to_tray_enabled, set_tray_prefs, TrayPrefs};
@@ -76,6 +76,7 @@ pub fn run() {
             nvafx_download_install,
             open_url,
             default_diag_dir,
+            open_diagnostics_dir,
             open_path,
             logging::frontend_log,
             validate_config,

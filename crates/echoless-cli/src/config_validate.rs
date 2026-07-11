@@ -197,7 +197,6 @@ fn validate_config_shape(value: &toml::Value) -> Vec<ConfigValidationError> {
     }
     if let Some(value) = table.get("diagnostics") {
         if let Some(diagnostics) = value.as_table() {
-            expect_top_string(diagnostics, "diagnostics.record_dir", &mut errors);
             expect_top_i64(diagnostics, "diagnostics.max_seconds", &mut errors);
         } else {
             errors.push(ConfigValidationError::new(
@@ -298,17 +297,6 @@ pub(crate) fn validate_pipeline_config(cfg: &PipelineConfig) -> Vec<ConfigValida
         errors.push(ConfigValidationError::new(
             "output_level",
             format!("output_level must be <= {MAX_OUTPUT_LEVEL}"),
-        ));
-    }
-    if cfg
-        .diagnostics
-        .record_dir
-        .as_deref()
-        .is_some_and(|value| value.trim().is_empty())
-    {
-        errors.push(ConfigValidationError::new(
-            "diagnostics.record_dir",
-            "record_dir must not be empty",
         ));
     }
     if matches!(cfg.diagnostics.max_seconds, Some(0)) {

@@ -429,7 +429,8 @@ pub fn run_with_options(cfg: &PipelineConfig, options: RuntimeOptions) -> Result
     let initial_node_stats = chain.stats();
     let stats_interval = options.stats_interval_ms.map(Duration::from_millis);
     let diagnostic = DiagnosticRecorder::new(DiagnosticRecorderConfig {
-        cfg: &cfg.diagnostics,
+        enabled: cfg.diagnostics.max_seconds.is_some(),
+        max_seconds: cfg.diagnostics.max_seconds,
         sample_rate,
         reference_channels: reference_channels as u16,
         frame_ms: cfg.frame_ms,

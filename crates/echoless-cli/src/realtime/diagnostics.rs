@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::dsp::{rms_dbfs_from_sum_squares as rms_dbfs, sum_squares};
 use anyhow::{bail, Context, Result};
-use echoless_core::{output_level_gain_db, DiagnosticsConfig};
+use echoless_core::output_level_gain_db;
 use echoless_processors::ProcessorStats;
 use hound::{WavSpec, WavWriter};
 use serde_json::json;
@@ -216,7 +216,8 @@ pub(super) struct DiagnosticRecorder {
 }
 
 pub(super) struct DiagnosticRecorderConfig<'a> {
-    pub(super) cfg: &'a DiagnosticsConfig,
+    pub(super) enabled: bool,
+    pub(super) max_seconds: Option<u32>,
     pub(super) sample_rate: u32,
     pub(super) reference_channels: u16,
     pub(super) frame_ms: u32,
@@ -228,16 +229,14 @@ pub(super) struct DiagnosticRecorderConfig<'a> {
 
 impl DiagnosticRecorder {
     pub(super) fn new(config: DiagnosticRecorderConfig<'_>) -> Result<Option<Self>> {
-        let Some(record_dir) = config
-            .cfg
-            .record_dir
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        else {
+        let base = echoless_paths::diagnostics_dir();
+        Self::new_in(config, &base)
+    }
+
+    fn new_in(config: DiagnosticRecorderConfig<'_>, base: &Path) -> Result<Option<Self>> {
+        if !config.enabled {
             return Ok(None);
-        };
-        let base = Path::new(record_dir);
+        }
         create_dir_all(base).with_context(|| {
             format!(
                 "failed to create diagnostics recording directory: {}",
@@ -256,7 +255,6 @@ impl DiagnosticRecorder {
             ..spec
         };
         let max_frames = config
-            .cfg
             .max_seconds
             .map(|seconds| u64::from(seconds) * u64::from(config.sample_rate));
 
@@ -827,6 +825,9 @@ mod tests {
     use super::*;
 
     use echoless_processors::ProcessorStats;
+    use std::sync::Mutex;
+
+    static DATA_ROOT_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn temp_diagnostic_dir(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -837,6 +838,45 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn diagnostic_recorder_uses_only_the_fixed_brand_directory() -> Result<()> {
+        let _guard = DATA_ROOT_ENV_LOCK.lock().unwrap();
+        let root = temp_diagnostic_dir("echoless-diagnostic-fixed-root");
+        let external = temp_diagnostic_dir("echoless-diagnostic-external");
+        std::fs::create_dir_all(&external)?;
+        let sentinel = external.join("sentinel.txt");
+        std::fs::write(&sentinel, b"keep")?;
+        let previous = std::env::var_os(echoless_paths::DATA_ROOT_ENV_VAR);
+        std::env::set_var(echoless_paths::DATA_ROOT_ENV_VAR, &root);
+
+        let node_stats = [ProcessorStats::empty("test")];
+        let recorder = DiagnosticRecorder::new(DiagnosticRecorderConfig {
+            enabled: true,
+            max_seconds: None,
+            sample_rate: 48_000,
+            reference_channels: 1,
+            frame_ms: 10,
+            near_delay_ms: 0,
+            output_level: 50,
+            node_stats: &node_stats,
+            status_json: false,
+        })?
+        .unwrap();
+        let session = recorder.dir.clone();
+        drop(recorder);
+
+        if let Some(previous) = previous {
+            std::env::set_var(echoless_paths::DATA_ROOT_ENV_VAR, previous);
+        } else {
+            std::env::remove_var(echoless_paths::DATA_ROOT_ENV_VAR);
+        }
+        assert_eq!(session.parent(), Some(root.join("diagnostics").as_path()));
+        assert_eq!(std::fs::read(&sentinel)?, b"keep");
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(external);
+        Ok(())
     }
 
     #[test]
@@ -912,21 +952,21 @@ mod tests {
     #[test]
     fn diagnostic_recorder_writes_audio_and_stats() -> Result<()> {
         let base = temp_diagnostic_dir("echoless-diagnostic-test");
-        let cfg = DiagnosticsConfig {
-            record_dir: Some(base.to_string_lossy().to_string()),
-            max_seconds: Some(1),
-        };
         let node_stats = [ProcessorStats::empty("test")];
-        let mut recorder = DiagnosticRecorder::new(DiagnosticRecorderConfig {
-            cfg: &cfg,
-            sample_rate: 48_000,
-            reference_channels: 2,
-            frame_ms: 10,
-            near_delay_ms: 25,
-            output_level: 75,
-            node_stats: &node_stats,
-            status_json: false,
-        })?
+        let mut recorder = DiagnosticRecorder::new_in(
+            DiagnosticRecorderConfig {
+                enabled: true,
+                max_seconds: Some(1),
+                sample_rate: 48_000,
+                reference_channels: 2,
+                frame_ms: 10,
+                near_delay_ms: 25,
+                output_level: 75,
+                node_stats: &node_stats,
+                status_json: false,
+            },
+            &base,
+        )?
         .unwrap();
         let dir = recorder.dir.clone();
         let near = [0.25f32, -0.25];
@@ -991,21 +1031,21 @@ mod tests {
     #[test]
     fn diagnostic_recorder_auto_finishes_at_max_seconds() -> Result<()> {
         let base = temp_diagnostic_dir("echoless-diagnostic-max-test");
-        let cfg = DiagnosticsConfig {
-            record_dir: Some(base.to_string_lossy().to_string()),
-            max_seconds: Some(1),
-        };
         let node_stats = [ProcessorStats::empty("test")];
-        let mut recorder = DiagnosticRecorder::new(DiagnosticRecorderConfig {
-            cfg: &cfg,
-            sample_rate: 2,
-            reference_channels: 1,
-            frame_ms: 1000,
-            near_delay_ms: 0,
-            output_level: 50,
-            node_stats: &node_stats,
-            status_json: false,
-        })?
+        let mut recorder = DiagnosticRecorder::new_in(
+            DiagnosticRecorderConfig {
+                enabled: true,
+                max_seconds: Some(1),
+                sample_rate: 2,
+                reference_channels: 1,
+                frame_ms: 1000,
+                near_delay_ms: 0,
+                output_level: 50,
+                node_stats: &node_stats,
+                status_json: false,
+            },
+            &base,
+        )?
         .unwrap();
         let dir = recorder.dir.clone();
         let status = recorder.status_handle();
@@ -1058,21 +1098,21 @@ mod tests {
     #[test]
     fn diagnostic_recorder_async_stop_finalizes_files() -> Result<()> {
         let base = temp_diagnostic_dir("echoless-diagnostic-stop-test");
-        let cfg = DiagnosticsConfig {
-            record_dir: Some(base.to_string_lossy().to_string()),
-            max_seconds: None,
-        };
         let node_stats = [ProcessorStats::empty("test")];
-        let mut recorder = DiagnosticRecorder::new(DiagnosticRecorderConfig {
-            cfg: &cfg,
-            sample_rate: 48_000,
-            reference_channels: 1,
-            frame_ms: 10,
-            near_delay_ms: 0,
-            output_level: 50,
-            node_stats: &node_stats,
-            status_json: false,
-        })?
+        let mut recorder = DiagnosticRecorder::new_in(
+            DiagnosticRecorderConfig {
+                enabled: true,
+                max_seconds: None,
+                sample_rate: 48_000,
+                reference_channels: 1,
+                frame_ms: 10,
+                near_delay_ms: 0,
+                output_level: 50,
+                node_stats: &node_stats,
+                status_json: false,
+            },
+            &base,
+        )?
         .unwrap();
         let dir = recorder.dir.clone();
         let status = recorder.status_handle();
@@ -1122,21 +1162,21 @@ mod tests {
     #[test]
     fn diagnostic_recorder_stop_keeps_writer_joinable() -> Result<()> {
         let base = temp_diagnostic_dir("echoless-diagnostic-join-test");
-        let cfg = DiagnosticsConfig {
-            record_dir: Some(base.to_string_lossy().to_string()),
-            max_seconds: None,
-        };
         let node_stats = [ProcessorStats::empty("test")];
-        let mut recorder = DiagnosticRecorder::new(DiagnosticRecorderConfig {
-            cfg: &cfg,
-            sample_rate: 48_000,
-            reference_channels: 1,
-            frame_ms: 10,
-            near_delay_ms: 0,
-            output_level: 50,
-            node_stats: &node_stats,
-            status_json: false,
-        })?
+        let mut recorder = DiagnosticRecorder::new_in(
+            DiagnosticRecorderConfig {
+                enabled: true,
+                max_seconds: None,
+                sample_rate: 48_000,
+                reference_channels: 1,
+                frame_ms: 10,
+                near_delay_ms: 0,
+                output_level: 50,
+                node_stats: &node_stats,
+                status_json: false,
+            },
+            &base,
+        )?
         .unwrap();
 
         recorder.request_finish(DiagnosticDoneReason::Stopped);

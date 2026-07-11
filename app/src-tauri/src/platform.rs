@@ -167,8 +167,27 @@ pub(crate) fn browser_open_command(url: &str) -> (&'static str, Vec<String>) {
 /// 诊断录制默认目录(绝对路径,session-* 会写在其下)。
 #[tauri::command]
 pub(crate) fn default_diag_dir() -> String {
-    let (base, _) = echoless_paths::brand_data_root();
-    base.join("diagnostics").to_string_lossy().to_string()
+    echoless_paths::diagnostics_dir()
+        .to_string_lossy()
+        .to_string()
+}
+
+/// 在系统文件管理器里打开固定诊断录制目录。
+#[tauri::command]
+pub(crate) fn open_diagnostics_dir() -> Result<(), String> {
+    let path = ensure_diagnostics_dir()?;
+    open_path(path.to_string_lossy().to_string())
+}
+
+pub(crate) fn ensure_diagnostics_dir() -> Result<PathBuf, String> {
+    let path = echoless_paths::diagnostics_dir();
+    std::fs::create_dir_all(&path).map_err(|e| {
+        format!(
+            "failed to create diagnostics directory {}: {e}",
+            path.display()
+        )
+    })?;
+    Ok(path)
 }
 
 /// 在系统文件管理器里打开目录。

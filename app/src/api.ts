@@ -139,6 +139,10 @@ export function defaultDiagDir(): Promise<string> {
   return invoke<string>("default_diag_dir");
 }
 
+export function openDiagnosticsDir(): Promise<void> {
+  return invoke<void>("open_diagnostics_dir");
+}
+
 export function openPath(path: string): Promise<void> {
   return invoke<void>("open_path", { path });
 }
@@ -171,11 +175,8 @@ export function stopRun(): Promise<number | null> {
 function sendRunControl(line: string): Promise<void> {
   return invoke<void>("send_run_control", { line });
 }
-export function startDiagnostics(
-  recordDir: string,
-  maxSeconds: number | null,
-): Promise<void> {
-  return sendRunControl(startDiagnosticsControlLine(recordDir, maxSeconds));
+export function startDiagnostics(maxSeconds: number | null): Promise<void> {
+  return sendRunControl(startDiagnosticsControlLine(maxSeconds));
 }
 export function stopDiagnostics(): Promise<void> {
   return sendRunControl(stopDiagnosticsControlLine());
@@ -301,7 +302,6 @@ export function outputLevelToGain(level: number): number {
   return Math.pow(v / OUTPUT_LEVEL_UNITY, OUTPUT_LEVEL_EXP);
 }
 export interface DiagnosticsCfg {
-  record_dir: string;
   max_seconds: number | null;
 }
 export interface ConfigChoice {
@@ -376,7 +376,6 @@ export function buildConfigToml(c: ConfigChoice): string {
   lines.push(``);
   if (c.diagnostics) {
     lines.push(`[diagnostics]`);
-    lines.push(`record_dir = ${tomlString(c.diagnostics.record_dir)}`);
     if (c.diagnostics.max_seconds != null)
       lines.push(`max_seconds = ${c.diagnostics.max_seconds}`);
     lines.push(``);

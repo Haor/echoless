@@ -8,8 +8,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
 use echoless_core::{
-    output_level_gain_db, DiagnosticsConfig, MAX_INITIAL_DELAY_MS, MAX_NEAR_DELAY_MS,
-    MAX_OUTPUT_LEVEL,
+    output_level_gain_db, MAX_INITIAL_DELAY_MS, MAX_NEAR_DELAY_MS, MAX_OUTPUT_LEVEL,
 };
 
 use super::diagnostics::{DiagnosticDoneReason, DiagnosticRecorder, DiagnosticRecorderConfig};
@@ -19,24 +18,15 @@ use echoless_processors::ProcessorChain;
 
 #[derive(Debug)]
 pub(super) enum RuntimeControlCommand {
-    StartDiagnostics {
-        record_dir: String,
-        max_seconds: Option<u32>,
-    },
+    StartDiagnostics { max_seconds: Option<u32> },
     StopDiagnostics,
     SetOutputLevel(u32),
     SetBypass(bool),
     SetNearDelayMs(u32),
     SetInitialDelayMs(i32),
-    SetAec3Ns {
-        enabled: bool,
-        level: String,
-    },
+    SetAec3Ns { enabled: bool, level: String },
     SetAec3Agc(bool),
-    SetLocalvqeNoiseGate {
-        enabled: bool,
-        threshold_dbfs: f32,
-    },
+    SetLocalvqeNoiseGate { enabled: bool, threshold_dbfs: f32 },
 }
 
 pub(super) const SUPPORTED_RUNTIME_CONTROLS: &[&str] = &[
@@ -95,11 +85,6 @@ fn parse_runtime_control_command(line: &str) -> Result<RuntimeControlCommand> {
         .context("missing string field `cmd`")?;
     match cmd {
         "start_diagnostics" => {
-            let record_dir = value
-                .get("record_dir")
-                .and_then(Value::as_str)
-                .context("start_diagnostics requires string field `record_dir`")?
-                .to_string();
             let max_seconds =
                 match value.get("max_seconds") {
                     None | Some(Value::Null) => None,
@@ -112,10 +97,7 @@ fn parse_runtime_control_command(line: &str) -> Result<RuntimeControlCommand> {
                         )?)
                     }
                 };
-            Ok(RuntimeControlCommand::StartDiagnostics {
-                record_dir,
-                max_seconds,
-            })
+            Ok(RuntimeControlCommand::StartDiagnostics { max_seconds })
         }
         "stop_diagnostics" => Ok(RuntimeControlCommand::StopDiagnostics),
         "set_output_level" => {
@@ -282,18 +264,7 @@ fn handle_runtime_control_command(
     ctx: RuntimeControlCommandContext<'_>,
 ) {
     match command {
-        RuntimeControlCommand::StartDiagnostics {
-            record_dir,
-            max_seconds,
-        } => {
-            if record_dir.trim().is_empty() {
-                emit_control_error(
-                    ctx.status_json,
-                    Some("start_diagnostics"),
-                    "record_dir must not be empty",
-                );
-                return;
-            }
+        RuntimeControlCommand::StartDiagnostics { max_seconds } => {
             if matches!(max_seconds, Some(0)) {
                 emit_control_error(
                     ctx.status_json,
@@ -316,13 +287,10 @@ fn handle_runtime_control_command(
             }
 
             let _previous = ctx.diagnostic.take();
-            let cfg = DiagnosticsConfig {
-                record_dir: Some(record_dir),
-                max_seconds,
-            };
             let node_stats = ctx.chain.stats();
             match DiagnosticRecorder::new(DiagnosticRecorderConfig {
-                cfg: &cfg,
+                enabled: true,
+                max_seconds,
                 sample_rate: ctx.sample_rate,
                 reference_channels: ctx.reference_channels,
                 frame_ms: ctx.frame_ms,
@@ -351,7 +319,7 @@ fn handle_runtime_control_command(
                 Ok(None) => emit_control_error(
                     ctx.status_json,
                     Some("start_diagnostics"),
-                    "record_dir did not create a diagnostics recorder",
+                    "diagnostics recorder was not created",
                 ),
                 Err(err) => emit_control_error(
                     ctx.status_json,
@@ -591,16 +559,11 @@ mod tests {
 
     #[test]
     fn runtime_control_command_parses_frontend_json() {
-        let start = parse_runtime_control_command(
-            r#"{"cmd":"start_diagnostics","record_dir":"/tmp/diag","max_seconds":10}"#,
-        )
-        .unwrap();
+        let start =
+            parse_runtime_control_command(r#"{"cmd":"start_diagnostics","max_seconds":10}"#)
+                .unwrap();
         match start {
-            RuntimeControlCommand::StartDiagnostics {
-                record_dir,
-                max_seconds,
-            } => {
-                assert_eq!(record_dir, "/tmp/diag");
+            RuntimeControlCommand::StartDiagnostics { max_seconds } => {
                 assert_eq!(max_seconds, Some(10));
             }
             other => panic!("expected start_diagnostics, got {other:?}"),

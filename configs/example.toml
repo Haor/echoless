@@ -15,10 +15,9 @@ reference_channels = "mono" # mono=当前稳定基线;stereo=保留 L/R far refe
 # near_delay_ms = 25      # 可选覆盖;macOS 默认 25,Windows/Linux 默认 0
 output_level = 50         # 最终输出电平:0=静音,50=原声,100=3x;gain=(level/50)^log2(3)
 
-# 诊断录制:打开后会在目录下创建 session-*，保存 mic.wav / ref.wav / out.wav / stats.csv。
-# 也可以运行时用 --diagnostic-dir / --diagnostic-seconds 覆盖。
+# 诊断录制:在 Echoless 固定诊断目录下创建 session-*，保存 mic.wav / ref.wav / out.wav / stats.csv。
+# 也可以运行时用 --diagnostic-seconds 启用并设置时长。
 [diagnostics]
-# record_dir = "diagnostics"
 # max_seconds = 30
 
 # 处理节点:首版建议选择一个 backend;空 = 直通。kind 之外的键 = 该方案参数。

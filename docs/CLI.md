@@ -44,7 +44,7 @@ Key flags (all override the config file): `--mic`, `--reference`,
 `--near-delay-ms`, `--output-level 0..100` (50 = unity),
 `--processor aec3|localvqe|nvidia_afx_aec|…`, `--ns/--no-ns`, `--ns-level`,
 `--tail-ms`, `--verbose`, `--status-json`,
-`--diagnostic-dir <DIR> [--diagnostic-seconds N]`.
+`--diagnostic-seconds N` (records under the managed Echoless diagnostics directory).
 
 With `--status-json`, stdout is JSONL: first a `started` event (negotiated
 devices, `supported_controls`, resampling info), then periodic status frames
@@ -64,7 +64,7 @@ While `run` is active, write one JSON object per line to stdin:
 | `set_aec3_ns` | `{"cmd":"set_aec3_ns","ns":true,"ns_level":"high"}` | AEC3 noise suppression |
 | `set_aec3_agc` | `{"cmd":"set_aec3_agc","agc":false}` | AEC3 AGC |
 | `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","noise_gate":true,"noise_gate_threshold_dbfs":-45}` | LocalVQE output gate |
-| `start_diagnostics` | `{"cmd":"start_diagnostics","record_dir":"...","max_seconds":30}` | record mic/ref/out WAVs |
+| `start_diagnostics` | `{"cmd":"start_diagnostics","max_seconds":30}` | record mic/ref/out WAVs in the managed diagnostics directory |
 | `stop_diagnostics` | `{"cmd":"stop_diagnostics"}` | finalize the recording session |
 
 The `started` event's `supported_controls` array is authoritative for what a

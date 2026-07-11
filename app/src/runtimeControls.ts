@@ -23,7 +23,6 @@ export const REQUIRED_RUN_CONTROLS = [
 type RunControlPayload =
   | {
       cmd: typeof RUN_CONTROL_COMMANDS.startDiagnostics;
-      record_dir: string;
       max_seconds: number | null;
     }
   | { cmd: typeof RUN_CONTROL_COMMANDS.stopDiagnostics }
@@ -47,12 +46,10 @@ function runtimeControlLine(payload: RunControlPayload): string {
 }
 
 export function startDiagnosticsControlLine(
-  recordDir: string,
   maxSeconds: number | null,
 ): string {
   return runtimeControlLine({
     cmd: RUN_CONTROL_COMMANDS.startDiagnostics,
-    record_dir: recordDir,
     max_seconds: maxSeconds,
   });
 }

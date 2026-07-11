@@ -88,9 +88,6 @@ impl ReferenceChannels {
 /// Diagnostic capture settings for realtime evidence collection.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct DiagnosticsConfig {
-    /// Directory where timestamped diagnostic sessions are written.
-    #[serde(default)]
-    pub record_dir: Option<String>,
     /// Optional maximum recording duration. None means record until stop.
     #[serde(default)]
     pub max_seconds: Option<u32>,

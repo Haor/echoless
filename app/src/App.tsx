@@ -794,7 +794,6 @@ type RunLifecycleDeps = {
   bypassPending: boolean | null;
   rec: boolean;
   diagSeconds: number | null;
-  diagDir: string;
   selInput: string;
   selOutput: string;
   reference: string;
@@ -821,7 +820,6 @@ function useRunLifecycle({
   bypassPending,
   rec,
   diagSeconds,
-  diagDir,
   selInput,
   selOutput,
   reference,
@@ -850,8 +848,6 @@ function useRunLifecycle({
   recRef.current = rec;
   const diagSecondsRef = useRef(diagSeconds);
   diagSecondsRef.current = diagSeconds;
-  const diagDirRef = useRef(diagDir);
-  diagDirRef.current = diagDir;
 
   // 录制就地起停命令(运行中改录制态用 stdin,不重启 run)。
   const startDiag = useCallback(() => {
@@ -859,11 +855,7 @@ function useRunLifecycle({
       reportMissingRunControl("start_diagnostics");
       return;
     }
-    if (diagDirRef.current) {
-      startDiagnostics(diagDirRef.current, diagSecondsRef.current).catch((e) =>
-        noteError(String(e)),
-      );
-    }
+    startDiagnostics(diagSecondsRef.current).catch((e) => noteError(String(e)));
   }, [hasRunControl, noteError, reportMissingRunControl]);
 
   useEffect(() => {
@@ -897,7 +889,7 @@ function useRunLifecycle({
             });
             // run 已起;若录制开关为开,就地下发 start_diagnostics(power-on-with-rec /
             // 改设置重启 后的统一入口)。session 目录随后由 diagnostics_started 给出。
-            if (recRef.current && diagDirRef.current) startDiag();
+            if (recRef.current) startDiag();
             return;
           }
           // 录制已就地启动:拿到 session 目录。
@@ -1211,26 +1203,19 @@ function useRunLifecycle({
     }
   }, [hasRunControl, noteError, reportMissingRunControl, startDiag, updateApp]);
 
-  // 时长 / 目录:仅更新状态。录制中改动 → 重发 start_diagnostics 让新参数立即生效
+  // 时长:仅更新状态。录制中改动 → 重发 start_diagnostics 让新参数立即生效
   // (后端先收尾旧 session 再开新的)。
   const setRecSeconds = useCallback((v: number | null) => {
     updateApp({ diagSeconds: v });
     diagSecondsRef.current = v;
     if (powerOnRef.current && recRef.current) startDiag();
   }, [startDiag, updateApp]);
-  const setRecDir = useCallback((v: string) => {
-    updateApp({ diagDir: v });
-    diagDirRef.current = v;
-    if (powerOnRef.current && recRef.current) startDiag();
-  }, [startDiag, updateApp]);
-
   return {
     applyChange,
     setRunForProbe,
     togglePower,
     setRecording,
     setRecSeconds,
-    setRecDir,
   };
 }
 
@@ -1375,7 +1360,6 @@ function AppShell() {
     togglePower,
     setRecording,
     setRecSeconds,
-    setRecDir,
   } = useRunLifecycle({
     busy,
     powerOn,
@@ -1383,7 +1367,6 @@ function AppShell() {
     bypassPending,
     rec,
     diagSeconds,
-    diagDir,
     selInput,
     selOutput,
     reference,
@@ -2163,7 +2146,6 @@ function AppShell() {
             onRecheck={recheckAudio}
             onRec={setRecording}
             onSeconds={setRecSeconds}
-            onDir={setRecDir}
           />
         )}
         {view === "micsetup" && (

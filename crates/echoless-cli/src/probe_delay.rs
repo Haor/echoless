@@ -277,8 +277,6 @@ fn run_native_delay_probe(
         .arg("mono")
         .arg("--near-delay-ms")
         .arg("0")
-        .arg("--diagnostic-dir")
-        .arg(out_dir)
         .arg("--diagnostic-seconds")
         .arg(diagnostic_seconds.to_string())
         .arg("--verbose")

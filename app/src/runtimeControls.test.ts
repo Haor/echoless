@@ -17,14 +17,12 @@ const parse = (line: string): unknown => JSON.parse(line);
 
 describe("runtime control JSON contract", () => {
   it("serializes every stdin command shape used by the app", () => {
-    expect(parse(startDiagnosticsControlLine("/tmp/diag", 3))).toEqual({
+    expect(parse(startDiagnosticsControlLine(3))).toEqual({
       cmd: "start_diagnostics",
-      record_dir: "/tmp/diag",
       max_seconds: 3,
     });
-    expect(parse(startDiagnosticsControlLine("/tmp/diag", null))).toEqual({
+    expect(parse(startDiagnosticsControlLine(null))).toEqual({
       cmd: "start_diagnostics",
-      record_dir: "/tmp/diag",
       max_seconds: null,
     });
     expect(parse(stopDiagnosticsControlLine())).toEqual({

@@ -14,8 +14,8 @@ use crate::localvqe::{
     LocalVqeModelPin,
 };
 use crate::platform::{
-    browser_open_command, cleanup_run_config, default_diag_dir, validate_browser_url,
-    validate_open_path, write_toml_create_new, write_transient_config_toml,
+    browser_open_command, cleanup_run_config, default_diag_dir, ensure_diagnostics_dir,
+    validate_browser_url, validate_open_path, write_toml_create_new, write_transient_config_toml,
 };
 use crate::proc::{
     cancel_run_start, command_output_with_timeout, commit_run_finalization, commit_run_start,
@@ -295,6 +295,22 @@ fn default_diag_dir_uses_brand_data_root() {
         assert_eq!(PathBuf::from(default_diag_dir()), root.join("diagnostics"));
     });
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn ensure_diagnostics_dir_creates_only_the_fixed_directory() {
+    let root = unique_temp_dir("echoless-diag-create-root");
+    let external = unique_temp_dir("echoless-diag-create-external");
+    let sentinel = external.join("sentinel.txt");
+    std::fs::write(&sentinel, b"keep").unwrap();
+    with_test_data_root(&root, || {
+        let diagnostics = ensure_diagnostics_dir().unwrap();
+        assert_eq!(diagnostics, root.join("diagnostics"));
+        assert!(diagnostics.is_dir());
+    });
+    assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(external);
 }
 
 #[test]

@@ -44,7 +44,7 @@ echoless run --config my.toml --status-json
 `--near-delay-ms`、`--output-level 0..100`(50 = 原始音量)、
 `--processor aec3|localvqe|nvidia_afx_aec|…`、`--ns/--no-ns`、`--ns-level`、
 `--tail-ms`、`--verbose`、`--status-json`、
-`--diagnostic-dir <DIR> [--diagnostic-seconds N]`。
+`--diagnostic-seconds N`(录制到 Echoless 固定诊断目录)。
 
 加上 `--status-json` 后,stdout 输出 JSONL:首先是一个 `started` 事件
 (协商后的设备、`supported_controls`、重采样信息),随后是周期性的状态帧
@@ -64,7 +64,7 @@ echoless run --config my.toml --status-json
 | `set_aec3_ns` | `{"cmd":"set_aec3_ns","ns":true,"ns_level":"high"}` | AEC3 噪声抑制 |
 | `set_aec3_agc` | `{"cmd":"set_aec3_agc","agc":false}` | AEC3 AGC |
 | `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","noise_gate":true,"noise_gate_threshold_dbfs":-45}` | LocalVQE 输出门限 |
-| `start_diagnostics` | `{"cmd":"start_diagnostics","record_dir":"...","max_seconds":30}` | 录制 mic/ref/out WAV |
+| `start_diagnostics` | `{"cmd":"start_diagnostics","max_seconds":30}` | 在固定诊断目录录制 mic/ref/out WAV |
 | `stop_diagnostics` | `{"cmd":"stop_diagnostics"}` | 结束本次录制会话 |
 
 `started` 事件中的 `supported_controls` 数组是判断某个二进制究竟接受

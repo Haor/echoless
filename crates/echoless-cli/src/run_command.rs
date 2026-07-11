@@ -104,12 +104,6 @@ fn apply_run_overrides(mut cfg: PipelineConfig, a: &RunArgs) -> Result<PipelineC
             toml::Value::Integer(tail_ms.into()),
         )?;
     }
-    if let Some(dir) = &a.diagnostic_dir {
-        if dir.trim().is_empty() {
-            bail!("--diagnostic-dir must not be empty");
-        }
-        cfg.diagnostics.record_dir = Some(dir.clone());
-    }
     if let Some(seconds) = a.diagnostic_seconds {
         if seconds == 0 {
             bail!("--diagnostic-seconds must be greater than 0");
@@ -168,7 +162,6 @@ mod tests {
             verbose: false,
             stats_interval_ms: None,
             status_json: false,
-            diagnostic_dir: None,
             diagnostic_seconds: None,
         }
     }
@@ -213,14 +206,12 @@ mod tests {
     }
 
     #[test]
-    fn run_overrides_apply_diagnostics() {
+    fn run_overrides_enable_fixed_diagnostics_with_a_duration() {
         let mut args = run_args();
-        args.diagnostic_dir = Some("diag".into());
         args.diagnostic_seconds = Some(30);
 
         let cfg = apply_run_overrides(PipelineConfig::default(), &args).unwrap();
 
-        assert_eq!(cfg.diagnostics.record_dir.as_deref(), Some("diag"));
         assert_eq!(cfg.diagnostics.max_seconds, Some(30));
     }
 
