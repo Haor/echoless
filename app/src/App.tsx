@@ -1551,9 +1551,9 @@ function AppShell() {
     return () => window.removeEventListener("keydown", onBacktick);
   }, [dev]);
 
-  function recheckNvafx(runtimeDir?: string) {
+  function recheckNvafx() {
     if (dev) return; // dev 模拟:状态由 dev 切换条控制
-    nvafxDoctor(runtimeDir)
+    nvafxDoctor()
       .then((nvafx) => updateApp({ nvafx }))
       .catch(() => {});
   }
@@ -1590,9 +1590,8 @@ function AppShell() {
       }, 900);
       return;
     }
-    const runtimeDir = (paramsRef.current.runtime_dir as string) || undefined;
     updateApp({ nvafxBusy: true, err: null });
-    nvafxInstall({ commonZip, modelZip, runtimeDir })
+    nvafxInstall({ commonZip, modelZip })
       .then((nvafx) => updateApp({ nvafx }))
       .catch((e) => noteError(String(e)))
       .finally(() => updateApp({ nvafxBusy: false }));
@@ -1650,7 +1649,6 @@ function AppShell() {
       }, 150);
       return;
     }
-    const runtimeDir = (paramsRef.current.runtime_dir as string) || undefined;
     updateApp({
       nvafxBusy: true,
       nvafxPct: null,
@@ -1658,7 +1656,7 @@ function AppShell() {
       nvafxRecv: null,
       err: null,
     });
-    nvafxDownloadInstall({ runtimeDir })
+    nvafxDownloadInstall()
       .then((nvafx) => updateApp({ nvafx }))
       .catch((e) => noteError(String(e)))
       .finally(() =>
@@ -2098,11 +2096,9 @@ function AppShell() {
             processors={processors}
             platform={platformView}
             kind={kind}
-            params={params}
             doctor={nvafxView}
             dev={dev}
             onSelect={changeKind}
-            onParam={setParam}
             onPickModel={pickLocalvqeModel}
             localvqeModel={
               (kind === "localvqe"

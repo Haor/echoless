@@ -76,9 +76,6 @@ enum NvafxCmd {
 
 #[derive(Args)]
 struct NvafxDoctorArgs {
-    /// Override runtime root directory; Windows defaults to ECHOLESS_NVAFX_RUNTIME_DIR, then falls back to %LOCALAPPDATA%\Echoless\nvafx\2.1.0
-    #[arg(long)]
-    runtime_dir: Option<PathBuf>,
     /// Emit JSON for GUI/installer consumers
     #[arg(long)]
     json: bool,
@@ -95,9 +92,6 @@ struct NvafxOfflineArgs {
     /// Output WAV
     #[arg(long)]
     out: String,
-    /// Override runtime root directory
-    #[arg(long)]
-    runtime_dir: Option<PathBuf>,
     /// Override model path; defaults are chosen automatically by GPU architecture
     #[arg(long)]
     model_path: Option<PathBuf>,
@@ -114,9 +108,6 @@ struct NvafxInstallArgs {
     /// Model zip for the current GPU architecture
     #[arg(long)]
     model_zip: PathBuf,
-    /// Override install root directory; Windows defaults to %LOCALAPPDATA%\Echoless\nvafx\2.1.0
-    #[arg(long)]
-    runtime_dir: Option<PathBuf>,
     /// Override expected SHA256 for common zip; falls back to matching the official asset name when unset
     #[arg(long)]
     common_sha256: Option<String>,
@@ -127,9 +118,6 @@ struct NvafxInstallArgs {
 
 #[derive(Args)]
 struct NvafxDownloadInstallArgs {
-    /// Override install root directory; Windows defaults to %LOCALAPPDATA%\Echoless\nvafx\2.1.0
-    #[arg(long)]
-    runtime_dir: Option<PathBuf>,
     /// GitHub release tag; defaults to the Echoless RTX AEC public preview release
     #[arg(long, default_value = DEFAULT_NVAFX_RELEASE_TAG)]
     tag: String,
@@ -148,7 +136,7 @@ pub(crate) fn cmd_nvafx(args: NvafxArgs) -> Result<()> {
 }
 
 fn cmd_nvafx_doctor(args: NvafxDoctorArgs) -> Result<()> {
-    let report = echoless_processors::nvafx::doctor_report(args.runtime_dir.as_deref())?;
+    let report = echoless_processors::nvafx::doctor_report()?;
     if args.json {
         println!(
             "{}",
@@ -222,12 +210,6 @@ fn cmd_nvafx_offline(a: NvafxOfflineArgs) -> Result<()> {
         bail!("--intensity-ratio must be a non-negative finite number");
     }
     let mut params = toml::Table::new();
-    if let Some(runtime_dir) = &a.runtime_dir {
-        params.insert(
-            "runtime_dir".into(),
-            toml::Value::String(runtime_dir.display().to_string()),
-        );
-    }
     if let Some(model_path) = &a.model_path {
         params.insert(
             "model_path".into(),
@@ -296,7 +278,6 @@ fn cmd_nvafx_install(a: NvafxInstallArgs) -> Result<()> {
     let report = install_nvafx_runtime(NvafxInstallRequest {
         common_zip: &a.common_zip,
         model_zip: &a.model_zip,
-        runtime_dir: a.runtime_dir.as_deref(),
         common_sha256: a.common_sha256.as_deref(),
         model_sha256: a.model_sha256.as_deref(),
         install_source: json!({ "kind": "local-zip" }),
@@ -316,7 +297,7 @@ fn cmd_nvafx_download_install(a: NvafxDownloadInstallArgs) -> Result<()> {
         bail!("--tag must not be empty");
     }
 
-    let preflight = echoless_processors::nvafx::doctor_report(a.runtime_dir.as_deref())?;
+    let preflight = echoless_processors::nvafx::doctor_report()?;
     let arch = preflight.selected_arch.with_context(|| {
         "unable to determine GPU architecture from nvafx doctor; verify nvidia-smi, driver, and RTX GPU availability first"
     })?;
@@ -374,7 +355,6 @@ fn cmd_nvafx_download_install(a: NvafxDownloadInstallArgs) -> Result<()> {
     let report = install_nvafx_runtime(NvafxInstallRequest {
         common_zip: &common_zip,
         model_zip: &model_zip,
-        runtime_dir: a.runtime_dir.as_deref(),
         common_sha256: common_expected.as_deref(),
         model_sha256: model_expected.as_deref(),
         install_source: json!({
@@ -402,7 +382,7 @@ fn cmd_nvafx_download_install(a: NvafxDownloadInstallArgs) -> Result<()> {
         // doctor 未过:保留下载缓存,便于用户排查后重装而无需重下 ~1 GB。
         bail!("runtime downloaded and extracted, but doctor still did not pass");
     }
-    // 安装成功且 doctor 通过 —— common runtime + model 已完全解压导入 runtime_dir,
+    // 安装成功且 doctor 通过 —— common runtime + model 已完全解压到固定 runtime 目录,
     // TMP 里的下载缓存(~1 GB)不再需要,自动清掉。清理失败不影响安装结果,仅记日志。
     match remove_dir_all(&download_dir) {
         Ok(()) => install_log(
@@ -423,7 +403,6 @@ fn cmd_nvafx_download_install(a: NvafxDownloadInstallArgs) -> Result<()> {
 struct NvafxInstallRequest<'a> {
     common_zip: &'a Path,
     model_zip: &'a Path,
-    runtime_dir: Option<&'a Path>,
     common_sha256: Option<&'a str>,
     model_sha256: Option<&'a str>,
     install_source: serde_json::Value,
@@ -433,8 +412,7 @@ struct NvafxInstallRequest<'a> {
 fn install_nvafx_runtime(
     request: NvafxInstallRequest<'_>,
 ) -> Result<echoless_processors::nvafx::DoctorReport> {
-    let (runtime_dir, runtime_dir_source) =
-        echoless_processors::nvafx::resolve_runtime_dir(request.runtime_dir);
+    let (runtime_dir, runtime_dir_source) = echoless_processors::nvafx::resolve_runtime_dir();
     if let Some(parent) = runtime_dir.parent() {
         create_dir_all(parent).with_context(|| {
             format!(
@@ -515,7 +493,7 @@ fn install_nvafx_runtime(
                 .display()
         ),
     );
-    echoless_processors::nvafx::doctor_report(Some(&runtime_dir))
+    echoless_processors::nvafx::doctor_report()
 }
 
 fn ensure_nvafx_windows_command(command: &str) -> Result<()> {
@@ -1238,16 +1216,47 @@ mod tests {
                 .as_nanos()
         ));
         let runtime = root.join("runtime");
+        let sentinel = root.join("outside-sentinel.txt");
         let staging = unique_install_staging_dir(&runtime).unwrap();
         std::fs::create_dir_all(&runtime).unwrap();
         std::fs::write(runtime.join("old.txt"), b"old").unwrap();
         std::fs::write(staging.join("new.txt"), b"new").unwrap();
+        std::fs::write(&sentinel, b"keep").unwrap();
 
         replace_dir_with_staging(&runtime, &staging).unwrap();
 
         assert!(!staging.exists());
         assert!(!runtime.join("old.txt").exists());
         assert_eq!(std::fs::read(runtime.join("new.txt")).unwrap(), b"new");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn replace_dir_with_staging_rolls_back_without_touching_sibling() {
+        let root = env::temp_dir().join(format!(
+            "echoless-nvafx-rollback-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let runtime = root.join("runtime");
+        let sentinel = root.join("outside-sentinel.txt");
+        let missing_staging = root.join("missing-staging");
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::write(runtime.join("old.txt"), b"old").unwrap();
+        std::fs::write(&sentinel, b"keep").unwrap();
+
+        let error = replace_dir_with_staging(&runtime, &missing_staging).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("failed to commit runtime staging"));
+        assert_eq!(std::fs::read(runtime.join("old.txt")).unwrap(), b"old");
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
 
         let _ = std::fs::remove_dir_all(root);
     }

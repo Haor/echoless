@@ -51,7 +51,6 @@ agc = false                  # 保持电平自然,避免双讲时忽大忽小
 # v1 只支持 Windows RTX + 48000 Hz + 10ms frame + mono reference。
 # [[chain]]
 # kind = "nvidia_afx_aec"
-# runtime_dir = "auto"           # auto = ECHOLESS_NVAFX_RUNTIME_DIR 或 %LOCALAPPDATA%\Echoless\nvafx\2.1.0
 # model_path = "auto"            # auto = 按 GPU 架构选择 features/nvafxaec/models/<arch>/aec_48k.trtpkg
 # intensity_ratio = 1.0
 # use_default_gpu = true

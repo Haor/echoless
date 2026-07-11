@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use anyhow::{bail, Result};
 use clap::{Args, Subcommand};
 use serde_json::json;
@@ -447,7 +445,6 @@ fn validate_nvafx_node(
             "nvidia_afx_aec requires mono reference",
         ));
     }
-    expect_optional_nonempty_string(params, base, "runtime_dir", errors);
     expect_optional_nonempty_string(params, base, "model_path", errors);
     expect_finite_number_min(params, base, "intensity_ratio", 0.0, errors);
     expect_bool(params, base, "use_default_gpu", errors);
@@ -459,13 +456,7 @@ fn validate_nvafx_node(
         &["silence", "bypass"],
         errors,
     );
-    let runtime_dir = params
-        .get("runtime_dir")
-        .and_then(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("auto"))
-        .map(Path::new);
-    match echoless_processors::nvafx::doctor_report(runtime_dir) {
+    match echoless_processors::nvafx::doctor_report() {
         Ok(report) if report.ok() => {}
         Ok(report) => {
             let detail = report

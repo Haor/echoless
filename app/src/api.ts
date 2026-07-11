@@ -111,30 +111,24 @@ export function probeDelay(p: {
   });
 }
 
-export function nvafxDoctor(runtimeDir?: string): Promise<NvafxDoctor> {
-  return invoke<NvafxDoctor>("nvafx_doctor", { runtimeDir: runtimeDir ?? null });
+export function nvafxDoctor(): Promise<NvafxDoctor> {
+  return invoke<NvafxDoctor>("nvafx_doctor");
 }
 
 // RTX AEC runtime 安装:解压 common + 按架构 model zip,回传安装后的 doctor 报告。
 export function nvafxInstall(p: {
   commonZip: string;
   modelZip: string;
-  runtimeDir?: string;
 }): Promise<NvafxDoctor> {
   return invoke<NvafxDoctor>("nvafx_install", {
     commonZip: p.commonZip,
     modelZip: p.modelZip,
-    runtimeDir: p.runtimeDir ?? null,
   });
 }
 
 // 从公共 GitHub release 下载 + 安装(后端按 GPU 架构自动选模型)。回传安装后 doctor。
-export function nvafxDownloadInstall(p: {
-  runtimeDir?: string;
-}): Promise<NvafxDoctor> {
-  return invoke<NvafxDoctor>("nvafx_download_install", {
-    runtimeDir: p.runtimeDir ?? null,
-  });
+export function nvafxDownloadInstall(): Promise<NvafxDoctor> {
+  return invoke<NvafxDoctor>("nvafx_download_install");
 }
 
 export function openUrl(url: string): Promise<void> {
@@ -390,6 +384,7 @@ export function buildConfigToml(c: ConfigChoice): string {
   lines.push(`[[chain]]`, `kind = ${tomlString(c.kind)}`);
   for (const [k, raw] of Object.entries(c.params)) {
     if (k === "reference_channels") continue; // 顶层管线项,不重复
+    if (c.kind === "nvidia_afx_aec" && k === "runtime_dir") continue;
     const val = tomlValue(raw);
     if (val !== null) lines.push(`${k} = ${val}`);
   }

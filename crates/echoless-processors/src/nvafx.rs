@@ -19,7 +19,6 @@ use crate::{dsp::copy_or_zero, EchoProcessor, IoSpec, ProcessorStats};
 pub const SDK_VERSION: &str = "2.1.0";
 pub const RUNTIME_FILE_VERSION: &str = "2.1.0.9";
 pub const MIN_DRIVER_VERSION: &str = "572.61";
-pub const DEFAULT_ENV_VAR: &str = "ECHOLESS_NVAFX_RUNTIME_DIR";
 pub const NVAFX_SAMPLE_RATE: u32 = 48_000;
 pub const NVAFX_FRAME_SAMPLES: u32 = 480;
 
@@ -219,7 +218,6 @@ impl RuntimeErrorMode {
 
 #[derive(Clone, Debug)]
 struct AecConfig {
-    runtime_dir: Option<PathBuf>,
     model_path: Option<PathBuf>,
     intensity_ratio: f32,
     use_default_gpu: bool,
@@ -230,7 +228,6 @@ struct AecConfig {
 impl Default for AecConfig {
     fn default() -> Self {
         Self {
-            runtime_dir: None,
             model_path: None,
             intensity_ratio: 1.0,
             use_default_gpu: true,
@@ -243,7 +240,6 @@ impl Default for AecConfig {
 impl AecConfig {
     fn from_params(params: &toml::Table) -> Result<Self> {
         let mut cfg = Self {
-            runtime_dir: parse_path_param(params.get("runtime_dir")),
             model_path: parse_path_param(params.get("model_path")),
             ..Self::default()
         };
@@ -355,15 +351,12 @@ impl EchoProcessor for NvidiaAfxAec {
         self.last_error = None;
         self.last_process_time_ms = 0.0;
 
-        let report = doctor_report(self.cfg.runtime_dir.as_deref())?;
+        let report = doctor_report()?;
         if !report.ok() {
             bail!("nvidia_afx_aec is not available yet; run `echoless nvafx doctor` to fix dependencies first");
         }
 
-        let selection = resolve_runtime_selection(
-            self.cfg.runtime_dir.as_deref(),
-            self.cfg.model_path.as_deref(),
-        )?;
+        let selection = resolve_runtime_selection(self.cfg.model_path.as_deref())?;
 
         #[cfg(not(windows))]
         {
@@ -441,8 +434,8 @@ impl EchoProcessor for NvidiaAfxAec {
     }
 }
 
-pub fn doctor_report(runtime_dir_override: Option<&Path>) -> Result<DoctorReport> {
-    let (runtime_dir, runtime_dir_source) = resolve_runtime_dir(runtime_dir_override);
+pub fn doctor_report() -> Result<DoctorReport> {
+    let (runtime_dir, runtime_dir_source) = resolve_runtime_dir();
     let mut checks = Vec::new();
 
     if cfg!(windows) {
@@ -480,23 +473,17 @@ pub fn doctor_report(runtime_dir_override: Option<&Path>) -> Result<DoctorReport
     })
 }
 
-pub fn resolve_runtime_dir(override_dir: Option<&Path>) -> (PathBuf, String) {
-    if let Some(dir) = override_dir {
-        return (dir.to_path_buf(), "argument".to_string());
-    }
-    if let Some(dir) = env::var_os(DEFAULT_ENV_VAR).filter(|value| !value.is_empty()) {
-        return (PathBuf::from(dir), DEFAULT_ENV_VAR.to_string());
-    }
-
+pub fn resolve_runtime_dir() -> (PathBuf, String) {
     let (base, source) = echoless_paths::brand_data_root();
-    (base.join("nvafx").join(SDK_VERSION), source)
+    (runtime_dir_from_brand_root(&base), source)
 }
 
-fn resolve_runtime_selection(
-    runtime_dir_override: Option<&Path>,
-    model_path_override: Option<&Path>,
-) -> Result<RuntimeSelection> {
-    let (runtime_dir, _runtime_dir_source) = resolve_runtime_dir(runtime_dir_override);
+fn runtime_dir_from_brand_root(base: &Path) -> PathBuf {
+    base.join("nvafx").join(SDK_VERSION)
+}
+
+fn resolve_runtime_selection(model_path_override: Option<&Path>) -> Result<RuntimeSelection> {
+    let (runtime_dir, _runtime_dir_source) = resolve_runtime_dir();
     let gpus = detect_gpus().context("failed to detect NVIDIA GPU")?;
     let selected_arch = gpus.iter().find_map(|gpu| gpu.arch);
     let model_path = if let Some(path) = model_path_override {
@@ -1367,13 +1354,19 @@ mod tests {
     }
 
     #[test]
-    fn ignores_auto_path_params() {
+    fn removed_runtime_param_cannot_override_fixed_runtime() {
         let mut params = toml::Table::new();
-        params.insert("runtime_dir".into(), toml::Value::String("auto".into()));
+        params.insert(
+            "runtime_dir".into(),
+            toml::Value::String("/outside/fixed/root".into()),
+        );
         params.insert("model_path".into(), toml::Value::String(" ".into()));
         let cfg = AecConfig::from_params(&params).unwrap();
-        assert!(cfg.runtime_dir.is_none());
         assert!(cfg.model_path.is_none());
+        assert_eq!(
+            runtime_dir_from_brand_root(Path::new("/brand-root")),
+            Path::new("/brand-root").join("nvafx").join(SDK_VERSION)
+        );
     }
 
     #[test]

@@ -172,3 +172,56 @@ fn parse_reference_channels(s: &str) -> Result<ReferenceChannels, String> {
         _ => Err("must be mono or stereo".to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::{error::ErrorKind, Parser};
+
+    use super::Cli;
+
+    #[test]
+    fn nvafx_commands_reject_removed_runtime_dir_option() {
+        let cases = [
+            vec!["echoless", "nvafx", "doctor", "--runtime-dir", "custom"],
+            vec![
+                "echoless",
+                "nvafx",
+                "offline",
+                "--mic",
+                "mic.wav",
+                "--reference",
+                "ref.wav",
+                "--out",
+                "out.wav",
+                "--runtime-dir",
+                "custom",
+            ],
+            vec![
+                "echoless",
+                "nvafx",
+                "install",
+                "--common-zip",
+                "common.zip",
+                "--model-zip",
+                "model.zip",
+                "--runtime-dir",
+                "custom",
+            ],
+            vec![
+                "echoless",
+                "nvafx",
+                "download-install",
+                "--runtime-dir",
+                "custom",
+            ],
+        ];
+
+        for args in cases {
+            let error = match Cli::try_parse_from(args) {
+                Ok(_) => panic!("removed --runtime-dir option was accepted"),
+                Err(error) => error,
+            };
+            assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+        }
+    }
+}

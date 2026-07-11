@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import type {
   NvafxCheck,
   NvafxDoctor,
@@ -122,14 +121,12 @@ interface Props {
   processors: Processor[];
   platform: Platform;
   kind: string;
-  params: Record<string, unknown>;
   doctor: NvafxDoctor | null;
   dev: boolean;
   onSelect: (kind: string) => void;
-  onParam: (key: string, val: unknown) => void;
   onPickModel: (path: string) => void;
   localvqeModel: string | null;
-  onRecheck: (runtimeDir?: string) => void;
+  onRecheck: () => void;
   onSetup: () => void;
 }
 
@@ -139,7 +136,6 @@ let macSysInfoCache: MacSystemInfo | null = null;
 
 function NvafxCard({
   kind,
-  params,
   doctor,
   dev,
   platform,
@@ -147,12 +143,10 @@ function NvafxCard({
   nvReady,
   problems,
   onSelect,
-  onParam,
   onRecheck,
   onSetup,
 }: {
   kind: string;
-  params: Record<string, unknown>;
   doctor: NvafxDoctor | null;
   dev: boolean;
   platform: Platform;
@@ -160,8 +154,7 @@ function NvafxCard({
   nvReady: boolean;
   problems: number;
   onSelect: (kind: string) => void;
-  onParam: (key: string, val: unknown) => void;
-  onRecheck: (runtimeDir?: string) => void;
+  onRecheck: () => void;
   onSetup: () => void;
 }) {
   const { t, lang } = useI18n();
@@ -192,18 +185,6 @@ function NvafxCard({
       })
       .catch(() => {});
   }, [nvSupported, platform, dev, sysInfo]);
-
-  async function pickRuntime() {
-    try {
-      const sel = await open({ directory: true });
-      if (typeof sel === "string") {
-        onParam("runtime_dir", sel);
-        onRecheck(sel);
-      }
-    } catch {
-      /* cancelled */
-    }
-  }
 
   return (
     <div
@@ -316,28 +297,15 @@ function NvafxCard({
               <div className="echks">{(nv?.checks ?? []).map(checkPill)}</div>
               <div className="drow nvrt">
                 <span className="dk">RUNTIME</span>
-                <button
-                  type="button"
-                  className="dpick plainbtn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    pickRuntime();
-                  }}
-                  title={(params.runtime_dir as string) || nv?.runtime_dir}
-                >
-                  {(params.runtime_dir as string) || nv?.runtime_dir || t("auto")}
-                </button>
+                <span className="dpath" title={nv?.runtime_dir}>
+                  {nv?.runtime_dir || t("auto")}
+                </span>
                 <button
                   type="button"
                   className="dopen"
                   onClick={(e) => {
                     e.stopPropagation();
-                    // B8:与左侧 dpick 显示同源 —— 检查的就是展示的那个目录。
-                    onRecheck(
-                      (params.runtime_dir as string) ||
-                        nv?.runtime_dir ||
-                        undefined,
-                    );
+                    onRecheck();
                   }}
                 >
                   {t("engRecheck")} <span className="mk">↻</span>
@@ -367,11 +335,9 @@ export function EnginePage({
   processors,
   platform,
   kind,
-  params,
   doctor,
   dev,
   onSelect,
-  onParam,
   onPickModel,
   localvqeModel,
   onRecheck,
@@ -606,7 +572,6 @@ export function EnginePage({
 
       <NvafxCard
         kind={kind}
-        params={params}
         doctor={doctor}
         dev={dev}
         platform={platform}
@@ -614,7 +579,6 @@ export function EnginePage({
         nvReady={nvReady}
         problems={problems}
         onSelect={onSelect}
-        onParam={onParam}
         onRecheck={onRecheck}
         onSetup={onSetup}
       />

@@ -16,17 +16,8 @@ use crate::proc::{
 /// 返回 { ok, report: { runtime_dir, runtime_dir_source, gpus[], selected_arch, checks[] } }。
 /// macOS/Linux 上后端会返回 ok=false + platform unsupported 检查项(诚实降级)。
 #[tauri::command]
-pub(crate) async fn nvafx_doctor(
-    app: tauri::AppHandle,
-    runtime_dir: Option<String>,
-) -> Result<Value, String> {
-    let mut args: Vec<String> = vec!["nvafx".into(), "doctor".into(), "--json".into()];
-    if let Some(dir) = runtime_dir {
-        if !dir.is_empty() {
-            args.push("--runtime-dir".into());
-            args.push(dir);
-        }
-    }
+pub(crate) async fn nvafx_doctor(app: tauri::AppHandle) -> Result<Value, String> {
+    let args: Vec<String> = vec!["nvafx".into(), "doctor".into(), "--json".into()];
     run_json_async(app, args, JSON_COMMAND_TIMEOUT, "nvafx doctor").await
 }
 
@@ -37,11 +28,9 @@ pub(crate) async fn nvafx_install(
     app: tauri::AppHandle,
     common_zip: String,
     model_zip: String,
-    runtime_dir: Option<String>,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let rdir = runtime_dir.filter(|d| !d.is_empty());
-        let mut args: Vec<String> = vec![
+        let args: Vec<String> = vec![
             "nvafx".into(),
             "install".into(),
             "--common-zip".into(),
@@ -49,10 +38,6 @@ pub(crate) async fn nvafx_install(
             "--model-zip".into(),
             model_zip,
         ];
-        if let Some(dir) = rdir.as_deref() {
-            args.push("--runtime-dir".into());
-            args.push(dir.to_string());
-        }
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let mut command = echoless_command(Some(&app))?;
         command.args(&arg_refs);
@@ -63,11 +48,7 @@ pub(crate) async fn nvafx_install(
         }
 
         // 安装后用 doctor --json 验证,回传报告供前端重算状态。
-        let mut dargs: Vec<String> = vec!["nvafx".into(), "doctor".into(), "--json".into()];
-        if let Some(dir) = rdir.as_deref() {
-            dargs.push("--runtime-dir".into());
-            dargs.push(dir.to_string());
-        }
+        let dargs: Vec<String> = vec!["nvafx".into(), "doctor".into(), "--json".into()];
         let darg_refs: Vec<&str> = dargs.iter().map(String::as_str).collect();
         run_json_blocking(Some(&app), &darg_refs, JSON_COMMAND_TIMEOUT, "nvafx doctor")
     })
@@ -76,25 +57,16 @@ pub(crate) async fn nvafx_install(
 }
 
 /// 从公共 GitHub release 下载 common+架构 model zip,然后安装并回传 doctor。
-/// shell `echoless nvafx download-install [--runtime-dir D] --json`;该子命令需打印
+/// shell `echoless nvafx download-install --json`;该子命令需打印
 /// `{ok, report}` doctor JSON 到 stdout。后端(Codex)实现该子命令后此处即生效;
 /// 未实现前 CLI 会非 0 退出,错误经 stderr 透传给前端。
 #[tauri::command]
-pub(crate) async fn nvafx_download_install(
-    app: tauri::AppHandle,
-    runtime_dir: Option<String>,
-) -> Result<Value, String> {
-    let rdir = runtime_dir.filter(|d| !d.is_empty());
+pub(crate) async fn nvafx_download_install(app: tauri::AppHandle) -> Result<Value, String> {
     // 流式版:一次性命令,但要边跑边转发下载进度。stderr 上 CLI 会打
     // nvafx_download_progress JSONL(→ echoless://nvafx-progress 事件)与人读日志;
     // stdout 累积到进程结束才是最终的 { ok, report } JSON。
     tauri::async_runtime::spawn_blocking(move || {
-        let mut args: Vec<String> =
-            vec!["nvafx".into(), "download-install".into(), "--json".into()];
-        if let Some(dir) = rdir {
-            args.push("--runtime-dir".into());
-            args.push(dir);
-        }
+        let args: Vec<String> = vec!["nvafx".into(), "download-install".into(), "--json".into()];
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let mut command = echoless_command(Some(&app))?;
         command.args(&arg_refs);

@@ -54,7 +54,7 @@ interface Props {
   dev: boolean;
   devState: RtxState;
   onDevState: (s: RtxState) => void;
-  onRecheck: (runtimeDir?: string) => void;
+  onRecheck: () => void;
   onInstall: (commonZip: string, modelZip: string) => void;
   onDownloadInstall: () => void;
   onUse: () => void;
@@ -132,7 +132,7 @@ export function RtxSetupPage({
             <button type="button" className="wzbtn" onClick={() => openUrl(DRIVER_URL)}>
               {t("wzOpenDriver")} <span className="mk">↗</span>
             </button>
-            <button type="button" className="dopen" onClick={() => onRecheck(runtimeDir)}>
+            <button type="button" className="dopen" onClick={onRecheck}>
               {t("recheck")} <span className="mk">↻</span>
             </button>
           </div>
@@ -148,7 +148,7 @@ export function RtxSetupPage({
             <button type="button" className="wzbtn" onClick={() => openUrl(VC_URL)}>
               {t("wzOpenVc")} <span className="mk">↗</span>
             </button>
-            <button type="button" className="dopen" onClick={() => onRecheck(runtimeDir)}>
+            <button type="button" className="dopen" onClick={onRecheck}>
               {t("recheck")} <span className="mk">↻</span>
             </button>
           </div>
@@ -350,7 +350,7 @@ export function RtxSetupPage({
           <span className="dpath" title={runtimeDir}>
             {runtimeDir}
           </span>
-          <button type="button" className="dopen" onClick={() => onRecheck(runtimeDir)}>
+          <button type="button" className="dopen" onClick={onRecheck}>
             {t("recheck")} <span className="mk">↻</span>
           </button>
         </div>

@@ -84,4 +84,25 @@ describe("TOML basic string encoding", () => {
       ].join("\n"),
     );
   });
+
+  it("does not serialize the removed NVAFX runtime override", () => {
+    const config = buildConfigToml({
+      mic: "default",
+      reference: "system",
+      output: "default",
+      kind: "nvidia_afx_aec",
+      pipeline: {
+        sample_rate: 48_000,
+        frame_ms: 10,
+        reference_channels: "mono",
+      },
+      params: {
+        runtime_dir: "C:\\outside\\fixed-root",
+        intensity_ratio: 0.8,
+      },
+    });
+
+    expect(config).not.toContain("runtime_dir");
+    expect(config).toContain("intensity_ratio = 0.8");
+  });
 });

@@ -160,7 +160,6 @@ fn processor_manifest() -> serde_json::Value {
                     "reference_channels": "mono"
                 },
                 "params": {
-                    "runtime_dir": { "type": "path", "required": false },
                     "model_path": { "type": "path", "required": false },
                     "intensity_ratio": { "type": "number", "default": 1.0, "min": 0.0 },
                     "use_default_gpu": { "type": "bool", "default": true, "advanced": true },
@@ -226,5 +225,11 @@ mod tests {
             manifest["pipeline"]["params"]["output_level"]["curve"],
             json!("power")
         );
+
+        let nvafx = processors
+            .iter()
+            .find(|processor| processor["kind"] == "nvidia_afx_aec")
+            .unwrap();
+        assert!(nvafx["params"].get("runtime_dir").is_none());
     }
 }
