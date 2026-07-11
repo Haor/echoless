@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use ringbuf::traits::Producer;
@@ -22,6 +22,7 @@ const STREAM_HEADER_MAGIC: &[u8; 4] = b"ELTP";
 const STREAM_HEADER_LEN: usize = 16;
 const STREAM_HEADER_VERSION: u32 = 1;
 const STARTUP_READY_POLL: Duration = Duration::from_millis(100);
+const PROCESS_TAP_HEADER_DEADLINE: Duration = Duration::from_secs(25);
 
 const HELPER_ENV: &str = "ECHOLESS_PROCESS_TAP_HELPER";
 const DEV_HELPER: &str = "tools/macos-process-tap-poc/.build/echoless-process-tap-poc";
@@ -43,6 +44,12 @@ enum ReaderExit {
 struct StreamHeader {
     sample_rate: u32,
     channels: usize,
+}
+
+struct ProcessTapStartConfig {
+    mode: ReferenceChannels,
+    target_rate: u32,
+    header_deadline: Duration,
 }
 
 impl Drop for MacProcessTapStream {
@@ -177,8 +184,11 @@ where
     let helper = helper_path()?;
     start_with_helper(
         &helper,
-        mode,
-        target_rate,
+        ProcessTapStartConfig {
+            mode,
+            target_rate,
+            header_deadline: PROCESS_TAP_HEADER_DEADLINE,
+        },
         producer,
         drops,
         running,
@@ -188,8 +198,7 @@ where
 
 fn start_with_helper<P, E>(
     helper: &Path,
-    mode: ReferenceChannels,
-    target_rate: u32,
+    config: ProcessTapStartConfig,
     producer: P,
     drops: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
@@ -204,7 +213,7 @@ where
     command
         .arg("--exclude-pid")
         .arg(std::process::id().to_string());
-    if mode == ReferenceChannels::Mono {
+    if config.mode == ReferenceChannels::Mono {
         command.arg("--mono");
     }
     command.stdout(Stdio::piped()).stderr(Stdio::inherit());
@@ -215,18 +224,19 @@ where
             helper.display()
         )
     })?;
+    let helper_pid = child.id();
     let stdout = child
         .stdout
         .take()
         .context("macOS Process Tap helper stdout was not opened")?;
     let reader_running = running.clone();
-    let channels = usize::from(mode.channel_count());
+    let channels = usize::from(config.mode.channel_count());
     let (ready_tx, ready_rx) = sync_channel(1);
     let reader = thread::spawn(move || {
         let exit = read_pcm_stream(
             stdout,
             channels,
-            target_rate,
+            config.target_rate,
             producer,
             drops,
             reader_running.clone(),
@@ -241,24 +251,44 @@ where
         running,
     };
 
+    let startup_started = Instant::now();
     loop {
         if !stream.running.load(Ordering::SeqCst) {
             bail!("macOS Process Tap startup was cancelled");
         }
-        match ready_rx.recv_timeout(STARTUP_READY_POLL) {
+        let remaining = config
+            .header_deadline
+            .saturating_sub(startup_started.elapsed());
+        if remaining.is_zero() {
+            bail!(
+                "macOS Process Tap header deadline exceeded after {} ms (pid {helper_pid})",
+                config.header_deadline.as_millis(),
+            );
+        }
+        match ready_rx.recv_timeout(STARTUP_READY_POLL.min(remaining)) {
             Ok(Ok(())) if stream.running.load(Ordering::SeqCst) => return Ok(stream),
             Ok(Ok(())) => bail!("macOS Process Tap helper stopped during startup"),
             Ok(Err(message)) => bail!("macOS Process Tap helper failed to start: {message}"),
             Err(RecvTimeoutError::Disconnected) => {
                 bail!("macOS Process Tap reader stopped before reporting readiness")
             }
-            Err(RecvTimeoutError::Timeout) => match stream.child.try_wait() {
-                Ok(Some(status)) => {
-                    bail!("macOS Process Tap helper exited before readiness with status {status}")
+            Err(RecvTimeoutError::Timeout) => {
+                match stream.child.try_wait() {
+                    Ok(Some(status)) => {
+                        bail!(
+                            "macOS Process Tap helper exited before readiness with status {status}"
+                        )
+                    }
+                    Ok(None) => {}
+                    Err(err) => bail!("failed to inspect macOS Process Tap helper status: {err}"),
                 }
-                Ok(None) => {}
-                Err(err) => bail!("failed to inspect macOS Process Tap helper status: {err}"),
-            },
+                if startup_started.elapsed() >= config.header_deadline {
+                    bail!(
+                        "macOS Process Tap header deadline exceeded after {} ms (pid {helper_pid})",
+                        config.header_deadline.as_millis(),
+                    );
+                }
+            }
         }
     }
 }
@@ -518,11 +548,23 @@ mod tests {
         running: Arc<AtomicBool>,
         reports: Arc<AtomicUsize>,
     ) -> Result<MacProcessTapStream> {
+        start_test_helper_with_deadline(helper, running, reports, PROCESS_TAP_HEADER_DEADLINE)
+    }
+
+    fn start_test_helper_with_deadline(
+        helper: &TempHelper,
+        running: Arc<AtomicBool>,
+        reports: Arc<AtomicUsize>,
+        header_deadline: Duration,
+    ) -> Result<MacProcessTapStream> {
         let (producer, _consumer) = HeapRb::<f32>::new(16).split();
         start_with_helper(
             &helper.script,
-            ReferenceChannels::Mono,
-            48_000,
+            ProcessTapStartConfig {
+                mode: ReferenceChannels::Mono,
+                target_rate: 48_000,
+                header_deadline,
+            },
             producer,
             Arc::new(AtomicU64::new(0)),
             running,
@@ -656,6 +698,44 @@ mod tests {
         assert!(err.to_string().contains("failed to start"));
         assert!(!running.load(Ordering::SeqCst));
         assert_eq!(reports.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn header_deadline_kills_and_reaps_a_live_helper_that_never_writes() {
+        let helper = TempHelper::script("exec /bin/sleep 30");
+        let running = Arc::new(AtomicBool::new(true));
+        let reports = Arc::new(AtomicUsize::new(0));
+        let started = Instant::now();
+        let result = start_test_helper_with_deadline(
+            &helper,
+            running.clone(),
+            reports.clone(),
+            Duration::from_millis(120),
+        );
+
+        let err = match result {
+            Ok(_) => panic!("helper without an ELTP header unexpectedly became ready"),
+            Err(err) => err,
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains("header deadline exceeded after 120 ms"),
+            "{err:#}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(!running.load(Ordering::SeqCst));
+        assert_eq!(reports.load(Ordering::SeqCst), 0);
+
+        let pid = message
+            .rsplit_once("(pid ")
+            .and_then(|(_, pid)| pid.strip_suffix(')'))
+            .expect("deadline error should identify the direct helper pid");
+        let still_alive = Command::new("/bin/kill")
+            .args(["-0", pid])
+            .status()
+            .unwrap()
+            .success();
+        assert!(!still_alive, "timed-out helper {pid:?} was not reaped");
     }
 
     #[test]
