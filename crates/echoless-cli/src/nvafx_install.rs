@@ -4,7 +4,9 @@ use std::fs::{create_dir_all, remove_dir_all, rename, File};
 use std::io::{copy, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand};
@@ -21,11 +23,14 @@ use echoless_processors::NodeConfig;
 const DEFAULT_NVAFX_RELEASE_TAG: &str = "rtx-aec-runtime-win64-2.1.0-aec48-preview.1";
 const NVAFX_RELEASE_DOWNLOAD_BASE: &str = "https://github.com/Haor/echoless/releases/download";
 const NVAFX_COMMON_RUNTIME_ASSET: &str = "echoless-rtx-aec-common-runtime-win64-2.1.0.zip";
+const DOWNLOAD_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+const DOWNLOAD_PROGRESS_STOP_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
 struct NvafxReleasePin {
     asset: &'static str,
     sha256: &'static str,
+    size: u64,
 }
 
 // Trust anchor for DEFAULT_NVAFX_RELEASE_TAG. Release SHA256SUMS.txt is only a cross-check
@@ -34,22 +39,27 @@ const NVAFX_DEFAULT_RELEASE_PINS: &[NvafxReleasePin] = &[
     NvafxReleasePin {
         asset: NVAFX_COMMON_RUNTIME_ASSET,
         sha256: "dcacac954b7973ae18369b252d13f24b973b10114d00e5293eab0713601c7bcb",
+        size: 1_001_010_819,
     },
     NvafxReleasePin {
         asset: "echoless-rtx-aec-model-win64-2.1.0-turing-aec48.zip",
         sha256: "951e03bb144156f4b27cbf2caa6930f9dabc3f1cb26a0afd9d9523f4d286dae9",
+        size: 48_104_228,
     },
     NvafxReleasePin {
         asset: "echoless-rtx-aec-model-win64-2.1.0-ampere-aec48.zip",
         sha256: "066e06ec18a7d4509675411a1e050e11b0cfc4fee30d69d783871333018c9ab9",
+        size: 48_049_936,
     },
     NvafxReleasePin {
         asset: "echoless-rtx-aec-model-win64-2.1.0-ada-aec48.zip",
         sha256: "92170e6a259f9093397b93cf4385759c36697ecb9e308322405bce1abcb8e3df",
+        size: 48_374_718,
     },
     NvafxReleasePin {
         asset: "echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip",
         sha256: "0e75bb7442d317990ef0d5a6477105f86b9bbae1c2c5e4a6bdfb8d4e9f42df5b",
+        size: 48_927_764,
     },
 ];
 
@@ -333,11 +343,14 @@ fn cmd_nvafx_download_install(a: NvafxDownloadInstallArgs) -> Result<()> {
     let common_expected =
         expected_sha256_for_release_asset(tag, &release_sha256sums, NVAFX_COMMON_RUNTIME_ASSET)?;
     let model_expected = expected_sha256_for_release_asset(tag, &release_sha256sums, &model_asset)?;
+    let common_size = expected_size_for_release_asset(tag, NVAFX_COMMON_RUNTIME_ASSET);
+    let model_size = expected_size_for_release_asset(tag, &model_asset);
 
     download_release_asset(
         &common_url,
         &common_zip,
         common_expected.as_deref(),
+        common_size,
         "common runtime",
         a.json,
     )?;
@@ -345,6 +358,7 @@ fn cmd_nvafx_download_install(a: NvafxDownloadInstallArgs) -> Result<()> {
         &model_url,
         &model_zip,
         model_expected.as_deref(),
+        model_size,
         "model",
         a.json,
     )?;
@@ -560,7 +574,7 @@ fn fetch_release_sha256sums(
 ) -> Result<HashMap<String, String>> {
     let path = download_dir.join("SHA256SUMS.txt");
     let url = nvafx_release_asset_url(tag, "SHA256SUMS.txt");
-    download_file(&url, &path, "SHA256SUMS.txt", log_to_stderr)?;
+    download_file(&url, &path, "SHA256SUMS.txt", None, log_to_stderr)?;
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read SHA256SUMS.txt: {}", path.display()))?;
     Ok(parse_sha256sums(&contents))
@@ -610,10 +624,17 @@ fn expected_sha256_for_release_asset(
     Ok(release_sha256sums.get(asset).cloned())
 }
 
+fn expected_size_for_release_asset(tag: &str, asset: &str) -> Option<u64> {
+    (tag == DEFAULT_NVAFX_RELEASE_TAG)
+        .then(|| default_release_pin(asset).map(|pin| pin.size))
+        .flatten()
+}
+
 fn download_release_asset(
     url: &str,
     dest: &Path,
     expected_sha256: Option<&str>,
+    expected_size: Option<u64>,
     label: &str,
     log_to_stderr: bool,
 ) -> Result<()> {
@@ -649,10 +670,16 @@ fn download_release_asset(
             }
         }
     }
-    download_file(url, dest, label, log_to_stderr)
+    download_file(url, dest, label, expected_size, log_to_stderr)
 }
 
-fn download_file(url: &str, dest: &Path, label: &str, log_to_stderr: bool) -> Result<()> {
+fn download_file(
+    url: &str,
+    dest: &Path,
+    label: &str,
+    expected_size: Option<u64>,
+    log_to_stderr: bool,
+) -> Result<()> {
     if let Some(parent) = dest.parent() {
         create_dir_all(parent).with_context(|| {
             format!("failed to create download directory: {}", parent.display())
@@ -667,7 +694,16 @@ fn download_file(url: &str, dest: &Path, label: &str, log_to_stderr: bool) -> Re
     ));
     let _ = std::fs::remove_file(&tmp);
     install_log(log_to_stderr, format!("downloading {label}: {url}"));
-    emit_download_progress(log_to_stderr, label, 0);
+    let progress = log_to_stderr.then(|| {
+        spawn_download_progress_observer(
+            tmp.clone(),
+            label.to_string(),
+            expected_size,
+            DOWNLOAD_PROGRESS_INTERVAL,
+            DOWNLOAD_PROGRESS_STOP_TIMEOUT,
+            |label, received, total| emit_download_progress(true, label, received, total),
+        )
+    });
 
     match download_with_powershell(url, &tmp) {
         Ok(()) => {
@@ -699,24 +735,113 @@ fn download_file(url: &str, dest: &Path, label: &str, log_to_stderr: bool) -> Re
         }
     }?;
 
+    if let Some(observer) = progress {
+        observer.stop();
+    }
     let received = std::fs::metadata(dest).map(|meta| meta.len()).unwrap_or(0);
-    emit_download_progress(log_to_stderr, label, received);
+    emit_download_progress(log_to_stderr, label, received, expected_size);
     Ok(())
 }
 
-fn emit_download_progress(enabled: bool, label: &str, received: u64) {
-    if enabled {
-        eprintln!("{}", download_progress_payload(label, received));
+struct DownloadProgressObserver {
+    stop: Option<Sender<()>>,
+    done: Receiver<()>,
+    handle: Option<JoinHandle<()>>,
+    stop_timeout: Duration,
+}
+
+impl DownloadProgressObserver {
+    fn stop(mut self) {
+        self.finish();
+    }
+
+    fn finish(&mut self) {
+        if self.handle.is_none() {
+            return;
+        }
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        match self.done.recv_timeout(self.stop_timeout) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                if let Some(handle) = self.handle.take() {
+                    let _ = handle.join();
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // Progress is optional: detach a stuck observer instead of delaying
+                // hashing, installation, or process exit.
+                self.handle.take();
+            }
+        }
     }
 }
 
-fn download_progress_payload(label: &str, received: u64) -> serde_json::Value {
+impl Drop for DownloadProgressObserver {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+fn spawn_download_progress_observer<F>(
+    path: PathBuf,
+    label: String,
+    total: Option<u64>,
+    interval: Duration,
+    stop_timeout: Duration,
+    emit: F,
+) -> DownloadProgressObserver
+where
+    F: Fn(&str, u64, Option<u64>) + Send + 'static,
+{
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut last_received = None;
+        loop {
+            let received = std::fs::metadata(&path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
+            if last_received != Some(received) {
+                emit(&label, received, total);
+                last_received = Some(received);
+            }
+            match stop_rx.recv_timeout(interval) {
+                Err(RecvTimeoutError::Timeout) => {}
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let _ = done_tx.send(());
+    });
+    DownloadProgressObserver {
+        stop: Some(stop_tx),
+        done: done_rx,
+        handle: Some(handle),
+        stop_timeout,
+    }
+}
+
+fn emit_download_progress(enabled: bool, label: &str, received: u64, total: Option<u64>) {
+    if enabled {
+        eprintln!("{}", download_progress_payload(label, received, total));
+    }
+}
+
+fn download_progress_payload(label: &str, received: u64, total: Option<u64>) -> serde_json::Value {
+    let total = total.filter(|value| *value > 0).unwrap_or(0);
+    let pct = (total > 0).then(|| {
+        received
+            .min(total)
+            .saturating_mul(100)
+            .checked_div(total)
+            .unwrap_or(0) as u32
+    });
     json!({
         "event": "nvafx_download_progress",
         "label": label,
         "received": received,
-        "total": 0,
-        "pct": null,
+        "total": total,
+        "pct": pct,
     })
 }
 
@@ -823,10 +948,13 @@ fn print_nvafx_doctor_report(report: &echoless_processors::nvafx::DoctorReport) 
 
 fn expected_sha256_for_asset(path: &Path) -> Option<&'static str> {
     let asset = path.file_name()?.to_str()?;
+    default_release_pin(asset).map(|pin| pin.sha256)
+}
+
+fn default_release_pin(asset: &str) -> Option<&'static NvafxReleasePin> {
     NVAFX_DEFAULT_RELEASE_PINS
         .iter()
         .find(|pin| pin.asset == asset)
-        .map(|pin| pin.sha256)
 }
 
 fn verify_zip_sha256(
@@ -1019,18 +1147,129 @@ mod tests {
     }
 
     #[test]
-    fn nvafx_download_progress_is_indeterminate_without_remote_metadata() {
-        let start = download_progress_payload("common runtime", 0);
+    fn nvafx_download_progress_reports_known_asset_percentage() {
+        let total = 1_001_010_819;
+        let start = download_progress_payload("common runtime", 0, Some(total));
         assert_eq!(start["event"], "nvafx_download_progress");
         assert_eq!(start["label"], "common runtime");
         assert_eq!(start["received"], 0);
-        assert_eq!(start["total"], 0);
-        assert!(start["pct"].is_null());
+        assert_eq!(start["total"], total);
+        assert_eq!(start["pct"], 0);
 
-        let complete = download_progress_payload("common runtime", 42);
-        assert_eq!(complete["received"], 42);
-        assert_eq!(complete["total"], 0);
-        assert!(complete["pct"].is_null());
+        let halfway = download_progress_payload("common runtime", total / 2, Some(total));
+        assert_eq!(halfway["pct"], 49);
+
+        let complete = download_progress_payload("common runtime", total, Some(total));
+        assert_eq!(complete["received"], total);
+        assert_eq!(complete["total"], total);
+        assert_eq!(complete["pct"], 100);
+
+        let custom = download_progress_payload("custom asset", 12_345, None);
+        assert_eq!(custom["received"], 12_345);
+        assert_eq!(custom["total"], 0);
+        assert!(custom["pct"].is_null());
+    }
+
+    #[test]
+    fn official_nvafx_release_assets_have_pinned_sizes() {
+        assert_eq!(
+            expected_size_for_release_asset(DEFAULT_NVAFX_RELEASE_TAG, NVAFX_COMMON_RUNTIME_ASSET),
+            Some(1_001_010_819)
+        );
+        assert_eq!(
+            expected_size_for_release_asset(
+                DEFAULT_NVAFX_RELEASE_TAG,
+                "echoless-rtx-aec-model-win64-2.1.0-blackwell-aec48.zip"
+            ),
+            Some(48_927_764)
+        );
+        assert_eq!(
+            expected_size_for_release_asset("custom-tag", NVAFX_COMMON_RUNTIME_ASSET),
+            None
+        );
+    }
+
+    #[test]
+    fn local_progress_observer_reports_growing_partial_file() {
+        let path = env::temp_dir().join(format!(
+            "echoless-nvafx-progress-{}-{}.part",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, []).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let observer = spawn_download_progress_observer(
+            path.clone(),
+            "common runtime".to_string(),
+            Some(100),
+            Duration::from_millis(5),
+            Duration::from_millis(50),
+            move |label, received, total| {
+                let _ = tx.send(download_progress_payload(label, received, total));
+            },
+        );
+
+        let start = rx.recv_timeout(Duration::from_millis(250)).unwrap();
+        assert_eq!(start["received"], 0);
+        assert_eq!(start["pct"], 0);
+
+        std::fs::write(&path, vec![0u8; 50]).unwrap();
+        let halfway = loop {
+            let payload = rx.recv_timeout(Duration::from_millis(250)).unwrap();
+            if payload["received"] == 50 {
+                break payload;
+            }
+        };
+        assert_eq!(halfway["pct"], 50);
+
+        std::fs::write(&path, vec![0u8; 100]).unwrap();
+        let complete = loop {
+            let payload = rx.recv_timeout(Duration::from_millis(250)).unwrap();
+            if payload["received"] == 100 {
+                break payload;
+            }
+        };
+        assert_eq!(complete["pct"], 100);
+
+        observer.stop();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn progress_observer_stop_is_bounded_when_emission_stalls() {
+        let path = env::temp_dir().join(format!(
+            "echoless-nvafx-progress-stall-{}-{}.part",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, []).unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let observer = spawn_download_progress_observer(
+            path.clone(),
+            "common runtime".to_string(),
+            Some(100),
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+            move |_, _, _| {
+                let _ = entered_tx.send(());
+                let _ = release_rx.recv();
+            },
+        );
+        entered_rx.recv_timeout(Duration::from_millis(250)).unwrap();
+
+        let started = std::time::Instant::now();
+        observer.stop();
+        assert!(started.elapsed() < Duration::from_millis(250));
+
+        let _ = release_tx.send(());
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

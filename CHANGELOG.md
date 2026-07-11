@@ -96,6 +96,9 @@ UI cleanup.
   a byte-count readout when the server doesn't report a total size (so progress
   isn't blank), stderr context included on timeout, and no separate metadata
   request that can hold up an otherwise successful download.
+- RTX setup keeps reporting live download progress without making a second
+  metadata request. Default release assets use their pinned sizes for a
+  percentage; custom tags continue to show the growing downloaded byte count.
 - The Advanced page no longer shifts vertically when switching language. The
   section headers and page kicker had font-derived line heights, so CJK titles
   rendered a few pixels taller than Latin ones and nudged every row below them;

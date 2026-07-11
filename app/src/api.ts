@@ -268,7 +268,7 @@ export function onLocalvqeProgress(
 }
 
 // NVAFX 下载进度:CLI download-install 在 stderr 打的 nvafx_download_progress JSONL。
-// 生产下载不额外查询远端大小,total=0 / pct=null,前端显示阶段或已接收字节。
+// 默认固定资产使用内置 total/pct;自定义 tag 无内置大小时退化为已接收字节。
 export interface NvafxProgress {
   event?: string;
   label: string;
