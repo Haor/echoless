@@ -4,7 +4,7 @@ All notable changes to Echoless are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org).
 
-## [1.1.0] — 2026-07-09
+## [1.1.0] — 2026-07-11
 
 A stability and polish release on top of 1.0.0: adaptive handling of audio
 clock drift to kill periodic dropouts, a reliable delay probe, a real fix for
@@ -94,23 +94,24 @@ UI cleanup.
   left at 1.0.0 while the app shipped as 1.1.0).
 - NVAFX runtime download is more robust: a longer timeout for the ~1 GB fetch,
   a byte-count readout when the server doesn't report a total size (so progress
-  isn't blank), and stderr context included on timeout.
+  isn't blank), stderr context included on timeout, and no separate metadata
+  request that can hold up an otherwise successful download.
 - The Advanced page no longer shifts vertically when switching language. The
   section headers and page kicker had font-derived line heights, so CJK titles
   rendered a few pixels taller than Latin ones and nudged every row below them;
   the line boxes are now locked to a script-independent height.
-- Selecting the LocalVQE engine on the Engine page before a model is chosen no
-  longer pops a "config validate failed" error. Switching to an engine that
-  isn't ready yet now just moves the selection (and stops a running engine)
-  instead of trying to validate and start an incomplete configuration.
+- Selecting LocalVQE before a model is chosen, or NVAFX before its runtime is
+  installed, no longer changes the active engine or tries to start an incomplete
+  configuration. A running engine stops cleanly before the setup flow opens,
+  and choosing the already active LocalVQE model is a no-op.
 - After a successful NVAFX download-and-install, the ~1 GB download cache under
   the system temp directory is cleared automatically once the runtime and model
   are extracted and the doctor check passes. The cache is kept on failure so a
   retry doesn't re-download.
 - macOS system-audio capture now has a strict readiness handshake. The engine
   cannot report a healthy run until Process Tap produces a valid stream header,
-  and an unexpected helper exit stops the run instead of silently processing a
-  zero reference.
+  the header wait has a 25-second deadline, and an unexpected helper exit stops
+  the run instead of silently processing a zero reference.
 - Restarting the engine can no longer let a stale sidecar overwrite the active
   run, tray state, or frontend status.
 - Engine stop/restart and live controls stay responsive when sidecar status or
@@ -141,6 +142,22 @@ UI cleanup.
   so a descendant cannot keep the desktop backend waiting past its timeout.
 - Simultaneous app launches now always reserve distinct crash-forensics logs
   with independent size accounting.
+- NVAFX runtime installation and diagnostics recording now use their managed
+  Echoless data directories exclusively. Removed path overrides can no longer
+  point installation, recording, probe cleanup, or session deletion at an
+  arbitrary directory; delay-probe cleanup is limited to the exact session it
+  created.
+- Undersized AEC3 filter-tail settings now fail validation instead of reaching
+  an internal assertion, and all physical capture paths replace non-finite
+  device samples before they can poison a stateful processor.
+- Any CPAL stream failure now ends the current run and returns the GUI to OFF
+  with the failure reason instead of leaving a nonfunctional pipeline displayed
+  as active. RTX GPU discovery also has a bounded deadline, so a stuck
+  `nvidia-smi` cannot freeze setup indefinitely.
+- Cross-rate audio remains continuous at 44.1↔48 kHz: output rate matching now
+  combines its nominal conversion ratio with device-clock drift correction,
+  while input conversion preserves phase and buffers across variable callback
+  sizes instead of rebuilding its FFT layout and inserting silence.
 
 ### Security
 - Audio-device names are rendered strictly as text during the scramble
