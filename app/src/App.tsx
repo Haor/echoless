@@ -101,7 +101,7 @@ import {
   bypassToggleTarget,
   settleBypassObservation,
   clearBypassPending,
-  claimEngineKindChange,
+  routeEngineKindSelection,
   canChangePipeline,
   pipelineForEngineKind,
 } from "./engineLogic";
@@ -553,6 +553,7 @@ type EngineConfigDeps = {
   nvafx: NvafxDoctor | null;
   powerOnRef: MutableRefObject<boolean>;
   applyChangeRef: MutableRefObject<(next: Override) => void>;
+  stopForEngineSetupRef: MutableRefObject<() => void>;
   noteError: (err: string | null) => void;
   gotoView: (view: View) => void;
   hasRunControl: (cmd: string) => boolean;
@@ -566,6 +567,7 @@ function useEngineConfig({
   nvafx,
   powerOnRef,
   applyChangeRef,
+  stopForEngineSetupRef,
   noteError,
   gotoView,
   hasRunControl,
@@ -597,7 +599,9 @@ function useEngineConfig({
     // 否则在 AEC3 激活时点 LocalVQE 会因 params.model 为空而误判未就绪、每次跳引擎页。
     if (k === "localvqe")
       return Boolean(
-        k === kind ? params.model : paramsByKind.current["localvqe"]?.model,
+        k === kindRef.current
+          ? paramsRef.current.model
+          : paramsByKind.current["localvqe"]?.model,
       );
     if (k === "nvidia_afx_aec") return dev || Boolean(nvafx?.ok);
     return true;
@@ -605,22 +609,35 @@ function useEngineConfig({
 
   // 切 backend:优先恢复该引擎上次的参数(保住 LocalVQE 选过的模型),否则用 manifest 默认。
   function changeKind(k: string) {
-    if (!claimEngineKindChange(kindRef, k)) return;
-    paramsByKind.current[kind] = paramsRef.current; // 存下当前引擎的参数
-    const np =
-      paramsByKind.current[k] ??
-      defaultParams(processors.find((p) => p.kind === k));
-    const nextPipeline = pipelineForEngineKind(k, pipelineRef.current);
-    pipelineRef.current = nextPipeline;
-    updateEngine({ kind: k, params: np, pipeline: nextPipeline });
-    // 目标引擎未就绪(如首次选 LocalVQE 但还没选模型)→ 只切换选择,不去 validate/启动
-    // 一份缺 model 的配置(否则 config validate 会以退出码 1 抛「配置校验失败」弹窗)。
-    // 当前在运行则停掉旧引擎并置 OFF —— 待用户在引擎页配好目标引擎再开机。
-    if (!engineReady(k)) {
-      if (powerOnRef.current) stop();
-      return;
-    }
-    applyChangeRef.current({ kind: k, params: np, pipeline: nextPipeline });
+    routeEngineKindSelection(kindRef, k, engineReady(k), {
+      setup: (target) => {
+        stopForEngineSetupRef.current();
+        gotoView(target === "nvidia_afx_aec" ? "rtxsetup" : "engine");
+      },
+      apply: (previous, target) => {
+        paramsByKind.current[previous] = paramsRef.current;
+        const np =
+          paramsByKind.current[target] ??
+          defaultParams(processors.find((p) => p.kind === target));
+        paramsByKind.current[target] = np;
+        paramsRef.current = np;
+        const nextPipeline = pipelineForEngineKind(
+          target,
+          pipelineRef.current,
+        );
+        pipelineRef.current = nextPipeline;
+        updateEngine({
+          kind: target,
+          params: np,
+          pipeline: nextPipeline,
+        });
+        applyChangeRef.current({
+          kind: target,
+          params: np,
+          pipeline: nextPipeline,
+        });
+      },
+    });
   }
 
   // 改单个 chain 参数(NOISE / Advanced)。
@@ -806,6 +823,7 @@ type RunLifecycleDeps = {
   runControlsRef: MutableRefObject<Set<string> | null>;
   powerOnRef: MutableRefObject<boolean>;
   applyChangeRef: MutableRefObject<(next: Override) => void>;
+  stopForEngineSetupRef: MutableRefObject<() => void>;
   updateApp: Dispatch<Patch<AppState>>;
   noteError: (err: string | null) => void;
   gotoView: (view: View) => void;
@@ -832,6 +850,7 @@ function useRunLifecycle({
   runControlsRef,
   powerOnRef,
   applyChangeRef,
+  stopForEngineSetupRef,
   updateApp,
   noteError,
   gotoView,
@@ -844,6 +863,8 @@ function useRunLifecycle({
   // 子进程最近一条 stderr 日志(用于在非预期退出时报错)。
   const lastLogRef = useRef<string>("");
   const probeBorrowedRunRef = useRef(false);
+  const engineSetupStopPendingRef = useRef(false);
+  if (!powerOn) engineSetupStopPendingRef.current = false;
   const recRef = useRef(rec);
   recRef.current = rec;
   const diagSecondsRef = useRef(diagSeconds);
@@ -1086,6 +1107,13 @@ function useRunLifecycle({
     }
   }
 
+  stopForEngineSetupRef.current = () => {
+    if (!powerOnRef.current || engineSetupStopPendingRef.current) return;
+    engineSetupStopPendingRef.current = true;
+    powerOnRef.current = false;
+    void stop();
+  };
+
   // 延迟侦测专用:probe 需独占麦克风/输出 → AdvancedPage 在探测前后调这个停/起引擎。
   // 恢复时走 start(),会用上探测刚写入的 near_delay/initial_delay(refs 已同步)。
   async function setRunForProbe(on: boolean) {
@@ -1286,6 +1314,7 @@ function AppShell() {
   const powerOnRef = useRef(powerOn);
   powerOnRef.current = powerOn;
   const applyChangeRef = useRef<(next: Override) => void>(() => {});
+  const stopForEngineSetupRef = useRef<() => void>(() => {});
   const doctorRef = useRef(doctor);
   doctorRef.current = doctor;
   const { t } = useI18n();
@@ -1347,6 +1376,7 @@ function AppShell() {
     nvafx,
     powerOnRef,
     applyChangeRef,
+    stopForEngineSetupRef,
     noteError,
     gotoView,
     hasRunControl,
@@ -1379,6 +1409,7 @@ function AppShell() {
     runControlsRef,
     powerOnRef,
     applyChangeRef,
+    stopForEngineSetupRef,
     updateApp,
     noteError,
     gotoView,
@@ -1942,21 +1973,7 @@ function AppShell() {
                       supported && !rdy ? "unready" : ""
                     }`}
                     disabled={!supported || active}
-                    onClick={() => {
-                      // 未就绪(LocalVQE 无模型 / NVAFX doctor 未过):跳 Engine 配置,不生成非法配置。
-                      if (!rdy) {
-                        if (!claimEngineKindChange(kindRef, m.kind)) return;
-                        const nextPipeline = pipelineForEngineKind(
-                          m.kind,
-                          pipelineRef.current,
-                        );
-                        pipelineRef.current = nextPipeline;
-                        updateEngine({ kind: m.kind, pipeline: nextPipeline });
-                        gotoView("engine");
-                      } else {
-                        changeKind(m.kind);
-                      }
-                    }}
+                    onClick={() => changeKind(m.kind)}
                   >
                     {m.label}
                   </button>

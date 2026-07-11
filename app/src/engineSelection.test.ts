@@ -36,15 +36,25 @@ describe("claimEngineKindChange", () => {
 });
 
 describe("current engine UI lock wiring", () => {
-  it("guards changeKind before any engine side effect and locks AppShell segments", () => {
-    expect(appSource).toMatch(
-      /function changeKind\(k: string\) \{\s*if \(!claimEngineKindChange\(kindRef, k\)\) return;/,
+  it("routes unready selections through the explicit setup stop without claiming kind", () => {
+    expect(appSource).toContain(
+      "routeEngineKindSelection(kindRef, k, engineReady(k)",
     );
+    expect(appSource).toContain("stopForEngineSetupRef.current();");
+    expect(appSource).toContain(
+      "paramsByKind.current[previous] = paramsRef.current;",
+    );
+    expect(appSource).toContain("paramsByKind.current[target] = np;");
+    expect(appSource).toMatch(
+      /stopForEngineSetupRef\.current = \(\) => \{\s*if \(!powerOnRef\.current \|\| engineSetupStopPendingRef\.current\) return;\s*engineSetupStopPendingRef\.current = true;\s*powerOnRef\.current = false;\s*void stop\(\);/,
+    );
+    expect(appSource).toContain("onClick={() => changeKind(m.kind)}");
+    expect(appSource).not.toContain("if (powerOnRef.current) stop();");
+  });
+
+  it("keeps active engine segments locked", () => {
     expect(appSource).toContain("const active = kind === m.kind;");
     expect(appSource).toContain("disabled={!supported || active}");
-    expect(appSource).toContain(
-      "if (!claimEngineKindChange(kindRef, m.kind)) return;",
-    );
   });
 
   it("locks the active AEC3 and LocalVQE cards without removing active styling", () => {

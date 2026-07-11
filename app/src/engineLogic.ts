@@ -23,6 +23,29 @@ export function claimEngineKindChange(
   return true;
 }
 
+export type EngineKindSelectionOutcome = "noop" | "setup" | "apply";
+
+export function routeEngineKindSelection(
+  current: { current: string },
+  next: string,
+  ready: boolean,
+  handlers: {
+    setup: (next: string) => void;
+    apply: (previous: string, next: string) => void;
+  },
+): EngineKindSelectionOutcome {
+  if (current.current === next) return "noop";
+  if (!ready) {
+    handlers.setup(next);
+    return "setup";
+  }
+
+  const previous = current.current;
+  if (!claimEngineKindChange(current, next)) return "noop";
+  handlers.apply(previous, next);
+  return "apply";
+}
+
 export function canChangePipeline(
   kind: string,
   patch: Partial<PipelineCfg>,

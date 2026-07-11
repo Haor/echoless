@@ -85,24 +85,19 @@ describe("NVAFX Advanced pipeline lock", () => {
     );
   });
 
-  it("uses one normalized pipeline for both NVAFX selection paths", () => {
-    expect(appSource).toContain(
-      "const nextPipeline = pipelineForEngineKind(k, pipelineRef.current);",
-    );
-    expect(appSource).toContain(
-      "updateEngine({ kind: k, params: np, pipeline: nextPipeline });",
-    );
-    expect(appSource).toContain(
-      "applyChangeRef.current({ kind: k, params: np, pipeline: nextPipeline });",
+  it("normalizes ready NVAFX selection in the unified engine transaction", () => {
+    expect(appSource).toMatch(
+      /const nextPipeline = pipelineForEngineKind\(\s*target,\s*pipelineRef\.current,\s*\);/,
     );
     expect(appSource).toMatch(
-      /const nextPipeline = pipelineForEngineKind\(\s*m\.kind,\s*pipelineRef\.current,\s*\);/,
+      /updateEngine\(\{\s*kind: target,\s*params: np,\s*pipeline: nextPipeline,\s*\}\);/,
     );
-    expect(appSource).toContain(
-      "updateEngine({ kind: m.kind, pipeline: nextPipeline });",
+    expect(appSource).toMatch(
+      /applyChangeRef\.current\(\{\s*kind: target,\s*params: np,\s*pipeline: nextPipeline,\s*\}\);/,
     );
+    expect(appSource).toContain("onClick={() => changeKind(m.kind)}");
     expect(appSource.match(/pipelineRef\.current = nextPipeline;/g)).toHaveLength(
-      2,
+      1,
     );
   });
 
