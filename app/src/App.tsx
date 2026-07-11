@@ -78,7 +78,7 @@ import {
   observeRunStart,
   type RunGeneration,
 } from "./runGeneration";
-import { controlErrorMessage } from "./runEventDisplay";
+import { controlErrorMessage, streamErrorMessage } from "./runEventDisplay";
 import {
   RuntimeStatusStrip,
   RuntimeSubline,
@@ -938,6 +938,25 @@ function useRunLifecycle({
               }));
             }
             noteError(controlErrorMessage(ev));
+            return;
+          }
+          if (ev.type === "stream_error") {
+            const message = streamErrorMessage(ev);
+            lastLogRef.current = message;
+            if (!ev.fatal) {
+              noteError(message);
+              return;
+            }
+            powerOnRef.current = false;
+            telRef.current.on = false;
+            resetRuntimeLive();
+            updateApp({
+              powerOn: false,
+              bypassed: false,
+              bypassPending: null,
+              io: null,
+              err: message,
+            });
             return;
           }
           // 实时音量变更回执:值由前端驱动,无需处理(否则会被当成 status 读到一堆 undefined,

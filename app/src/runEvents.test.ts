@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { controlErrorMessage } from "./runEventDisplay";
+import appSource from "./App.tsx?raw";
+import { controlErrorMessage, streamErrorMessage } from "./runEventDisplay";
 import type { RunEvent, RuntimeStatus } from "./types";
 
 const baseStatus: RuntimeStatus = {
@@ -114,5 +115,22 @@ describe("run event contract", () => {
     } satisfies RunEvent;
 
     expect(controlErrorMessage(event)).toBe("runtime control: invalid JSON");
+  });
+
+  it("shows fatal stream errors and immediately converges the GUI to OFF", () => {
+    const event = {
+      type: "stream_error",
+      stream: "output",
+      message: "A backend-specific error has occurred: injected",
+      fatal: true,
+      run_id: 1,
+    } satisfies RunEvent;
+
+    expect(streamErrorMessage(event)).toBe(
+      "output stream error: A backend-specific error has occurred: injected",
+    );
+    expect(appSource).toMatch(
+      /if \(ev\.type === "stream_error"\) \{[\s\S]*?powerOnRef\.current = false;[\s\S]*?updateApp\(\{[\s\S]*?powerOn: false,[\s\S]*?err: message,[\s\S]*?\}\);/,
+    );
   });
 });

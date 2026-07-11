@@ -858,32 +858,29 @@ macro_rules! dispatch_format {
     };
 }
 
-/// 流错误回调(审计 B-03):结构化上报 + 致命错误(设备消失)置停机。
-/// 此前只 eprintln,设备拔出后进程带着死流装活:输出恒静音、GUI 无感知。
-/// 停机会让 GUI 收到非 intentional 的 exit 事件并给出明确提示。
+/// CPAL error callback 表示对应 worker 已不可继续信任。统一结构化上报并停掉
+/// 整个 run，避免剩余半条管线继续显示 ON。
 fn stream_error_handler(
     label: &'static str,
     running: Arc<AtomicBool>,
     status_json: bool,
 ) -> impl FnMut(cpal::StreamError) {
     move |err| {
-        let fatal = matches!(err, cpal::StreamError::DeviceNotAvailable);
+        running.store(false, Ordering::SeqCst);
         eprintln!("{label} stream error: {err}");
         if status_json {
-            emit::emit_stdout_line(
-                json!({
-                    "type": "stream_error",
-                    "stream": label,
-                    "message": err.to_string(),
-                    "fatal": fatal,
-                })
-                .to_string(),
-            );
-        }
-        if fatal {
-            running.store(false, Ordering::SeqCst);
+            emit::emit_stdout_line(stream_error_payload(label, &err).to_string());
         }
     }
+}
+
+fn stream_error_payload(label: &str, err: &cpal::StreamError) -> serde_json::Value {
+    json!({
+        "type": "stream_error",
+        "stream": label,
+        "message": err.to_string(),
+        "fatal": true,
+    })
 }
 
 fn build_input_stream<P, E>(
@@ -1290,7 +1287,9 @@ mod tests {
     use std::cell::Cell;
     use std::sync::atomic::AtomicUsize;
 
-    use cpal::{DeviceDescriptionBuilder, DeviceType, InterfaceType};
+    use cpal::{
+        BackendSpecificError, DeviceDescriptionBuilder, DeviceType, InterfaceType, StreamError,
+    };
     use echoless_processors::{aec3::Aec3Engine, EchoProcessor, IoSpec, ProcessorStats};
     use ringbuf::traits::Observer;
 
@@ -1750,6 +1749,33 @@ mod tests {
         let mut stereo = [0.0f32; 2];
         stereo_cons.pop_slice(&mut stereo);
         assert_eq!(stereo, [0.25, -0.75]);
+    }
+
+    #[test]
+    fn every_cpal_stream_error_is_fatal_and_stops_the_run() {
+        let errors = [
+            StreamError::DeviceNotAvailable,
+            StreamError::StreamInvalidated,
+            StreamError::BufferUnderrun,
+            StreamError::BackendSpecific {
+                err: BackendSpecificError {
+                    description: "injected WASAPI failure".into(),
+                },
+            },
+        ];
+
+        for error in errors {
+            let payload = stream_error_payload("output", &error);
+            assert_eq!(payload["type"], "stream_error");
+            assert_eq!(payload["stream"], "output");
+            assert_eq!(payload["message"], error.to_string());
+            assert_eq!(payload["fatal"], true);
+
+            let running = Arc::new(AtomicBool::new(true));
+            let mut handler = stream_error_handler("output", running.clone(), false);
+            handler(error);
+            assert!(!running.load(Ordering::SeqCst));
+        }
     }
 
     #[test]
