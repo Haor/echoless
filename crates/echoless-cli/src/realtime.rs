@@ -987,7 +987,7 @@ fn push_input_frame<T, P>(
                 frame
                     .get(channel)
                     .copied()
-                    .map(f32::from_sample)
+                    .map(convert_input_sample)
                     .unwrap_or(0.0)
             }) {
                 drops.fetch_add(1, Ordering::Relaxed);
@@ -1005,7 +1005,13 @@ where
         InputChannelMode::MonoDownmix => out.push(downmix_frame(frame)),
         InputChannelMode::PreserveFirst(channels) => {
             for ch in 0..channels {
-                out.push(frame.get(ch).copied().map(f32::from_sample).unwrap_or(0.0));
+                out.push(
+                    frame
+                        .get(ch)
+                        .copied()
+                        .map(convert_input_sample)
+                        .unwrap_or(0.0),
+                );
             }
         }
     }
@@ -1016,11 +1022,28 @@ where
     T: Copy,
     f32: FromSample<T>,
 {
-    let sum = frame.iter().copied().map(f32::from_sample).sum::<f32>();
+    let sum = frame.iter().copied().map(convert_input_sample).sum::<f32>();
     if frame.is_empty() {
         0.0
     } else {
         sum / frame.len() as f32
+    }
+}
+
+#[inline]
+fn convert_input_sample<T>(sample: T) -> f32
+where
+    f32: FromSample<T>,
+{
+    sanitize_input_sample(f32::from_sample(sample))
+}
+
+#[inline]
+fn sanitize_input_sample(sample: f32) -> f32 {
+    if sample.is_finite() {
+        sample
+    } else {
+        0.0
     }
 }
 
@@ -1268,7 +1291,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use cpal::{DeviceDescriptionBuilder, DeviceType, InterfaceType};
-    use echoless_processors::{EchoProcessor, IoSpec, ProcessorStats};
+    use echoless_processors::{aec3::Aec3Engine, EchoProcessor, IoSpec, ProcessorStats};
     use ringbuf::traits::Observer;
 
     struct CountingAllocator;
@@ -1727,6 +1750,111 @@ mod tests {
         let mut stereo = [0.0f32; 2];
         stereo_cons.pop_slice(&mut stereo);
         assert_eq!(stereo, [0.25, -0.75]);
+    }
+
+    #[test]
+    fn input_paths_scrub_non_finite_samples_before_ring() {
+        let drops = AtomicU64::new(0);
+        let (mut mono_prod, mut mono_cons) = HeapRb::<f32>::new(2).split();
+        push_input_frame(
+            &[f32::NAN, f32::INFINITY],
+            InputChannelMode::MonoDownmix,
+            &mut mono_prod,
+            &drops,
+        );
+        assert_eq!(mono_cons.try_pop(), Some(0.0));
+
+        let (mut stereo_prod, mut stereo_cons) = HeapRb::<f32>::new(2).split();
+        push_input_frame(
+            &[f32::NEG_INFINITY, f32::NAN],
+            InputChannelMode::PreserveFirst(2),
+            &mut stereo_prod,
+            &drops,
+        );
+        let mut stereo = [1.0f32; 2];
+        assert_eq!(stereo_cons.pop_slice(&mut stereo), stereo.len());
+        assert_eq!(stereo, [0.0, 0.0]);
+
+        for channel_mode in [
+            InputChannelMode::MonoDownmix,
+            InputChannelMode::PreserveFirst(2),
+        ] {
+            let channels = channel_mode.output_channels();
+            let mut source = vec![0.25f32; 441 * 2];
+            source[0] = f32::NAN;
+            source[1] = f32::INFINITY;
+            source[2] = f32::NEG_INFINITY;
+
+            let mut mapped = Vec::with_capacity(441 * channels);
+            for frame in source.chunks_exact(2) {
+                map_input_frame(frame, channel_mode, &mut mapped);
+            }
+            assert!(mapped.iter().all(|sample| sample.is_finite()));
+
+            let mut resampler = InterleavedInputResampler::new(44_100, 48_000, channels);
+            let resampled = resampler.process(&mapped).to_vec();
+            assert!(!resampled.is_empty());
+
+            let (mut producer, mut consumer) =
+                HeapRb::<f32>::new(resampled.len() + channels).split();
+            push_interleaved_frames(&mut producer, &resampled, channels, &AtomicU64::new(0));
+            let mut ring_samples = vec![0.0; resampled.len()];
+            assert_eq!(consumer.pop_slice(&mut ring_samples), ring_samples.len());
+            assert!(ring_samples.iter().all(|sample| sample.is_finite()));
+        }
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn device_scrub_prevents_single_nonfinite_sample_from_poisoning_aec3() {
+        const FRAMES: usize = 480;
+        const BAD_BLOCK: usize = 20;
+
+        let drops = AtomicU64::new(0);
+        let (mut near_prod, mut near_cons) = HeapRb::<f32>::new(FRAMES).split();
+        let (mut far_prod, mut far_cons) = HeapRb::<f32>::new(FRAMES).split();
+        let mut processor = Aec3Engine::new();
+        let mut near = vec![0.0f32; FRAMES];
+        let mut far = vec![0.0f32; FRAMES];
+        let mut out = vec![0.0f32; FRAMES];
+
+        for block in 0..80 {
+            for sample_index in 0..FRAMES {
+                let phase = (block * FRAMES + sample_index) as f32 * 440.0 * std::f32::consts::TAU
+                    / 48_000.0;
+                let sample = 0.25 * phase.sin();
+                let raw_near = if block == BAD_BLOCK && sample_index == 0 {
+                    f32::NAN
+                } else {
+                    sample
+                };
+                let raw_far = if block == BAD_BLOCK && sample_index == 1 {
+                    f32::INFINITY
+                } else {
+                    sample
+                };
+                push_input_frame(
+                    &[raw_near],
+                    InputChannelMode::MonoDownmix,
+                    &mut near_prod,
+                    &drops,
+                );
+                push_input_frame(
+                    &[raw_far],
+                    InputChannelMode::MonoDownmix,
+                    &mut far_prod,
+                    &drops,
+                );
+            }
+            assert_eq!(near_cons.pop_slice(&mut near), FRAMES);
+            assert_eq!(far_cons.pop_slice(&mut far), FRAMES);
+            processor.process(&near, &far, &mut out, FRAMES as u32);
+            assert!(
+                out.iter().all(|sample| sample.is_finite()),
+                "AEC3 output became non-finite after block {block}"
+            );
+        }
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
     }
 
     #[test]

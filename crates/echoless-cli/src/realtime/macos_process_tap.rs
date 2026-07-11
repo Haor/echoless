@@ -325,9 +325,9 @@ where
                 let complete = pending.len() / frame_bytes * frame_bytes;
                 samples.clear();
                 for chunk in pending[..complete].chunks_exact(4) {
-                    samples.push(f32::from_bits(u32::from_le_bytes([
-                        chunk[0], chunk[1], chunk[2], chunk[3],
-                    ])));
+                    samples.push(super::sanitize_input_sample(f32::from_bits(
+                        u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+                    )));
                 }
                 if complete > 0 {
                     pending.drain(..complete);
@@ -565,6 +565,34 @@ mod tests {
         assert!(matches!(exit, ReaderExit::Failed(message) if message.contains("EOF")));
         let out: Vec<f32> = std::iter::from_fn(|| consumer.try_pop()).collect();
         assert_eq!(out, vec![0.5, 0.375]);
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn pcm_reader_scrubs_non_finite_samples_before_ring() {
+        let mut bytes = stream_header(48_000, 1);
+        for sample in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.25] {
+            bytes.extend_from_slice(&sample.to_le_bytes());
+        }
+
+        let (producer, mut consumer) = HeapRb::<f32>::new(8).split();
+        let drops = Arc::new(AtomicU64::new(0));
+        let (ready_tx, ready_rx) = sync_channel(1);
+        let exit = read_pcm_stream(
+            std::io::Cursor::new(bytes),
+            1,
+            48_000,
+            producer,
+            drops.clone(),
+            Arc::new(AtomicBool::new(true)),
+            ready_tx,
+        );
+
+        assert_eq!(ready_rx.recv().unwrap(), Ok(()));
+        assert!(matches!(exit, ReaderExit::Failed(message) if message.contains("EOF")));
+        let out: Vec<f32> = std::iter::from_fn(|| consumer.try_pop()).collect();
+        assert_eq!(out, vec![0.0, 0.0, 0.0, 0.25]);
+        assert!(out.iter().all(|sample| sample.is_finite()));
         assert_eq!(drops.load(Ordering::Relaxed), 0);
     }
 
