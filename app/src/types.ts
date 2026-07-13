@@ -238,11 +238,6 @@ export interface InitialDelayChangedEvent {
   type: "initial_delay_changed";
   initial_delay_ms: number;
 }
-export interface Aec3NsChangedEvent {
-  type: "aec3_ns_changed";
-  ns: boolean;
-  ns_level: string;
-}
 export interface Aec3AgcChangedEvent {
   type: "aec3_agc_changed";
   agc: boolean;
@@ -296,7 +291,6 @@ export type RunEventPayload =
   | OutputLevelChangedEvent
   | NearDelayChangedEvent
   | InitialDelayChangedEvent
-  | Aec3NsChangedEvent
   | Aec3AgcChangedEvent
   | LocalvqeNoiseGateChangedEvent
   | BypassChangedEvent;

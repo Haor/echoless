@@ -52,12 +52,11 @@ describe("run event contract", () => {
       "output_level_changed",
       "near_delay_changed",
       "initial_delay_changed",
-      "aec3_ns_changed",
       "aec3_agc_changed",
       "localvqe_noise_gate_changed",
       "bypass_changed",
     ];
-    expect(new Set(discriminators).size).toBe(17);
+    expect(new Set(discriminators).size).toBe(16);
   });
 
   it("accepts newly modeled failures, skew events, and status fields", () => {

@@ -3,7 +3,6 @@ import {
   REQUIRED_RUN_CONTROLS,
   RUN_CONTROL_COMMANDS,
   setAec3AgcControlLine,
-  setAec3NsControlLine,
   setBypassControlLine,
   setInitialDelayMsControlLine,
   setLocalvqeNoiseGateControlLine,
@@ -43,11 +42,6 @@ describe("runtime control JSON contract", () => {
     expect(parse(setInitialDelayMsControlLine(8))).toEqual({
       cmd: "set_initial_delay_ms",
       initial_delay_ms: 8,
-    });
-    expect(parse(setAec3NsControlLine(true, "high"))).toEqual({
-      cmd: "set_aec3_ns",
-      ns: true,
-      ns_level: "high",
     });
     expect(parse(setAec3AgcControlLine(false))).toEqual({
       cmd: "set_aec3_agc",

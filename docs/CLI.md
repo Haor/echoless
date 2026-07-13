@@ -64,7 +64,6 @@ While `run` is active, write one JSON object per line to stdin:
 | `set_near_delay_ms` | `{"cmd":"set_near_delay_ms","near_delay_ms":25}` | live near/far alignment |
 | `set_bypass` | `{"cmd":"set_bypass","enabled":true}` | skip the engine, keep it warm (15 ms crossfade) |
 | `set_initial_delay_ms` | `{"cmd":"set_initial_delay_ms","initial_delay_ms":8}` | AEC3 initial delay hint |
-| `set_aec3_ns` | `{"cmd":"set_aec3_ns","ns":true,"ns_level":"high"}` | AEC3 noise suppression |
 | `set_aec3_agc` | `{"cmd":"set_aec3_agc","agc":false}` | AEC3 AGC |
 | `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","noise_gate":true,"noise_gate_threshold_dbfs":-45}` | LocalVQE output gate |
 | `start_diagnostics` | `{"cmd":"start_diagnostics","max_seconds":30}` | record mic/ref/out WAVs in the managed diagnostics directory |

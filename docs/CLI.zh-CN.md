@@ -63,7 +63,6 @@ echoless run --config my.toml --status-json
 | `set_near_delay_ms` | `{"cmd":"set_near_delay_ms","near_delay_ms":25}` | 实时 near/far 对齐 |
 | `set_bypass` | `{"cmd":"set_bypass","enabled":true}` | 跳过引擎但保持其热态(15 ms 交叉淡化) |
 | `set_initial_delay_ms` | `{"cmd":"set_initial_delay_ms","initial_delay_ms":8}` | AEC3 初始延迟提示 |
-| `set_aec3_ns` | `{"cmd":"set_aec3_ns","ns":true,"ns_level":"high"}` | AEC3 噪声抑制 |
 | `set_aec3_agc` | `{"cmd":"set_aec3_agc","agc":false}` | AEC3 AGC |
 | `set_localvqe_noise_gate` | `{"cmd":"set_localvqe_noise_gate","noise_gate":true,"noise_gate_threshold_dbfs":-45}` | LocalVQE 输出门限 |
 | `start_diagnostics` | `{"cmd":"start_diagnostics","max_seconds":30}` | 在固定诊断目录录制 mic/ref/out WAV |

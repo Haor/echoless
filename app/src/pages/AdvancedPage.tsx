@@ -33,13 +33,6 @@ interface Props {
   onAutoStart: (enabled: boolean) => void;
 }
 
-// 蜂鸣节奏(对齐 CLI:startup 4s + pre-roll 0.5s,每声 70ms / 间隔 650ms ≈ 720ms,共 12 声)。
-// 段按钮定宽 74px(v9.2 对齐轴),枚举文案超宽会溢出 → 长值用缩写显示(提交值不变)。
-const SELECT_LABELS: Record<string, string> = {
-  moderate: "mid",
-  veryhigh: "max",
-};
-
 // C3/C5 减参:专家级/与引擎页重复的字段不在高级页暴露 ——
 //   LocalVQE:model(引擎页模型清单管理)、library/backend/device(auto 即可);
 //   NVAFX:model_path/use_default_gpu/disable_cuda_graph(专家字段,走配置文件)。
@@ -76,10 +69,6 @@ const DESC: Record<string, { en: string; zh: string }> = {
   reference_channels: {
     en: "Whether the system-audio reference enters the AEC as mono or stereo. Mono is the stable baseline.",
     zh: "系统声音(参考)送入 AEC 时按 mono 还是 stereo。Mono 为稳定基线。",
-  },
-  ns_level: {
-    en: "Noise-suppression strength. Higher suppresses more background noise.",
-    zh: "降噪强度。越高压掉的背景噪声越多。",
   },
   agc: {
     en: "Automatic Gain Control — auto-levels mic volume. Off by default (it can cause volume pumping).",
@@ -442,11 +431,10 @@ export function AdvancedPage({
 
   const hidden = HIDDEN_PARAMS[kind];
 
-  // 隐藏未满足 requires 的参数(如 ns 关闭时的 ns_level),而非置灰。
+  // 隐藏未满足 requires 的参数，而非置灰。
   const backendParams = Object.entries(proc?.params ?? {}).filter(
     ([k, spec]) =>
       k !== "reference_channels" &&
-      k !== "ns" &&
       !hidden?.has(k) &&
       reqMet(spec),
   );
@@ -471,7 +459,7 @@ export function AdvancedPage({
           value={String(val ?? spec.default ?? "")}
           options={(spec.values ?? []).map((v) => ({
             value: v,
-            label: SELECT_LABELS[v] ?? v,
+            label: v,
           }))}
           onChange={(v) => onParam(key, v)}
         />

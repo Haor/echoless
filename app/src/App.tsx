@@ -1050,7 +1050,7 @@ function useRunLifecycle({
           if (ev.type === "initial_delay_changed") {
             return;
           }
-          if (ev.type === "aec3_ns_changed" || ev.type === "aec3_agc_changed") {
+          if (ev.type === "aec3_agc_changed") {
             return;
           }
           if (ev.type === "localvqe_noise_gate_changed") {

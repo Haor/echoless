@@ -14,7 +14,6 @@ import type {
 } from "./types";
 import {
   setAec3AgcControlLine,
-  setAec3NsControlLine,
   setBypassControlLine,
   setInitialDelayMsControlLine,
   setLocalvqeNoiseGateControlLine,
@@ -210,9 +209,6 @@ export function setNearDelayMs(nearDelayMs: number): Promise<void> {
 }
 export function setInitialDelayMs(initialDelayMs: number): Promise<void> {
   return sendRunControl(setInitialDelayMsControlLine(initialDelayMs));
-}
-export function setAec3Ns(ns: boolean, nsLevel: string): Promise<void> {
-  return sendRunControl(setAec3NsControlLine(ns, nsLevel));
 }
 export function setAec3Agc(agc: boolean): Promise<void> {
   return sendRunControl(setAec3AgcControlLine(agc));

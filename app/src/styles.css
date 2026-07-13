@@ -1981,8 +1981,7 @@ hr.hair {
   color: var(--t-faint);
   opacity: 0.45;
 }
-/* v9.2:高级页双选段定宽 74px —— 各行右对齐 + 等宽段 → 中缝落在同一竖轴(用户画线)。
-   段内文案必须 ≤6 字符(如 ns_level 用 mod/v.high 缩写),超长会溢出 */
+/* v9.2:高级页双选段定宽 74px —— 各行右对齐 + 等宽段 → 中缝落在同一竖轴(用户画线)。 */
 .arow .segg .b {
   width: 74px;
   padding-left: 0;

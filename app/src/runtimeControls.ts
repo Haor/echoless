@@ -5,7 +5,6 @@ export const RUN_CONTROL_COMMANDS = {
   setBypass: "set_bypass",
   setNearDelayMs: "set_near_delay_ms",
   setInitialDelayMs: "set_initial_delay_ms",
-  setAec3Ns: "set_aec3_ns",
   setAec3Agc: "set_aec3_agc",
   setLocalvqeNoiseGate: "set_localvqe_noise_gate",
 } as const;
@@ -16,7 +15,6 @@ export const REQUIRED_RUN_CONTROLS = [
   RUN_CONTROL_COMMANDS.setOutputLevel,
   RUN_CONTROL_COMMANDS.setNearDelayMs,
   RUN_CONTROL_COMMANDS.setInitialDelayMs,
-  RUN_CONTROL_COMMANDS.setAec3Ns,
   RUN_CONTROL_COMMANDS.setAec3Agc,
 ] as const;
 
@@ -33,7 +31,6 @@ type RunControlPayload =
       cmd: typeof RUN_CONTROL_COMMANDS.setInitialDelayMs;
       initial_delay_ms: number;
     }
-  | { cmd: typeof RUN_CONTROL_COMMANDS.setAec3Ns; ns: boolean; ns_level: string }
   | { cmd: typeof RUN_CONTROL_COMMANDS.setAec3Agc; agc: boolean }
   | {
       cmd: typeof RUN_CONTROL_COMMANDS.setLocalvqeNoiseGate;
@@ -77,14 +74,6 @@ export function setInitialDelayMsControlLine(initialDelayMs: number): string {
   return runtimeControlLine({
     cmd: RUN_CONTROL_COMMANDS.setInitialDelayMs,
     initial_delay_ms: initialDelayMs,
-  });
-}
-
-export function setAec3NsControlLine(ns: boolean, nsLevel: string): string {
-  return runtimeControlLine({
-    cmd: RUN_CONTROL_COMMANDS.setAec3Ns,
-    ns,
-    ns_level: nsLevel,
   });
 }
 
