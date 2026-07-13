@@ -7,7 +7,15 @@ use echoless_core::{
     MAX_OUTPUT_LEVEL, MIN_OUTPUT_LEVEL, OUTPUT_LEVEL_CURVE_EXPONENT, OUTPUT_LEVEL_MAX_BOOST_DB,
     OUTPUT_LEVEL_MAX_GAIN, UNITY_OUTPUT_LEVEL,
 };
-use echoless_processors::{aec3::MIN_TAIL_MS, registry};
+use echoless_processors::{
+    aec3::MIN_TAIL_MS,
+    noise_suppression::{
+        LocalVqeModelCapability, ALL_NOISE_MODES, LOCALVQE_V12_MODEL, LOCALVQE_V13_MODEL,
+        LOCALVQE_V14_MODEL, OFF_ONLY_NOISE_MODES, RNNOISE_MODE, RNNOISE_PROCESSOR_KIND,
+        WEBRTC_MODE, WEBRTC_PROCESSOR_KIND,
+    },
+    registry,
+};
 
 pub(crate) fn cmd_processors(args: ProcessorsArgs) -> Result<()> {
     if args.json {
@@ -24,6 +32,47 @@ pub(crate) fn cmd_processors(args: ProcessorsArgs) -> Result<()> {
 
 fn processor_manifest() -> serde_json::Value {
     json!({
+        "noise_suppression": {
+            "modes": [
+                {
+                    "id": WEBRTC_MODE,
+                    "processor_kind": WEBRTC_PROCESSOR_KIND
+                },
+                {
+                    "id": RNNOISE_MODE,
+                    "processor_kind": RNNOISE_PROCESSOR_KIND
+                },
+                {
+                    "id": "off",
+                    "processor_kind": null
+                }
+            ],
+            "engine_defaults": {
+                "aec3": ALL_NOISE_MODES,
+                "nvidia_afx_aec": ALL_NOISE_MODES
+            },
+            "localvqe_models": [
+                {
+                    "file": LOCALVQE_V12_MODEL,
+                    "version": "v1.2",
+                    "capability": LocalVqeModelCapability::BuiltInNoiseSuppression.as_str(),
+                    "allowed_modes": OFF_ONLY_NOISE_MODES
+                },
+                {
+                    "file": LOCALVQE_V13_MODEL,
+                    "version": "v1.3",
+                    "capability": LocalVqeModelCapability::BuiltInNoiseSuppression.as_str(),
+                    "allowed_modes": OFF_ONLY_NOISE_MODES
+                },
+                {
+                    "file": LOCALVQE_V14_MODEL,
+                    "version": "v1.4",
+                    "capability": LocalVqeModelCapability::PureAec.as_str(),
+                    "allowed_modes": ALL_NOISE_MODES
+                }
+            ],
+            "unknown_localvqe_allowed_modes": OFF_ONLY_NOISE_MODES
+        },
         "pipeline": {
             "params": {
                 "sample_rate": { "type": "number", "default": 48000 },
@@ -196,6 +245,19 @@ mod tests {
     fn processor_manifest_exposes_frontend_contract() {
         let manifest = processor_manifest();
         let processors = manifest["processors"].as_array().unwrap();
+
+        assert_eq!(
+            manifest["noise_suppression"]["engine_defaults"]["aec3"],
+            json!(["webrtc", "rnnoise", "off"])
+        );
+        assert_eq!(
+            manifest["noise_suppression"]["localvqe_models"][0]["allowed_modes"],
+            json!(["off"])
+        );
+        assert_eq!(
+            manifest["noise_suppression"]["localvqe_models"][2]["capability"],
+            "pure_aec"
+        );
 
         let aec3 = processors
             .iter()

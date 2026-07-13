@@ -310,6 +310,12 @@ pub(crate) fn validate_pipeline_config(cfg: &PipelineConfig) -> Vec<ConfigValida
     for (index, node) in cfg.chain.iter().enumerate() {
         validate_chain_node(cfg, index, node, &mut errors);
     }
+    for error in echoless_processors::validate_noise_suppression_chain(&cfg.chain) {
+        errors.push(ConfigValidationError::new(
+            format!("chain[{}].kind", error.node_index),
+            error.message,
+        ));
+    }
     errors
 }
 
@@ -683,6 +689,42 @@ mod tests {
         let errors = validate_pipeline_config(&cfg);
 
         assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn config_validation_enforces_shared_external_ns_compatibility() {
+        use echoless_processors::noise_suppression::{LOCALVQE_V13_MODEL, LOCALVQE_V14_MODEL};
+
+        let localvqe = |model: &str| {
+            let mut params = toml::Table::new();
+            params.insert("model".into(), toml::Value::String(model.into()));
+            NodeConfig {
+                kind: "localvqe".into(),
+                params,
+            }
+        };
+        let ns = NodeConfig {
+            kind: "webrtc_ns".into(),
+            params: toml::Table::new(),
+        };
+
+        let valid = PipelineConfig {
+            chain: vec![localvqe(LOCALVQE_V14_MODEL), ns.clone()],
+            ..PipelineConfig::default()
+        };
+        assert!(validate_pipeline_config(&valid).is_empty());
+
+        let invalid = PipelineConfig {
+            chain: vec![localvqe(LOCALVQE_V13_MODEL), ns],
+            ..PipelineConfig::default()
+        };
+        let errors = validate_pipeline_config(&invalid);
+        assert!(errors.iter().any(|error| {
+            error.path == "chain[1].kind"
+                && error
+                    .message
+                    .contains("does not allow external noise suppression")
+        }));
     }
 
     #[test]

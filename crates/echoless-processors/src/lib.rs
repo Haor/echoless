@@ -10,12 +10,14 @@ pub mod aec3;
 pub mod chain;
 mod dsp;
 pub mod localvqe;
+pub mod noise_suppression;
 pub mod nvafx;
 pub mod passthrough;
 pub mod registry;
 pub mod webrtc_ns;
 
 pub use chain::{chain_from_nodes, ProcessorChain};
+pub use noise_suppression::{validate_noise_suppression_chain, NoiseChainError};
 
 /// 处理器的「天然处理域」。`ProcessorChain` 在节点边界按它自动重采样 + 声道适配。
 /// 例:Aec3Engine = {48000, near 1ch, far 2ch};LocalVqe = {16000, near 1ch, far 1ch}。

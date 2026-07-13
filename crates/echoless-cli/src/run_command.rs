@@ -80,22 +80,17 @@ fn apply_run_overrides(mut cfg: PipelineConfig, a: &RunArgs) -> Result<PipelineC
     }
     apply_reference_channels_to_chain(&mut cfg.chain, cfg.reference_channels);
 
-    if a.ns && a.no_ns {
-        bail!("--ns and --no-ns cannot be used together");
+    if a.no_ns && (a.ns || a.ns_level.is_some()) {
+        bail!("--no-ns cannot be used with --ns or --ns-level");
     }
     if a.ns {
-        set_aec3_param(&mut cfg.chain, "ns", toml::Value::Boolean(true))?;
+        select_webrtc_ns(&mut cfg.chain, None)?;
     }
     if a.no_ns {
-        set_aec3_param(&mut cfg.chain, "ns", toml::Value::Boolean(false))?;
+        remove_external_ns(&mut cfg.chain);
     }
     if let Some(level) = &a.ns_level {
-        set_aec3_param(&mut cfg.chain, "ns", toml::Value::Boolean(true))?;
-        set_aec3_param(
-            &mut cfg.chain,
-            "ns_level",
-            toml::Value::String(level.clone()),
-        )?;
+        select_webrtc_ns(&mut cfg.chain, Some(level))?;
     }
     if let Some(tail_ms) = a.tail_ms {
         set_aec3_param(
@@ -128,6 +123,36 @@ fn set_aec3_param(nodes: &mut [NodeConfig], key: &str, value: toml::Value) -> Re
         bail!("{key} requires an aec3 node in the config, or use --processor aec3");
     };
     node.params.insert(key.to_string(), value);
+    Ok(())
+}
+
+#[cfg_attr(not(feature = "realtime"), allow(dead_code))]
+fn remove_external_ns(nodes: &mut Vec<NodeConfig>) {
+    nodes.retain(|node| {
+        !echoless_processors::noise_suppression::is_external_noise_suppression_kind(&node.kind)
+    });
+}
+
+#[cfg_attr(not(feature = "realtime"), allow(dead_code))]
+fn select_webrtc_ns(nodes: &mut Vec<NodeConfig>, level: Option<&str>) -> Result<()> {
+    use echoless_processors::noise_suppression::WEBRTC_PROCESSOR_KIND;
+
+    remove_external_ns(nodes);
+    let mut params = toml::Table::new();
+    if let Some(level) = level {
+        params.insert("level".into(), toml::Value::String(level.into()));
+    }
+    nodes.push(NodeConfig {
+        kind: WEBRTC_PROCESSOR_KIND.into(),
+        params,
+    });
+    if let Some(error) = echoless_processors::validate_noise_suppression_chain(nodes)
+        .into_iter()
+        .next()
+    {
+        nodes.pop();
+        bail!("--ns requires a compatible AEC engine: {}", error.message);
+    }
     Ok(())
 }
 
@@ -200,15 +225,15 @@ mod tests {
             cfg.reference_channels,
             echoless_core::ReferenceChannels::Stereo
         );
-        assert_eq!(cfg.chain.len(), 1);
+        assert_eq!(cfg.chain.len(), 2);
         assert_eq!(cfg.chain[0].kind, "aec3");
         assert_eq!(
             cfg.chain[0].params["reference_channels"].as_str(),
             Some("stereo")
         );
-        assert_eq!(cfg.chain[0].params["ns"].as_bool(), Some(true));
-        assert_eq!(cfg.chain[0].params["ns_level"].as_str(), Some("high"));
         assert_eq!(cfg.chain[0].params["tail_ms"].as_integer(), Some(120));
+        assert_eq!(cfg.chain[1].kind, "webrtc_ns");
+        assert_eq!(cfg.chain[1].params["level"].as_str(), Some("high"));
     }
 
     #[test]
@@ -244,6 +269,30 @@ mod tests {
         let err = apply_run_overrides(PipelineConfig::default(), &args).unwrap_err();
 
         assert!(err.to_string().contains("aec3"));
+    }
+
+    #[test]
+    fn run_overrides_reject_external_ns_for_localvqe_with_built_in_ns() {
+        use echoless_processors::noise_suppression::LOCALVQE_V13_MODEL;
+
+        let mut args = run_args();
+        args.ns = true;
+        let mut params = toml::Table::new();
+        params.insert(
+            "model".into(),
+            toml::Value::String(LOCALVQE_V13_MODEL.into()),
+        );
+        let cfg = PipelineConfig {
+            chain: vec![NodeConfig {
+                kind: "localvqe".into(),
+                params,
+            }],
+            ..PipelineConfig::default()
+        };
+
+        let err = apply_run_overrides(cfg, &args).unwrap_err();
+
+        assert!(err.to_string().contains("does not allow external"));
     }
 
     #[test]
