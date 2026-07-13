@@ -1,5 +1,5 @@
 #[test]
-fn single_instance_plugin_is_registered_first_and_focuses_main_window() {
+fn single_instance_plugin_is_registered_first_and_routes_launch_intent() {
     let source = include_str!("lib.rs");
     let first_plugin = source.find(".plugin(").expect("builder has no plugins");
     let single_instance = source
@@ -11,8 +11,25 @@ fn single_instance_plugin_is_registered_first_and_focuses_main_window() {
         "single-instance must be the first registered Tauri plugin"
     );
     assert!(
+        source.contains("should_focus_existing_instance(&args)"),
+        "second-instance callback must distinguish manual and delayed autostart launches"
+    );
+    assert!(
         source.contains("show_main_window(app)"),
-        "second-instance callback must restore and focus the main window"
+        "manual second-instance launches must restore and focus the main window"
+    );
+    let autostart = source
+        .find("tauri_plugin_autostart::Builder::new")
+        .expect("autostart plugin is not registered");
+    assert!(
+        autostart > single_instance,
+        "single-instance must remain ahead of autostart initialization"
+    );
+    assert!(
+        source.contains("AUTOSTART_WATCHDOG_TIMEOUT")
+            && source.contains("watchdog_pending()")
+            && source.contains("settle_startup_launch"),
+        "hidden autostart must have a bounded frontend handshake watchdog"
     );
     let logging_init = source
         .find("logging::init")

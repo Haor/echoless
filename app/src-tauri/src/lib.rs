@@ -23,6 +23,7 @@ mod proc;
 mod sidecar;
 #[cfg(test)]
 mod single_instance_contract;
+mod startup;
 #[cfg(test)]
 mod tests;
 mod tray;
@@ -36,24 +37,41 @@ use nvafx::{nvafx_doctor, nvafx_download_install, nvafx_install};
 use platform::{default_diag_dir, open_diagnostics_dir, open_path, open_url};
 use proc::{terminate_run, RunState};
 use sidecar::{probe_delay, send_run_control, set_bypass, start_run, stop_run, validate_config};
+use startup::{
+    get_autostart_enabled, get_startup_mode, set_autostart_enabled, settle_startup_launch,
+    should_focus_existing_instance, StartupLaunch, AUTOSTART_WATCHDOG_TIMEOUT,
+};
 use tray::{close_to_tray_enabled, set_tray_prefs, TrayPrefs};
 #[cfg(target_os = "windows")]
 use tray::{register_windows_tray, TrayIconState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let startup_launch = StartupLaunch::detect();
     let builder = tauri::Builder::default();
     // Must be the first plugin: later instances notify this process and exit
     // before any other plugin can initialize competing application state.
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        tray::show_main_window(app)
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        if should_focus_existing_instance(&args) {
+            app.state::<StartupLaunch>().settle();
+            tray::show_main_window(app);
+        }
     }));
     let builder = builder
         .plugin(tauri_plugin_decorum::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(RunState::default())
-        .manage(TrayPrefs::default());
+        .manage(TrayPrefs::default())
+        .manage(startup_launch);
+
+    #[cfg(target_os = "windows")]
+    let builder = builder.plugin(
+        tauri_plugin_autostart::Builder::new()
+            .app_name("Echoless")
+            .arg(startup::AUTOSTART_ARG)
+            .build(),
+    );
 
     #[cfg(target_os = "windows")]
     let builder = builder.manage(TrayIconState(Mutex::new(None)));
@@ -84,7 +102,11 @@ pub fn run() {
             send_run_control,
             set_bypass,
             stop_run,
-            set_tray_prefs
+            set_tray_prefs,
+            get_startup_mode,
+            get_autostart_enabled,
+            set_autostart_enabled,
+            settle_startup_launch
         ])
         .setup(|app| {
             // 在 single-instance setup 成功后才打开/清理共享日志目录。第二实例会在
@@ -123,14 +145,29 @@ pub fn run() {
 
             let window = builder.build()?;
 
-            // 安全兜底:前端正常会在首屏就绪后经 core window show 权限亮窗;万一前端
-            // 完全崩溃(打包后不应发生)也在 5s 后强制显示,绝不留一个永不出现的窗口。
-            {
+            // 手动启动兜底:前端正常会在首屏就绪后亮窗;万一前端完全崩溃也在 5s 后
+            // 强制显示。Windows autostart 必须保持隐藏,用户仍可从托盘或再次启动来显窗。
+            if !app.state::<StartupLaunch>().is_autostart() {
                 let w = window.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(5));
                     let _ = w.show();
                     let _ = w.set_focus();
+                });
+            } else {
+                let watchdog_app = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(AUTOSTART_WATCHDOG_TIMEOUT);
+                    let launch = watchdog_app.state::<StartupLaunch>();
+                    if launch.watchdog_pending() {
+                        launch.settle();
+                        logging::log(
+                            "warn",
+                            "startup",
+                            "autostart did not report a running or failed result before timeout",
+                        );
+                        tray::show_main_window(&watchdog_app);
+                    }
                 });
             }
 

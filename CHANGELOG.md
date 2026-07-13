@@ -4,6 +4,13 @@ All notable changes to Echoless are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+- Windows **Auto Start** option: launch hidden after sign-in and start the saved
+  Echoless audio pipeline automatically. Startup failures reveal the main window
+  instead of remaining silent in the tray.
+
 ## [1.1.0] — 2026-07-11
 
 A stability and polish release on top of 1.0.0: adaptive handling of audio

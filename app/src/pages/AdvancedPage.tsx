@@ -28,6 +28,9 @@ interface Props {
   // Windows 托盘偏好(SESSION 段,仅 windows 平台渲染)。
   trayPrefs: TrayPrefsState;
   onTrayPrefs: (patch: Partial<TrayPrefsState>) => void;
+  autoStartEnabled: boolean;
+  autoStartBusy: boolean;
+  onAutoStart: (enabled: boolean) => void;
 }
 
 // 蜂鸣节奏(对齐 CLI:startup 4s + pre-roll 0.5s,每声 70ms / 间隔 650ms ≈ 720ms,共 12 声)。
@@ -424,6 +427,9 @@ export function AdvancedPage({
   onSetRun,
   trayPrefs,
   onTrayPrefs,
+  autoStartEnabled,
+  autoStartBusy,
+  onAutoStart,
 }: Props) {
   const { t, lang, setLang } = useI18n();
   const proc = processors.find((p) => p.kind === kind);
@@ -592,24 +598,42 @@ export function AdvancedPage({
             />
           </span>
         </div>
-        {/* P5 前端侧:托盘偏好(仅 Windows;Rust 端非 Windows 强制 false)。
-            只留「关闭到托盘」一个开关 —— 最小化到托盘退役(用户定案 2026-07-05) */}
+        {/* Windows 后台启动与托盘偏好。Auto Start 读取系统注册状态;
+            Close to Tray 仍由前端偏好同步到 Rust。 */}
         {platform === "windows" && (
-          <div className="arow">
-            <Hint text={t("trayCloseHint")}>
-              <span className="alabel">{t("trayClose")}</span>
-            </Hint>
-            <span className="aval">
-              <SegButtons
-                value={trayPrefs.closeToTray ? "on" : "off"}
-                options={[
-                  { value: "on", label: "ON" },
-                  { value: "off", label: "OFF" },
-                ]}
-                onChange={(v) => onTrayPrefs({ closeToTray: v === "on" })}
-              />
-            </span>
-          </div>
+          <>
+            <div className="arow">
+              <Hint text={t("autoStartHint")}>
+                <span className="alabel">{t("autoStart")}</span>
+              </Hint>
+              <span className="aval">
+                <SegButtons
+                  value={autoStartEnabled ? "on" : "off"}
+                  options={[
+                    { value: "on", label: "ON" },
+                    { value: "off", label: "OFF" },
+                  ]}
+                  disabled={autoStartBusy}
+                  onChange={(v) => onAutoStart(v === "on")}
+                />
+              </span>
+            </div>
+            <div className="arow">
+              <Hint text={t("trayCloseHint")}>
+                <span className="alabel">{t("trayClose")}</span>
+              </Hint>
+              <span className="aval">
+                <SegButtons
+                  value={trayPrefs.closeToTray ? "on" : "off"}
+                  options={[
+                    { value: "on", label: "ON" },
+                    { value: "off", label: "OFF" },
+                  ]}
+                  onChange={(v) => onTrayPrefs({ closeToTray: v === "on" })}
+                />
+              </span>
+            </div>
+          </>
         )}
       </div>
     </div>

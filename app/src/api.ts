@@ -22,9 +22,26 @@ import {
   startDiagnosticsControlLine,
   stopDiagnosticsControlLine,
 } from "./runtimeControls";
+import type { StartupMode } from "./startupMode";
 
 export function getPlatform(): Promise<Platform> {
   return invoke<Platform>("get_platform");
+}
+
+export function getStartupMode(): Promise<Exclude<StartupMode, "unknown">> {
+  return invoke<Exclude<StartupMode, "unknown">>("get_startup_mode");
+}
+
+export function getAutostartEnabled(): Promise<boolean> {
+  return invoke<boolean>("get_autostart_enabled");
+}
+
+export function setAutostartEnabled(enabled: boolean): Promise<boolean> {
+  return invoke<boolean>("set_autostart_enabled", { enabled });
+}
+
+export function settleStartupLaunch(): Promise<void> {
+  return invoke<void>("settle_startup_launch");
 }
 
 export function listDevices(): Promise<DeviceList> {

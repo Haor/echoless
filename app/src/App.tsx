@@ -13,6 +13,8 @@ import {
   buildConfigToml,
   defaultDiagDir,
   doctorAudio,
+  getAutostartEnabled,
+  getStartupMode,
   getPlatform,
   listDevices,
   listProcessors,
@@ -34,6 +36,8 @@ import {
   setLocalvqeNoiseGate,
   setNearDelayMs,
   setOutputLevel,
+  setAutostartEnabled as persistAutostartEnabled,
+  settleStartupLaunch,
   setTrayPrefs,
   startDiagnostics,
   startRun,
@@ -116,8 +120,34 @@ import {
 import { REQUIRED_RUN_CONTROLS } from "./runtimeControls";
 import { createAsyncListenerScope } from "./asyncListener";
 import { settleBootGate } from "./bootGate";
+import {
+  createStartupCleanup,
+  expectStartupRun,
+  INITIAL_STARTUP_RUN_HANDSHAKE,
+  observeStartupRunStarted,
+  shouldAttemptAutoStart,
+  shouldRevealWindow,
+  startupDataReady,
+  type StartupMode,
+} from "./startupMode";
+import {
+  beginAutostartChange,
+  displayAutostartEnabled,
+  rejectAutostartChange,
+  settleAutostart,
+  type AutostartPreference,
+} from "./autostartPreference";
 
 const appWindow = getCurrentWindow();
+const ensureStartupRuntimeCleanup = createStartupCleanup(stopRun);
+
+function revealMainWindow(): void {
+  const window = getCurrentWindow();
+  window
+    .show()
+    .then(() => window.setFocus())
+    .catch(() => {});
+}
 
 const DEVICE_SELECTION_KEY = "echoless.deviceSelection.v1";
 
@@ -839,6 +869,8 @@ type RunLifecycleDeps = {
   gotoView: (view: View) => void;
   hasRunControl: (cmd: string) => boolean;
   reportMissingRunControl: (cmd: string) => void;
+  onRunReservedRef: MutableRefObject<(runId: number) => void>;
+  onRunStartedRef: MutableRefObject<(runId: number) => void>;
 };
 
 function useRunLifecycle({
@@ -866,7 +898,10 @@ function useRunLifecycle({
   gotoView,
   hasRunControl,
   reportMissingRunControl,
+  onRunReservedRef,
+  onRunStartedRef,
 }: RunLifecycleDeps) {
+  const [runtimeCleanupReady, setRuntimeCleanupReady] = useState(false);
   // 当前 run 实际生效的参考源(由 started 给出),供 status 判断是否 Process Tap。
   const refSourceRef = useRef<string | null>(null);
   const runGenerationRef = useRef<RunGeneration>(INITIAL_RUN_GENERATION);
@@ -892,13 +927,17 @@ function useRunLifecycle({
 
   useEffect(() => {
     // 清理可能残留的 sidecar(前端 reload 后 Rust 子进程可能还活着 → 状态脱同步)。
-    stopRun().catch(() => {});
+    let active = true;
+    void ensureStartupRuntimeCleanup().then(() => {
+      if (active) setRuntimeCleanupReady(true);
+    });
     const listeners = createAsyncListenerScope();
     listeners.listen(onRunEvent, (ev) => {
           const decision = acceptRunEvent(runGenerationRef.current, ev);
           runGenerationRef.current = decision.generation;
           if (!decision.accepted) return;
           if (ev.type === "started") {
+            onRunStartedRef.current(ev.run_id);
             telRef.current.on = true;
             cliVersionRef.current = ev.cli_version ?? null;
             runControlsRef.current = Array.isArray(ev.supported_controls)
@@ -1075,7 +1114,10 @@ function useRunLifecycle({
     listeners.listen(onRunLog, (line) => {
       if (line.trim()) lastLogRef.current = line;
     });
-    return () => listeners.dispose();
+    return () => {
+      active = false;
+      listeners.dispose();
+    };
   }, [hasRunControl, noteError, startDiag, updateApp]);
 
   function currentToml(over?: Override) {
@@ -1091,7 +1133,7 @@ function useRunLifecycle({
     });
   }
 
-  async function start() {
+  async function start(): Promise<number | null> {
     const startIntent = runIntentRef.current.request(true);
     powerOnRef.current = true;
     updateApp({ busy: true, err: null });
@@ -1111,15 +1153,16 @@ function useRunLifecycle({
           powerOn: false,
           busy: false,
         });
-        return;
+        return null;
       }
-      if (!runIntentRef.current.allowsStart(startIntent)) return;
+      if (!runIntentRef.current.allowsStart(startIntent)) return null;
       telRef.current.on = true;
       const runId = await startRun(toml, 80);
+      onRunReservedRef.current(runId);
       if (!runIntentRef.current.allowsStart(startIntent)) {
         telRef.current.on = false;
         await stopRun().catch(() => {});
-        return;
+        return null;
       }
       runGenerationRef.current = observeRunStart(
         runGenerationRef.current,
@@ -1128,6 +1171,7 @@ function useRunLifecycle({
       probeBorrowedRunRef.current = false;
       // 启动即 AEC on(toml 不写 bypass,后端默认 false)。
       updateApp({ powerOn: true, bypassed: false, bypassPending: null });
+      return runId;
     } catch (e) {
       if (runIntentRef.current.allowsStart(startIntent)) {
         runIntentRef.current.request(false);
@@ -1136,6 +1180,7 @@ function useRunLifecycle({
         telRef.current.on = false;
         updateApp({ powerOn: false });
       }
+      return null;
     } finally {
       updateApp({ busy: false });
     }
@@ -1309,6 +1354,8 @@ function useRunLifecycle({
   }, [startDiag, updateApp]);
   return {
     applyChange,
+    start,
+    runtimeCleanupReady,
     setRunForProbe,
     togglePower,
     setRecording,
@@ -1325,6 +1372,35 @@ function AppShell() {
   // 就绪门:首屏数据+字体就位前整窗隐藏,一次性淡入——消除空壳骨架闪烁与
   // 字标 FOUT(fallback 字体宽度不同 → 点阵字标从窄变宽跳)。
   const [booted, setBooted] = useState(false);
+  const [startupMode, setStartupMode] = useState<StartupMode>("unknown");
+  const [startupCoreReady, setStartupCoreReady] = useState(false);
+  const [nvafxChecked, setNvafxChecked] = useState(false);
+  const autoStartAttemptedRef = useRef(false);
+  const autostartHadStartedRef = useRef(false);
+  const autostartHandshakeRef = useRef(INITIAL_STARTUP_RUN_HANDSHAKE);
+  const startupModeRef = useRef(startupMode);
+  startupModeRef.current = startupMode;
+  const onRunReservedRef = useRef<(runId: number) => void>(() => {});
+  const onRunStartedRef = useRef<(runId: number) => void>(() => {});
+  const updateAutostartHandshake = (next: typeof INITIAL_STARTUP_RUN_HANDSHAKE) => {
+    const wasSettled = autostartHandshakeRef.current.settled;
+    autostartHandshakeRef.current = next;
+    if (wasSettled || !next.settled) return;
+    autostartHadStartedRef.current = true;
+    settleStartupLaunch().catch(() => {});
+  };
+  onRunReservedRef.current = (runId) => {
+    if (startupModeRef.current !== "autostart") return;
+    updateAutostartHandshake(
+      expectStartupRun(autostartHandshakeRef.current, runId),
+    );
+  };
+  onRunStartedRef.current = (runId) => {
+    if (startupModeRef.current !== "autostart") return;
+    updateAutostartHandshake(
+      observeStartupRunStarted(autostartHandshakeRef.current, runId),
+    );
+  };
   // 独立兜底:无论数据 effect 内部发生什么(异常/promise 不 resolve),
   // 字体就绪即揭幕,最迟 1.2s 硬封顶保证绝不卡在空屏。字体本地 woff2
   // 加载 <200ms,常态是数据 effect 先揭幕(见下),这里只兜底。
@@ -1342,15 +1418,16 @@ function AppShell() {
       cancelled = true;
     };
   }, []);
-  // 窗口以 visible:false 创建;首屏就绪后再显示,彻底消除 WebView 初始化白闪。
-  // booted 有 1.2s 硬封顶保证必翻真;Rust 侧另有 5s 兜底防前端崩溃。
   useEffect(() => {
-    if (!booted) return;
-    const w = getCurrentWindow();
-    w.show()
-      .then(() => w.setFocus())
-      .catch(() => {});
-  }, [booted]);
+    getStartupMode()
+      .then(setStartupMode)
+      .catch(() => setStartupMode("manual"));
+  }, []);
+  // 窗口以 visible:false 创建;手动启动在首屏就绪后显示,autostart 则留在托盘。
+  // booted 有 1.2s 硬封顶;手动启动另有 Rust 5s 显窗兜底。
+  useEffect(() => {
+    if (shouldRevealWindow(booted, startupMode)) revealMainWindow();
+  }, [booted, startupMode]);
   const {
     platform,
     devices,
@@ -1459,6 +1536,8 @@ function AppShell() {
 
   const {
     applyChange,
+    start,
+    runtimeCleanupReady,
     setRunForProbe,
     togglePower,
     setRecording,
@@ -1488,7 +1567,50 @@ function AppShell() {
     gotoView,
     hasRunControl,
     reportMissingRunControl,
+    onRunReservedRef,
+    onRunStartedRef,
   });
+  const autoStartRunRef = useRef(start);
+  autoStartRunRef.current = start;
+
+  useEffect(() => {
+    const dataReady = startupDataReady(startupCoreReady, kind, nvafxChecked);
+    if (
+      !shouldAttemptAutoStart({
+        mode: startupMode,
+        dataReady,
+        cleanupReady: runtimeCleanupReady,
+        attempted: autoStartAttemptedRef.current,
+        running: powerOn,
+      })
+    ) {
+      return;
+    }
+    autoStartAttemptedRef.current = true;
+    if (!engineReady(kind)) {
+      gotoView(kind === "nvidia_afx_aec" ? "rtxsetup" : "engine");
+      noteError("Auto Start could not run because the selected engine is not ready.");
+      revealMainWindow();
+      settleStartupLaunch().catch(() => {});
+      return;
+    }
+    void autoStartRunRef.current().then((runId) => {
+      if (runId != null) return;
+      revealMainWindow();
+      settleStartupLaunch().catch(() => {});
+    });
+  }, [kind, nvafxChecked, powerOn, runtimeCleanupReady, startupCoreReady, startupMode]);
+
+  useEffect(() => {
+    if (
+      startupMode === "autostart" &&
+      autostartHadStartedRef.current &&
+      !powerOn &&
+      err
+    ) {
+      revealMainWindow();
+    }
+  }, [err, powerOn, startupMode]);
 
   // 平台 + 设备/处理器枚举 + 设备热插拔
   useEffect(() => {
@@ -1515,14 +1637,18 @@ function AppShell() {
     // 常态揭幕:首批关键数据(平台/设备/引擎清单)就位即亮屏,通常远早于
     // 上面的 1.2s 兜底。allSettled 不因单路失败而卡;硬封顶由独立 effect 兜底。
     Promise.allSettled([platformReady, devicesReady, processorsReady]).then(
-      () => setBooted(true),
+      () => {
+        setStartupCoreReady(true);
+        setBooted(true);
+      },
     );
     doctorAudio()
       .then((doctor) => updateApp({ doctor }))
       .catch(() => {});
     nvafxDoctor()
       .then((nvafx) => updateApp({ nvafx }))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setNvafxChecked(true));
     defaultDiagDir()
       .then((diagDir) => updateApp({ diagDir }))
       .catch(() => {});
@@ -1886,6 +2012,60 @@ function AppShell() {
     setTrayPrefs(trayPrefs.closeToTray).catch(() => {});
   }, [trayPrefs]);
 
+  // Windows 启动项以系统注册状态为真理源,不再复制一份 localStorage 偏好。
+  // 用户可在任务管理器/系统设置里关闭启动项;窗口重新聚焦时同步实际状态。
+  const [autostartPreference, setAutostartPreference] =
+    useState<AutostartPreference>({ enabled: null, pending: null });
+  const autostartRequestRef = useRef(0);
+  const autostartChangePendingRef = useRef(false);
+  const refreshAutostart = useCallback(() => {
+    if (platform !== "windows" || autostartChangePendingRef.current) return;
+    const request = ++autostartRequestRef.current;
+    getAutostartEnabled()
+      .then((enabled) => {
+        if (request !== autostartRequestRef.current) return;
+        setAutostartPreference((current) =>
+          current.pending == null ? settleAutostart(enabled) : current,
+        );
+      })
+      .catch((e) => {
+        if (request === autostartRequestRef.current) noteError(String(e));
+      });
+  }, [noteError, platform]);
+  useEffect(() => {
+    if (platform !== "windows") return;
+    refreshAutostart();
+    window.addEventListener("focus", refreshAutostart);
+    return () => window.removeEventListener("focus", refreshAutostart);
+  }, [platform, refreshAutostart]);
+
+  function changeAutostart(enabled: boolean) {
+    if (dev && platformView === "windows" && platform !== "windows") {
+      setAutostartPreference(settleAutostart(enabled));
+      return;
+    }
+    autostartChangePendingRef.current = true;
+    const request = ++autostartRequestRef.current;
+    setAutostartPreference((current) =>
+      beginAutostartChange(current, enabled),
+    );
+    persistAutostartEnabled(enabled)
+      .then((actual) => {
+        if (request !== autostartRequestRef.current) return;
+        setAutostartPreference(settleAutostart(actual));
+      })
+      .catch((e) => {
+        if (request !== autostartRequestRef.current) return;
+        setAutostartPreference((current) => rejectAutostartChange(current));
+        noteError(String(e));
+      })
+      .finally(() => {
+        if (request === autostartRequestRef.current) {
+          autostartChangePendingRef.current = false;
+        }
+      });
+  }
+
   // zmeta 版本号(tauri.conf.json 为源)。
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => {
@@ -2218,6 +2398,13 @@ function AppShell() {
             onTrayPrefs={(patch) =>
               updateTrayPrefs((cur) => ({ ...cur, ...patch }))
             }
+            autoStartEnabled={displayAutostartEnabled(autostartPreference)}
+            autoStartBusy={
+              !(dev && platformView === "windows" && platform !== "windows") &&
+              (autostartPreference.enabled == null ||
+                autostartPreference.pending != null)
+            }
+            onAutoStart={changeAutostart}
           />
         )}
         {view === "diagnostics" && (
