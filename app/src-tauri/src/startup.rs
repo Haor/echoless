@@ -71,7 +71,7 @@ pub(crate) fn settle_startup_launch(launch: State<StartupLaunch>) {
 pub(crate) fn get_autostart_enabled(app: AppHandle) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        return app.autolaunch().is_enabled().map_err(|err| err.to_string());
+        app.autolaunch().is_enabled().map_err(|err| err.to_string())
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -90,7 +90,7 @@ pub(crate) fn set_autostart_enabled(app: AppHandle, enabled: bool) -> Result<boo
         } else {
             manager.disable().map_err(|err| err.to_string())?;
         }
-        return manager.is_enabled().map_err(|err| err.to_string());
+        manager.is_enabled().map_err(|err| err.to_string())
     }
     #[cfg(not(target_os = "windows"))]
     {
