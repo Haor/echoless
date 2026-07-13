@@ -68,6 +68,9 @@ describe("current engine UI lock wiring", () => {
     expect(appSource).toContain(
       "if (!runIntentRef.current.wantsRun()) return Promise.resolve();",
     );
+    expect(appSource).toContain(
+      "if (runIntentRef.current.wantsRun()) runIntentRef.current.request(true);",
+    );
     expect(appSource).toContain("disabled={busy || !supported || active}");
   });
 
@@ -104,8 +107,17 @@ describe("current engine UI lock wiring", () => {
     expect(appSource).toMatch(
       /function pickLocalvqeModel\(path: string\) \{\s*const selectedModel =[\s\S]*?if \(!shouldPickLocalvqeModel\(selectedModel, path\)\) return;/,
     );
+    expect(appSource).toMatch(
+      /applyChangeRef\.current\(\{\s*kind: "localvqe",\s*noiseMode: nextNoiseMode,\s*params: np,\s*\}\);/,
+    );
+  });
+
+  it("natively locks the selected or incompatible shared noise mode", () => {
     expect(appSource).toContain(
-      'applyChangeRef.current({ kind: "localvqe", params: np });',
+      "disabled={busy || active || !compatible}",
+    );
+    expect(appSource).toContain(
+      "if (!shouldSelectNoiseMode(noiseModeRef.current, next, allowed)) return;",
     );
   });
 });

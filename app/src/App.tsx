@@ -18,7 +18,6 @@ import {
   getPlatform,
   listDevices,
   listProcessors,
-  localvqeAssets,
   nvafxDoctor,
   nvafxDownloadInstall,
   nvafxInstall,
@@ -30,7 +29,6 @@ import {
   openPath,
   requestSystemAudio,
   setAec3Agc,
-  setAec3Ns,
   setBypass,
   setInitialDelayMs,
   setLocalvqeNoiseGate,
@@ -51,6 +49,8 @@ import type {
   DeviceList,
   DoctorAudio,
   NvafxDoctor,
+  NoiseMode,
+  NoiseSuppressionManifest,
   Platform,
   Processor,
 } from "./types";
@@ -95,8 +95,10 @@ import { MicSetupPage } from "./pages/MicSetupPage";
 import { simNvafxDoctor, type RtxState } from "./nvafx";
 import { simMicDoctor, type MicState } from "./mic";
 import {
-  lvqeNoiseTargetFile,
-  lvqePureAec,
+  allowedNoiseModes,
+  modelFileName,
+  normalizeNoiseMode,
+  shouldSelectNoiseMode,
   isNearDelayOnlyPatch,
   hotInitialDelayValue,
   hotLocalvqeNoiseGateValue,
@@ -306,6 +308,7 @@ type AppState = {
   platform: Platform;
   devices: DeviceList;
   processors: Processor[];
+  noiseSuppression: NoiseSuppressionManifest | null;
   powerOn: boolean;
   busy: boolean;
   err: string | null;
@@ -337,6 +340,7 @@ type SelectionState = {
 
 type EngineState = {
   kind: string;
+  noiseMode: NoiseMode;
   pipeline: PipelineCfg;
   params: Record<string, unknown>;
 };
@@ -346,6 +350,7 @@ type Override = Partial<{
   output: string;
   reference: string;
   kind: string;
+  noiseMode: NoiseMode;
   pipeline: PipelineCfg;
   params: Record<string, unknown>;
 }>;
@@ -366,6 +371,7 @@ const INITIAL_APP_STATE: AppState = {
   platform: "macos",
   devices: EMPTY_DEVICES,
   processors: [],
+  noiseSuppression: null,
   powerOn: false,
   busy: false,
   err: null,
@@ -390,16 +396,18 @@ const INITIAL_APP_STATE: AppState = {
 
 const INITIAL_ENGINE_STATE: EngineState = {
   kind: "aec3",
+  noiseMode: "off",
   pipeline: INITIAL_PIPELINE,
   params: {},
 };
 
 // 引擎配置持久化:kind + pipeline(含 near_delay/output_level)+ 每引擎参数。
 // 模块加载时读一次;之后每次变更由 effect 写回。
-const ENGINE_STATE_KEY = "echoless.engine.v1";
+const ENGINE_STATE_KEY = "echoless.engine.v2";
 
 type SavedEngineState = {
   kind?: string;
+  noiseMode?: NoiseMode;
   pipeline?: Partial<PipelineCfg>;
   paramsByKind?: Record<string, Record<string, unknown>>;
 };
@@ -412,6 +420,12 @@ function readSavedEngineState(): SavedEngineState {
     if (!p || typeof p !== "object") return {};
     return {
       kind: typeof p.kind === "string" ? p.kind : undefined,
+      noiseMode:
+        p.noiseMode === "webrtc" ||
+        p.noiseMode === "rnnoise" ||
+        p.noiseMode === "off"
+          ? p.noiseMode
+          : undefined,
       pipeline:
         p.pipeline && typeof p.pipeline === "object" ? p.pipeline : undefined,
       paramsByKind:
@@ -446,6 +460,7 @@ function initEngineState(): EngineState {
   };
   return {
     kind,
+    noiseMode: SAVED_ENGINE.noiseMode ?? "off",
     pipeline: pipelineForEngineKind(kind, savedPipeline),
     params: SAVED_ENGINE.paramsByKind?.[kind] ?? {},
   };
@@ -580,6 +595,7 @@ function useDeviceEnumeration({
 
 type EngineConfigDeps = {
   processors: Processor[];
+  noiseSuppression: NoiseSuppressionManifest | null;
   platform: Platform;
   dev: boolean;
   nvafx: NvafxDoctor | null;
@@ -594,6 +610,7 @@ type EngineConfigDeps = {
 
 function useEngineConfig({
   processors,
+  noiseSuppression,
   platform,
   dev,
   nvafx,
@@ -610,7 +627,9 @@ function useEngineConfig({
     undefined,
     initEngineState,
   );
-  const { kind, pipeline, params } = engineState;
+  const { kind, noiseMode, pipeline, params } = engineState;
+  const noiseModeRef = useRef(noiseMode);
+  noiseModeRef.current = noiseMode;
   const pipelineRef = useRef(pipeline);
   pipelineRef.current = pipeline;
   const paramsRef = useRef(params);
@@ -657,14 +676,23 @@ function useEngineConfig({
           target,
           pipelineRef.current,
         );
+        const nextNoiseMode = normalizeNoiseMode(
+          noiseSuppression,
+          target,
+          np,
+          noiseModeRef.current,
+        );
         pipelineRef.current = nextPipeline;
+        noiseModeRef.current = nextNoiseMode;
         updateEngine({
           kind: target,
+          noiseMode: nextNoiseMode,
           params: np,
           pipeline: nextPipeline,
         });
         applyChangeRef.current({
           kind: target,
+          noiseMode: nextNoiseMode,
           params: np,
           pipeline: nextPipeline,
         });
@@ -690,18 +718,6 @@ function useEngineConfig({
           return;
         }
         setInitialDelayMs(delayMs).catch((e) => noteError(String(e)));
-      }
-      return;
-    }
-    if (kind === "aec3" && (key === "ns" || key === "ns_level")) {
-      if (powerOnRef.current) {
-        if (!hasRunControl("set_aec3_ns")) {
-          reportMissingRunControl("set_aec3_ns");
-          return;
-        }
-        setAec3Ns(Boolean(np.ns), String(np.ns_level ?? "low")).catch((e) =>
-          noteError(String(e)),
-        );
       }
       return;
     }
@@ -738,21 +754,6 @@ function useEngineConfig({
     applyChangeRef.current({ params: np });
   }
 
-  // LVQE 下的 NOISE 开关 = 切模型版本(ON→v1.3 AEC+降噪,OFF→v1.4 纯 AEC)。
-  // 目标版本未下载时跳 Engine 页(那里有下载入口),不生成缺文件的配置。
-  function setLvqeNoise(on: boolean) {
-    const curOn = !lvqePureAec(paramsRef.current.model);
-    if (on === curOn) return; // 已处于目标态
-    const target = lvqeNoiseTargetFile(on);
-    localvqeAssets()
-      .then((a) => {
-        const found = a.models.find((m) => m.filename === target);
-        if (found) pickLocalvqeModel(found.path);
-        else gotoView("engine");
-      })
-      .catch((e) => noteError(String(e)));
-  }
-
   // 选 LocalVQE 模型(清单常驻):原子地切到 localvqe 引擎并设 model,避免把 model 写到当前引擎上。
   function pickLocalvqeModel(path: string) {
     const selectedModel =
@@ -767,10 +768,37 @@ function useEngineConfig({
     const np = { ...base, model: path };
     paramsByKind.current[kindRef.current] = paramsRef.current;
     paramsByKind.current["localvqe"] = np;
+    const nextNoiseMode = normalizeNoiseMode(
+      noiseSuppression,
+      "localvqe",
+      np,
+      noiseModeRef.current,
+    );
     kindRef.current = "localvqe";
     paramsRef.current = np;
-    updateEngine({ kind: "localvqe", params: np });
-    applyChangeRef.current({ kind: "localvqe", params: np });
+    noiseModeRef.current = nextNoiseMode;
+    updateEngine({
+      kind: "localvqe",
+      noiseMode: nextNoiseMode,
+      params: np,
+    });
+    applyChangeRef.current({
+      kind: "localvqe",
+      noiseMode: nextNoiseMode,
+      params: np,
+    });
+  }
+
+  function selectNoiseMode(next: NoiseMode) {
+    const allowed = allowedNoiseModes(
+      noiseSuppression,
+      kindRef.current,
+      paramsRef.current,
+    );
+    if (!shouldSelectNoiseMode(noiseModeRef.current, next, allowed)) return;
+    noiseModeRef.current = next;
+    updateEngine({ noiseMode: next });
+    applyChangeRef.current({ noiseMode: next });
   }
 
   function hotNearDelayValue(next: PipelineCfg): number {
@@ -820,24 +848,29 @@ function useEngineConfig({
     try {
       localStorage.setItem(
         ENGINE_STATE_KEY,
-        JSON.stringify({ kind, pipeline, paramsByKind: paramsByKind.current }),
+        JSON.stringify({
+          kind,
+          noiseMode,
+          pipeline,
+          paramsByKind: paramsByKind.current,
+        }),
       );
     } catch {
       /* 持久化失败不阻塞 */
     }
-  }, [kind, pipeline, params]);
+  }, [kind, noiseMode, pipeline, params]);
 
   return {
     engineState,
     updateEngine,
-    kindRef,
+    noiseModeRef,
     pipelineRef,
     paramsRef,
     paramsByKind,
     engineReady,
     changeKind,
     setParam,
-    setLvqeNoise,
+    selectNoiseMode,
     pickLocalvqeModel,
     changePipeline,
     changeOutVolume,
@@ -856,6 +889,7 @@ type RunLifecycleDeps = {
   reference: string;
   kind: string;
   engineReady: (kind: string) => boolean;
+  noiseModeRef: MutableRefObject<NoiseMode>;
   pipelineRef: MutableRefObject<PipelineCfg>;
   paramsRef: MutableRefObject<Record<string, unknown>>;
   telRef: MutableRefObject<Telemetry>;
@@ -885,6 +919,7 @@ function useRunLifecycle({
   reference,
   kind,
   engineReady,
+  noiseModeRef,
   pipelineRef,
   paramsRef,
   telRef,
@@ -910,6 +945,8 @@ function useRunLifecycle({
   const probeBorrowedRunRef = useRef(false);
   const engineSetupStopPendingRef = useRef(false);
   const runIntentRef = useRef(createRunIntentGuard(powerOn));
+  const bypassTargetRef = useRef(bypassPending ?? bypassed);
+  bypassTargetRef.current = bypassPending ?? bypassed;
   if (!powerOn) engineSetupStopPendingRef.current = false;
   const recRef = useRef(rec);
   recRef.current = rec;
@@ -1120,14 +1157,16 @@ function useRunLifecycle({
     };
   }, [hasRunControl, noteError, startDiag, updateApp]);
 
-  function currentToml(over?: Override) {
+  function currentToml(over?: Override, bypass = false) {
     return buildConfigToml({
       mic: over?.mic ?? selInput,
       output: over?.output ?? selOutput,
       reference: over?.reference ?? reference,
       kind: over?.kind ?? kind,
+      noiseMode: over?.noiseMode ?? noiseModeRef.current,
       pipeline: over?.pipeline ?? pipelineRef.current,
       params: over?.params ?? paramsRef.current,
+      bypass,
       // 录制改由 stdin 就地控制(start/stop_diagnostics),不再写进 toml。
       diagnostics: null,
     });
@@ -1169,7 +1208,8 @@ function useRunLifecycle({
         runId,
       );
       probeBorrowedRunRef.current = false;
-      // 启动即 AEC on(toml 不写 bypass,后端默认 false)。
+      bypassTargetRef.current = false;
+      // 用户主动启动始终进入 AEC on;仅结构性重启会保留 bypass。
       updateApp({ powerOn: true, bypassed: false, bypassPending: null });
       return runId;
     } catch (e) {
@@ -1189,6 +1229,7 @@ function useRunLifecycle({
   async function stop() {
     runIntentRef.current.request(false);
     powerOnRef.current = false;
+    bypassTargetRef.current = false;
     updateApp({ busy: true });
     try {
       await stopRun();
@@ -1275,6 +1316,9 @@ function useRunLifecycle({
   );
 
   function applyChange(next: Override) {
+    // 每次新配置都抢占旧重启事务。旧事务即使已经 stop 完成，也不能用陈旧
+    // TOML 再启动；串行队列会把后续 delta 合并后交给最新 generation。
+    if (runIntentRef.current.wantsRun()) runIntentRef.current.request(true);
     applyQueueRef.current.enqueue(next);
   }
 
@@ -1283,11 +1327,12 @@ function useRunLifecycle({
   async function doApplyChange(next: Override) {
     const applyIntent = runIntentRef.current.snapshot();
     if (!runIntentRef.current.allowsStart(applyIntent)) return;
+    const restartBypassed = bypassTargetRef.current;
     updateApp({ busy: true });
     try {
       await stopRun();
       if (!runIntentRef.current.allowsStart(applyIntent)) return;
-      const toml = currentToml(next);
+      const toml = currentToml(next, restartBypassed);
       const v = await validateConfig(toml);
       if (!v.ok) {
         if (runIntentRef.current.allowsStart(applyIntent)) {
@@ -1300,6 +1345,7 @@ function useRunLifecycle({
           bypassed: false,
           bypassPending: null,
         });
+        bypassTargetRef.current = false;
         telRef.current.on = false;
         return;
       }
@@ -1315,7 +1361,12 @@ function useRunLifecycle({
         runGenerationRef.current,
         runId,
       );
-      updateApp({ powerOn: true, bypassed: false, bypassPending: null });
+      bypassTargetRef.current = restartBypassed;
+      updateApp({
+        powerOn: true,
+        bypassed: restartBypassed,
+        bypassPending: null,
+      });
       noteError(null);
     } catch (e) {
       if (!runIntentRef.current.allowsStart(applyIntent)) return;
@@ -1323,6 +1374,7 @@ function useRunLifecycle({
       powerOnRef.current = false;
       noteError(String(e));
       telRef.current.on = false;
+      bypassTargetRef.current = false;
       updateApp({ powerOn: false, bypassed: false, bypassPending: null });
     } finally {
       updateApp({ busy: false });
@@ -1432,6 +1484,7 @@ function AppShell() {
     platform,
     devices,
     processors,
+    noiseSuppression,
     powerOn,
     busy,
     err,
@@ -1508,19 +1561,20 @@ function AppShell() {
   const {
     engineState,
     updateEngine,
-    kindRef,
+    noiseModeRef,
     pipelineRef,
     paramsRef,
     paramsByKind,
     engineReady,
     changeKind,
     setParam,
-    setLvqeNoise,
+    selectNoiseMode,
     pickLocalvqeModel,
     changePipeline,
     changeOutVolume,
   } = useEngineConfig({
     processors,
+    noiseSuppression,
     platform,
     dev,
     nvafx,
@@ -1532,7 +1586,7 @@ function AppShell() {
     hasRunControl,
     reportMissingRunControl,
   });
-  const { kind, pipeline, params } = engineState;
+  const { kind, noiseMode, pipeline, params } = engineState;
 
   const {
     applyChange,
@@ -1554,6 +1608,7 @@ function AppShell() {
     reference,
     kind,
     engineReady,
+    noiseModeRef,
     pipelineRef,
     paramsRef,
     telRef,
@@ -1620,18 +1675,34 @@ function AppShell() {
     const devicesReady = refreshDevices();
     const processorsReady = listProcessors()
       .then((m) => {
-        updateApp({ processors: m.processors });
-        const proc = m.processors.find((p) => p.kind === kindRef.current);
+        updateApp({
+          processors: m.processors,
+          noiseSuppression: m.noise_suppression,
+        });
         // manifest defaults 打底 + 持久化参数覆盖:新版本新增参数时老存档不缺键。
-        updateEngine((cur) => ({
-          ...cur,
-          params: {
+        updateEngine((cur) => {
+          const proc = m.processors.find((p) => p.kind === cur.kind);
+          const mergedParams = {
             ...defaultParams(proc),
             ...(Object.keys(cur.params).length
               ? cur.params
-              : (paramsByKind.current[kindRef.current] ?? {})),
-          },
-        }));
+              : (paramsByKind.current[cur.kind] ?? {})),
+          };
+          const normalizedNoiseMode = normalizeNoiseMode(
+            m.noise_suppression,
+            cur.kind,
+            mergedParams,
+            cur.noiseMode,
+          );
+          paramsRef.current = mergedParams;
+          paramsByKind.current[cur.kind] = mergedParams;
+          noiseModeRef.current = normalizedNoiseMode;
+          return {
+            ...cur,
+            noiseMode: normalizedNoiseMode,
+            params: mergedParams,
+          };
+        });
       })
       .catch((e) => noteError(String(e)));
     // 常态揭幕:首批关键数据(平台/设备/引擎清单)就位即亮屏,通常远早于
@@ -1950,13 +2021,25 @@ function AppShell() {
 
   const isMac = platformView === "macos";
   const refSel = dev ? referenceView : reference;
-  // NOISE 开关三种语义:aec3 = ns 参数;localvqe = 模型版本(v1.3 带降噪 / v1.4 纯 AEC);
-  // nvafx 无对应 → 置灰。
-  const isLvqe = kind === "localvqe";
-  const ns = isLvqe ? !lvqePureAec(params.model) : Boolean(params.ns);
-  const nsSupported =
-    isLvqe ||
-    Boolean(processors.find((p) => p.kind === kind)?.params?.ns);
+  const compatibleNoiseModes = allowedNoiseModes(
+    noiseSuppression,
+    kind,
+    params,
+  );
+  const activeLocalvqeCapability =
+    kind === "localvqe"
+      ? noiseSuppression?.localvqe_models.find(
+          (entry) => entry.file === modelFileName(params.model),
+        )?.capability
+      : null;
+  const noiseHint =
+    activeLocalvqeCapability === "built_in_ns"
+      ? t("noiseBuiltIn")
+      : noiseMode === "webrtc"
+        ? t("noiseWebrtcHint")
+        : noiseMode === "rnnoise"
+          ? t("noiseRnnoiseHint")
+          : t("noiseOffHint");
   // 通话 app 里要选的"麦克风"名:由所选输出设备名推导(CABLE Input→CABLE Output;其余同名)。
   const outDev = devices?.outputs.find((d) => d.stable_id === selOutput);
   const cableName = outDev
@@ -2290,34 +2373,31 @@ function AppShell() {
             <span className="stnum">04</span>
             <span className="stkey">{t("noise")}</span>
             <span className="co">:</span>
-            <div className={`segg ${nsSupported ? "" : "dim"}`} id="ns">
-              <button
-                type="button"
-                className={`b ${ns ? "active" : ""}`}
-                onClick={() =>
-                  isLvqe ? setLvqeNoise(true) : setParam("ns", true)
-                }
-              >
-                ON
-              </button>
-              <button
-                type="button"
-                className={`b ${!ns ? "active" : ""}`}
-                onClick={() =>
-                  isLvqe ? setLvqeNoise(false) : setParam("ns", false)
-                }
-              >
-                OFF
-              </button>
+            <div className="segg" id="ns">
+              {(
+                [
+                  ["webrtc", "WEBRTC"],
+                  ["rnnoise", "RNNOISE"],
+                  ["off", "OFF"],
+                ] as const
+              ).map(([mode, label]) => {
+                const active = noiseMode === mode;
+                const compatible = compatibleNoiseModes.includes(mode);
+                return (
+                  <button
+                    type="button"
+                    key={mode}
+                    className={`b ${active ? "active" : ""}`}
+                    disabled={busy || active || !compatible}
+                    onClick={() => selectNoiseMode(mode)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
             <span className="sp" />
-            <span className="meta">
-              {isLvqe
-                ? t("lvqeNsHint")
-                : nsSupported
-                  ? t("reduceNoise")
-                  : t("aec3Only")}
-            </span>
+            <span className="meta">{noiseHint}</span>
             <span className="ico">
               <IcoNoise />
             </span>
@@ -2344,6 +2424,7 @@ function AppShell() {
         {view === "engine" && (
           <EnginePage
             processors={processors}
+            noiseSuppression={noiseSuppression}
             platform={platformView}
             kind={kind}
             doctor={nvafxView}

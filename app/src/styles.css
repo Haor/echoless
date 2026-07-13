@@ -1977,6 +1977,10 @@ hr.hair {
 .segg .b:disabled {
   cursor: default;
 }
+.segg .b:disabled:not(.active) {
+  color: var(--t-faint);
+  opacity: 0.45;
+}
 /* v9.2:高级页双选段定宽 74px —— 各行右对齐 + 等宽段 → 中缝落在同一竖轴(用户画线)。
    段内文案必须 ≤6 字符(如 ns_level 用 mod/v.high 缩写),超长会溢出 */
 .arow .segg .b {
@@ -1985,8 +1989,7 @@ hr.hair {
   padding-right: 0;
   text-align: center;
 }
-/* 02 MODEL 三钮等宽(LOCALVQE 简写 LVQE 后可等宽);04 NOISE 双钮同宽 74px,
-   ON|OFF 接缝正对上排 AEC3|LVQE 接缝、右缘对齐 LVQE|NVAFX 接缝(用户定案 2026-07-05) */
+/* 02 MODEL 与 04 NOISE 都是三钮等宽，三条分隔线严格对齐。 */
 #models .b,
 #ns .b {
   width: 74px;

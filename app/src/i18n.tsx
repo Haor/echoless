@@ -40,12 +40,13 @@ const D: Record<string, { en: string; zh: string }> = {
   reference: { en: "Reference", zh: "Reference" },
   installCable: { en: "install virtual cable", zh: "安装虚拟声卡" },
   inAppPickMic: { en: "in app pick {name} as mic", zh: "通话软件麦克风选 {name}" },
-  reduceNoise: { en: "Reduce background noise", zh: "抑制背景噪声" },
-  aec3Only: { en: "AEC3 only", zh: "仅 AEC3" },
-  lvqeNsHint: {
-    en: "on = v1.3 · off = v1.4 pure aec",
-    zh: "开 = v1.3 · 关 = v1.4 纯回声消除",
+  noiseBuiltIn: {
+    en: "Built-in model NS · external NS locked",
+    zh: "模型内置降噪 · 外部降噪已锁定",
   },
+  noiseWebrtcHint: { en: "WebRTC noise suppression", zh: "WebRTC 噪声抑制" },
+  noiseRnnoiseHint: { en: "RNNoise neural suppression", zh: "RNNoise 神经网络降噪" },
+  noiseOffHint: { en: "Noise suppression off", zh: "降噪已关闭" },
 
   signal: { en: "Signal", zh: "Signal" },
   sigFlow: {
@@ -89,9 +90,18 @@ const D: Record<string, { en: string; zh: string }> = {
   nvnaCoresSuffix: { en: "-core", zh: " 核" },
   engRecheck: { en: "recheck", zh: "重检" },
   // LocalVQE 模型列表
-  // 徽标重设计(2026-07-05):DEFAULT 全词太宽挤掉参数量 → 工程 BOM 的标准件记号 STD
-  lvqeDefault: { en: "STD", zh: "标配" },
-  lvqeDefaultHint: { en: "default model", zh: "默认模型" },
+  lvqeModel14Description: {
+    en: "Pure AEC model; external WebRTC or RNNoise can be added.",
+    zh: "纯回声消除模型，可叠加 WebRTC 或 RNNoise 降噪。",
+  },
+  lvqeModel13Description: {
+    en: "AEC model with built-in noise suppression.",
+    zh: "内置降噪的回声消除模型。",
+  },
+  lvqeModel12Description: {
+    en: "Smaller AEC model with built-in noise suppression.",
+    zh: "体积更小、内置降噪的回声消除模型。",
+  },
   lvqeDownload: { en: "download", zh: "下载" },
   lvqeGet: { en: "GET", zh: "下载" },
   lvqeOpenDir: { en: "open model folder", zh: "打开模型目录" },

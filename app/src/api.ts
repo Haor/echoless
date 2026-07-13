@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   DeviceList,
   DoctorAudio,
+  NoiseMode,
   NvafxDoctor,
   Platform,
   ProcessorManifest,
@@ -327,9 +328,11 @@ export interface ConfigChoice {
   output: string;
   reference: string; // "system" | "none" | "input:<stable_id>" | ...
   kind: string; // backend kind
+  noiseMode: NoiseMode;
   pipeline: PipelineCfg;
   params: Record<string, unknown>; // chain[0] 参数(不含 reference_channels)
   diagnostics?: DiagnosticsCfg | null; // 开启录制时写入 [diagnostics]
+  bypass?: boolean;
 }
 
 export function tomlString(v: string): string {
@@ -391,6 +394,7 @@ export function buildConfigToml(c: ConfigChoice): string {
     lines.push(`near_delay_ms = ${c.pipeline.near_delay_ms}`);
   // 输出电平:发原始 0-100 整数,曲线/软限幅由后端做(单一真理源,不在前端算 gain)。
   lines.push(`output_level = ${c.pipeline.output_level ?? OUTPUT_LEVEL_UNITY}`);
+  if (c.bypass) lines.push(`bypass = true`);
   lines.push(``);
   if (c.diagnostics) {
     lines.push(`[diagnostics]`);
@@ -402,9 +406,15 @@ export function buildConfigToml(c: ConfigChoice): string {
   lines.push(`[[chain]]`, `kind = ${tomlString(c.kind)}`);
   for (const [k, raw] of Object.entries(c.params)) {
     if (k === "reference_channels") continue; // 顶层管线项,不重复
+    if (k === "ns" || k === "ns_level") continue;
     if (c.kind === "nvidia_afx_aec" && k === "runtime_dir") continue;
     const val = tomlValue(raw);
     if (val !== null) lines.push(`${k} = ${val}`);
+  }
+  if (c.noiseMode === "webrtc") {
+    lines.push(``, `[[chain]]`, `kind = "webrtc_ns"`);
+  } else if (c.noiseMode === "rnnoise") {
+    lines.push(``, `[[chain]]`, `kind = "rnnoise"`);
   }
   return lines.join("\n") + "\n";
 }

@@ -1,18 +1,41 @@
 // 引擎参数的纯逻辑(审计 T-02:抽出以便单测,不含 Tauri/React 依赖)。
 import type { PipelineCfg } from "./api";
+import type { NoiseMode, NoiseSuppressionManifest } from "./types";
 
-// LocalVQE 官方描述:v1.4 = 纯 AEC(无降噪),v1.3 = AEC + 降噪。
-// 首页 NOISE 开关在 LVQE 下的语义 = 在这两个版本间切换(文件名 "-aec-" 标记纯 AEC)。
-export const LVQE_NS_ON_FILE = "localvqe-v1.3-4.8M-f32.gguf";
-export const LVQE_NS_OFF_FILE = "localvqe-v1.4-aec-200K-f32.gguf";
+export function modelFileName(model: unknown): string | null {
+  if (typeof model !== "string" || model.length === 0) return null;
+  return model.split(/[\\/]/).at(-1) ?? null;
+}
 
-/** 模型文件名带 "-aec-" = 纯 AEC(降噪关)。 */
-export const lvqePureAec = (model: unknown): boolean =>
-  String(model ?? "").includes("-aec-");
+export function allowedNoiseModes(
+  manifest: NoiseSuppressionManifest | null,
+  kind: string,
+  params: Record<string, unknown>,
+): NoiseMode[] {
+  if (!manifest) return ["off"];
+  if (kind !== "localvqe") return manifest.engine_defaults[kind] ?? ["off"];
 
-/** NOISE 开关目标文件:ON→v1.3(含降噪),OFF→v1.4(纯 AEC)。 */
-export const lvqeNoiseTargetFile = (on: boolean): string =>
-  on ? LVQE_NS_ON_FILE : LVQE_NS_OFF_FILE;
+  const file = modelFileName(params.model);
+  const model = manifest.localvqe_models.find((entry) => entry.file === file);
+  return model?.allowed_modes ?? manifest.unknown_localvqe_allowed_modes;
+}
+
+export function normalizeNoiseMode(
+  manifest: NoiseSuppressionManifest | null,
+  kind: string,
+  params: Record<string, unknown>,
+  mode: NoiseMode,
+): NoiseMode {
+  return allowedNoiseModes(manifest, kind, params).includes(mode) ? mode : "off";
+}
+
+export function shouldSelectNoiseMode(
+  current: NoiseMode,
+  next: NoiseMode,
+  allowed: readonly NoiseMode[],
+): boolean {
+  return current !== next && allowed.includes(next);
+}
 
 export function claimEngineKindChange(
   current: { current: string },

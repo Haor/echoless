@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  LVQE_NS_ON_FILE,
-  LVQE_NS_OFF_FILE,
-  lvqePureAec,
-  lvqeNoiseTargetFile,
+  allowedNoiseModes,
+  modelFileName,
+  normalizeNoiseMode,
+  shouldSelectNoiseMode,
   isNearDelayOnlyPatch,
   hotInitialDelayValue,
   hotLocalvqeNoiseGateValue,
@@ -16,6 +16,40 @@ import {
   routeEngineKindSelection,
   shouldPickLocalvqeModel,
 } from "./engineLogic";
+import type { NoiseSuppressionManifest } from "./types";
+
+const NOISE_MANIFEST: NoiseSuppressionManifest = {
+  modes: [
+    { id: "webrtc", processor_kind: "webrtc_ns" },
+    { id: "rnnoise", processor_kind: "rnnoise" },
+    { id: "off", processor_kind: null },
+  ],
+  engine_defaults: {
+    aec3: ["webrtc", "rnnoise", "off"],
+    nvidia_afx_aec: ["webrtc", "rnnoise", "off"],
+  },
+  localvqe_models: [
+    {
+      file: "localvqe-v1.2-1.3M-f32.gguf",
+      version: "v1.2",
+      capability: "built_in_ns",
+      allowed_modes: ["off"],
+    },
+    {
+      file: "localvqe-v1.3-4.8M-f32.gguf",
+      version: "v1.3",
+      capability: "built_in_ns",
+      allowed_modes: ["off"],
+    },
+    {
+      file: "localvqe-v1.4-aec-200K-f32.gguf",
+      version: "v1.4",
+      capability: "pure_aec",
+      allowed_modes: ["webrtc", "rnnoise", "off"],
+    },
+  ],
+  unknown_localvqe_allowed_modes: ["off"],
+};
 
 describe("routeEngineKindSelection", () => {
   it.each(["localvqe", "nvidia_afx_aec"])(
@@ -87,23 +121,64 @@ describe("shouldPickLocalvqeModel", () => {
   });
 });
 
-describe("LocalVQE NOISE ↔ model mapping", () => {
-  it("NOISE on 选 v1.3(AEC+降噪),off 选 v1.4(纯 AEC)", () => {
-    expect(lvqeNoiseTargetFile(true)).toBe(LVQE_NS_ON_FILE);
-    expect(lvqeNoiseTargetFile(false)).toBe(LVQE_NS_OFF_FILE);
+describe("shared noise suppression compatibility", () => {
+  it("uses the manifest for all supported engines and LocalVQE models", () => {
+    expect(allowedNoiseModes(NOISE_MANIFEST, "aec3", {})).toEqual([
+      "webrtc",
+      "rnnoise",
+      "off",
+    ]);
+    expect(
+      allowedNoiseModes(NOISE_MANIFEST, "localvqe", {
+        model: "C:\\models\\localvqe-v1.3-4.8M-f32.gguf",
+      }),
+    ).toEqual(["off"]);
+    expect(
+      allowedNoiseModes(NOISE_MANIFEST, "localvqe", {
+        model: "/models/localvqe-v1.4-aec-200K-f32.gguf",
+      }),
+    ).toEqual(["webrtc", "rnnoise", "off"]);
   });
 
-  it("往返一致:on→file→pureAec 判定还原 NOISE 态", () => {
-    // NOISE on = 非纯 AEC(v1.3);off = 纯 AEC(v1.4)。
-    expect(lvqePureAec(lvqeNoiseTargetFile(true))).toBe(false);
-    expect(lvqePureAec(lvqeNoiseTargetFile(false))).toBe(true);
+  it("forces built-in and unknown LocalVQE models to OFF", () => {
+    expect(
+      normalizeNoiseMode(
+        NOISE_MANIFEST,
+        "localvqe",
+        { model: "localvqe-v1.2-1.3M-f32.gguf" },
+        "rnnoise",
+      ),
+    ).toBe("off");
+    expect(
+      normalizeNoiseMode(
+        NOISE_MANIFEST,
+        "localvqe",
+        { model: "custom.gguf" },
+        "webrtc",
+      ),
+    ).toBe("off");
   });
 
-  it("pureAec 靠文件名 -aec- 标记,兼容路径与空值", () => {
-    expect(lvqePureAec("/data/localvqe-v1.4-aec-200K-f32.gguf")).toBe(true);
-    expect(lvqePureAec("localvqe-v1.3-4.8M-f32.gguf")).toBe(false);
-    expect(lvqePureAec(null)).toBe(false);
-    expect(lvqePureAec(undefined)).toBe(false);
+  it("does not restore an old mode or reselect the current mode", () => {
+    const forced = normalizeNoiseMode(
+      NOISE_MANIFEST,
+      "localvqe",
+      { model: "localvqe-v1.3-4.8M-f32.gguf" },
+      "webrtc",
+    );
+    expect(
+      normalizeNoiseMode(NOISE_MANIFEST, "aec3", {}, forced),
+    ).toBe("off");
+    expect(
+      shouldSelectNoiseMode("off", "off", ["webrtc", "rnnoise", "off"]),
+    ).toBe(false);
+    expect(shouldSelectNoiseMode("off", "rnnoise", ["off"])).toBe(false);
+  });
+
+  it("extracts model filenames without path heuristics", () => {
+    expect(modelFileName("C:\\models\\model.gguf")).toBe("model.gguf");
+    expect(modelFileName("/models/model.gguf")).toBe("model.gguf");
+    expect(modelFileName(undefined)).toBeNull();
   });
 });
 
@@ -211,6 +286,16 @@ describe("run intent guard", () => {
 
     expect(guard.allowsStart(staleApply)).toBe(false);
     expect(guard.allowsStart(explicitStart)).toBe(true);
+  });
+
+  it("lets a newer configuration restart invalidate an older one", () => {
+    const guard = createRunIntentGuard(true);
+    const firstRestart = guard.request(true);
+    const latestRestart = guard.request(true);
+
+    expect(guard.allowsStart(firstRestart)).toBe(false);
+    expect(guard.allowsStart(latestRestart)).toBe(true);
+    expect(guard.wantsRun()).toBe(true);
   });
 });
 

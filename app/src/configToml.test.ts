@@ -37,6 +37,7 @@ describe("TOML basic string encoding", () => {
       reference: "none",
       output: "default",
       kind: "passthrough",
+      noiseMode: "off",
       pipeline: {
         sample_rate: 48_000,
         frame_ms: 10,
@@ -60,6 +61,7 @@ describe("TOML basic string encoding", () => {
       reference: "none",
       output: "default",
       kind: "passthrough",
+      noiseMode: "off",
       pipeline: {
         sample_rate: 48_000,
         frame_ms: 10,
@@ -91,6 +93,7 @@ describe("TOML basic string encoding", () => {
       reference: "system",
       output: "default",
       kind: "nvidia_afx_aec",
+      noiseMode: "off",
       pipeline: {
         sample_rate: 48_000,
         frame_ms: 10,
@@ -112,6 +115,7 @@ describe("TOML basic string encoding", () => {
       reference: "system",
       output: "default",
       kind: "aec3",
+      noiseMode: "off",
       pipeline: {
         sample_rate: 48_000,
         frame_ms: 10,
@@ -123,5 +127,49 @@ describe("TOML basic string encoding", () => {
 
     expect(config).toContain("[diagnostics]\nenabled = true\nmax_seconds = 30");
     expect(config).not.toContain("record_dir");
+  });
+
+  it.each([
+    ["off", []],
+    ["webrtc", ['kind = "webrtc_ns"']],
+    ["rnnoise", ['kind = "rnnoise"']],
+  ] as const)("serializes %s as the matching processor chain", (noiseMode, nsKinds) => {
+    const config = buildConfigToml({
+      mic: "default",
+      reference: "system",
+      output: "default",
+      kind: "aec3",
+      noiseMode,
+      pipeline: {
+        sample_rate: 48_000,
+        frame_ms: 10,
+        reference_channels: "mono",
+      },
+      params: { ns: true, ns_level: "high", agc: false },
+    });
+
+    expect(config.match(/\[\[chain\]\]/g)).toHaveLength(1 + nsKinds.length);
+    for (const kind of nsKinds) expect(config).toContain(kind);
+    expect(config).not.toContain("ns =");
+    expect(config).not.toContain("ns_level");
+  });
+
+  it("preserves bypass across a structural restart", () => {
+    const config = buildConfigToml({
+      mic: "default",
+      reference: "system",
+      output: "default",
+      kind: "aec3",
+      noiseMode: "rnnoise",
+      pipeline: {
+        sample_rate: 48_000,
+        frame_ms: 10,
+        reference_channels: "mono",
+      },
+      params: {},
+      bypass: true,
+    });
+
+    expect(config).toContain("bypass = true");
   });
 });

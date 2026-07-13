@@ -90,10 +90,10 @@ describe("NVAFX Advanced pipeline lock", () => {
       /const nextPipeline = pipelineForEngineKind\(\s*target,\s*pipelineRef\.current,\s*\);/,
     );
     expect(appSource).toMatch(
-      /updateEngine\(\{\s*kind: target,\s*params: np,\s*pipeline: nextPipeline,\s*\}\);/,
+      /updateEngine\(\{\s*kind: target,\s*noiseMode: nextNoiseMode,\s*params: np,\s*pipeline: nextPipeline,\s*\}\);/,
     );
     expect(appSource).toMatch(
-      /applyChangeRef\.current\(\{\s*kind: target,\s*params: np,\s*pipeline: nextPipeline,\s*\}\);/,
+      /applyChangeRef\.current\(\{\s*kind: target,\s*noiseMode: nextNoiseMode,\s*params: np,\s*pipeline: nextPipeline,\s*\}\);/,
     );
     expect(appSource).toContain("onClick={() => changeKind(m.kind)}");
     expect(appSource.match(/pipelineRef\.current = nextPipeline;/g)).toHaveLength(

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type {
   NvafxCheck,
   NvafxDoctor,
+  NoiseSuppressionManifest,
   Platform,
   Processor,
 } from "../types";
@@ -39,11 +40,26 @@ const LVQE_MODELS: {
   file: string;
   ver: string;
   params: string;
-  def?: boolean;
+  descriptionKey: string;
 }[] = [
-  { file: "localvqe-v1.4-aec-200K-f32.gguf", ver: "v1.4", params: "200K" },
-  { file: "localvqe-v1.3-4.8M-f32.gguf", ver: "v1.3", params: "4.8M", def: true },
-  { file: "localvqe-v1.2-1.3M-f32.gguf", ver: "v1.2", params: "1.3M" },
+  {
+    file: "localvqe-v1.4-aec-200K-f32.gguf",
+    ver: "v1.4",
+    params: "200K",
+    descriptionKey: "lvqeModel14Description",
+  },
+  {
+    file: "localvqe-v1.3-4.8M-f32.gguf",
+    ver: "v1.3",
+    params: "4.8M",
+    descriptionKey: "lvqeModel13Description",
+  },
+  {
+    file: "localvqe-v1.2-1.3M-f32.gguf",
+    ver: "v1.2",
+    params: "1.3M",
+    descriptionKey: "lvqeModel12Description",
+  },
 ];
 
 // 引擎能力画像(前端描述性数据,非配置 contract)。
@@ -119,6 +135,7 @@ function checkPill(c: NvafxCheck) {
 
 interface Props {
   processors: Processor[];
+  noiseSuppression: NoiseSuppressionManifest | null;
   platform: Platform;
   kind: string;
   doctor: NvafxDoctor | null;
@@ -333,6 +350,7 @@ function NvafxCard({
 
 export function EnginePage({
   processors,
+  noiseSuppression,
   platform,
   kind,
   doctor,
@@ -401,6 +419,15 @@ export function EnginePage({
   const localvqeModels = () => (
     <div className="lvmods">
       {LVQE_MODELS.map((m) => {
+        const capability = noiseSuppression?.localvqe_models.find(
+          (entry) => entry.file === m.file,
+        )?.capability;
+        const capabilityLabel =
+          capability === "pure_aec"
+            ? "AEC"
+            : capability === "built_in_ns"
+              ? "NS"
+              : null;
         const found = lvAssets?.models.find((x) => x.filename === m.file);
         const selected = !!found && localvqeModel === found.path;
         const downloading = m.file in lvDl;
@@ -425,15 +452,11 @@ export function EnginePage({
               if (selected) return;
               found ? onPickModel(found.path) : downloadModel(m.file);
             }}
-            title={`${m.ver} · ${m.params} · ${found ? found.path : `${t("lvqeDownload")} ${m.file}`}`}
+            title={`${m.ver} · ${m.params} · ${t(m.descriptionKey)}`}
           >
             <span className={`lvbox ${found ? "ok" : "miss"}`}>{box}</span>
             <span className="lvver">{m.ver}</span>
-            {m.def && (
-              <i className="lvdef" title={t("lvqeDefaultHint")}>
-                {t("lvqeDefault")}
-              </i>
-            )}
+            {capabilityLabel && <i className="lvdef">{capabilityLabel}</i>}
             <span className="lvsp" />
             <span className="lvms">
               <span className="lvp">{m.params}</span>
