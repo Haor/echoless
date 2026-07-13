@@ -118,7 +118,7 @@ fn processor_chain_process_is_allocation_free_after_warmup() {
     );
 
     let mut rnnoise_chain = ProcessorChain::new(48_000, 1);
-    rnnoise_chain.push(Box::new(RnNoise::new()));
+    rnnoise_chain.push(Box::new(RnNoise::try_new().unwrap()));
     let allocations = std::thread::spawn(move || {
         let near = sine_block(480, 440.0, 48_000);
         let far = vec![0.0; 480];

@@ -12,7 +12,7 @@ pub fn build(kind: &str) -> anyhow::Result<Box<dyn EchoProcessor>> {
         "localvqe" => Box::new(LocalVqe::new()),
         "nvidia_afx_aec" => Box::new(NvidiaAfxAec::new()),
         "webrtc_ns" => Box::new(WebRtcNs::new()),
-        "rnnoise" => Box::new(RnNoise::new()),
+        "rnnoise" => Box::new(RnNoise::try_new()?),
         other => anyhow::bail!(
             "unknown processor kind: {other} (available: passthrough / aec3 / localvqe / nvidia_afx_aec / webrtc_ns / rnnoise)"
         ),

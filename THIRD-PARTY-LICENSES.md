@@ -251,19 +251,20 @@ and remain governed by NVIDIA's own license.
 
 ---
 
-## 4. nnnoiseless / RNNoise — BSD-3-Clause
+## 4. Xiph RNNoise — BSD-3-Clause
 
-The optional RNNoise processor uses `nnnoiseless`, a pure-Rust port derived
-from Xiph.Org's RNNoise. The code and model weights are compiled into the
-Echoless binary.
+The optional RNNoise processor uses a pinned subset of Xiph.Org's official
+RNNoise runtime and model. The C code and model weights are compiled into the
+Echoless binary; no external shared library or runtime download is required.
 
-- Project: https://github.com/jneem/nnnoiseless
+- Project: https://github.com/xiph/rnnoise
+- Pinned revision: `70f1d256acd4b34a572f999a05c87bf00b67730d`
 - License: BSD-3-Clause
 
 ```
-Copyright (c) 2020, Joe Neeman
+Copyright (c) 2007-2017, 2024 Jean-Marc Valin
+Copyright (c) 2023 Amazon
 Copyright (c) 2017, Mozilla
-Copyright (c) 2007-2017, Jean-Marc Valin
 Copyright (c) 2005-2017, Xiph.Org Foundation
 Copyright (c) 2003-2004, Mark Borgerding
 

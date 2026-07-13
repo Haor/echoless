@@ -181,18 +181,19 @@ capture format    = 48 kHz mono
 ### 5.3 RNNoise
 
 RNNoise 作为独立节点接收 AEC 输出,保持原生 48 kHz/10 ms 处理域,不增加节点边界
-重采样。实现采用 `nnnoiseless 0.5.2`,并关闭默认 feature:
+重采样。实现固定到 Xiph 官方 RNNoise 提交 `70f1d256`,并内置该提交对应的官方完整模型:
 
 - 许可证为 BSD-3-Clause,与项目 MIT 许可证兼容;许可全文随发行包分发。
-- 纯 Rust 实现,Windows/macOS 不需要 C 编译器、libclang、额外 DLL 或运行时模型下载。
-- 模型约 88 KiB,直接编入二进制;更新通过 Cargo 依赖和 `Cargo.lock` 管理。
+- 固定快照晚于 `v0.2`,使用 32 频带新网络,并包含 `bb18d2f` 的瞬态噪声增益衰减修复。
+- 官方 C 源码在构建时静态编译;用户侧不需要 C 工具链、libclang、额外 DLL 或运行时模型下载。
+- 完整模型二进制约 14.1 MiB,直接编入产物;源码提交、模型版本和 SHA-256 记录在 vendor 目录。
 - `f32` API 使用 16-bit PCM 幅度域,节点负责与 Echoless 的归一化 `[-1, 1]` 域双向转换。
-- FFT planner/scratch 使用线程局部懒初始化,因此处理链必须在实际音频线程再次预热。
 - 算法使用 960-sample 分析窗和 480-sample 步长,节点按 10 ms 上报额定延迟。
+- 初始化和模型解析只发生在处理器创建或重置阶段;逐帧处理不得分配堆内存。
 
-未选择 `rnnoise-c`/`rnnoise-sys`,因为该封装已经停止维护,并会给 Windows 打包引入
-bindgen、libclang 与 C 工具链。也未直接内置 Xiph C 源码,因为它需要项目长期维护
-MSVC 构建、模型生成和跨平台补丁,对当前小型开源工具不成比例。
+没有采用 `nnnoiseless`,因为它仍基于旧版 22 频带网络,没有跟进官方 `v0.2` 的网络
+代际和后续瞬态噪声修复。没有采用已停止维护的 `rnnoise-c`/`rnnoise-sys`,以免引入
+bindgen、libclang 或额外动态库;Echoless 只维护官方运行时的最小静态构建边界。
 
 ## 6. AEC3 行为变化
 

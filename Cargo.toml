@@ -38,4 +38,4 @@ windows-sys = { version = "0.59", features = [
 ] }
 # 处理器边界 SRC 的正式实现(蓝本 §10):chain.rs 使用 rubato 同步 FFT resampler
 rubato = "0.15"
-nnnoiseless = { version = "0.5.2", default-features = false }
+cc = "1"
