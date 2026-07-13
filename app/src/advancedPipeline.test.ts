@@ -109,21 +109,71 @@ describe("NVAFX Advanced pipeline lock", () => {
 });
 
 describe("shared NS Advanced parameters", () => {
-  it("shows manifest-backed strength only for WebRTC NS", () => {
+  it("shows manifest-backed WebRTC strength inside Pipeline only", () => {
     expect(advancedPageSource).toContain(
       "const noiseProcessorKind = noiseSuppression?.modes.find(",
     );
-    expect(advancedPageSource).toContain(
-      'noiseMode === "webrtc" && noiseBackendParams.length > 0',
+    const pipeline = advancedPageSource.indexOf('t("secPipeline")');
+    const strength = advancedPageSource.indexOf(
+      'noiseMode === "webrtc" &&',
+      pipeline,
     );
+    const backend = advancedPageSource.indexOf(
+      "backendLabel(kind, proc)",
+      pipeline,
+    );
+
+    expect(strength).toBeGreaterThan(pipeline);
+    expect(strength).toBeLessThan(backend);
     expect(advancedPageSource).toContain(
       "arow(key, `NS ${key}`, spec, noiseParams, onNoiseParam)",
     );
+    expect(advancedPageSource).not.toContain("anoise-section");
   });
 
   it("keeps mode parameters separate and ignores the selected value", () => {
     expect(appSource).toContain("noiseParams={noiseParamsByMode[noiseMode] ?? {}}");
     expect(appSource).toContain("const next = patchNoiseModeParam(");
     expect(appSource).toContain("if (!next) return;");
+  });
+
+  it("starts delay-probe lights only from the real beep event", () => {
+    expect(advancedPageSource).not.toContain("PROBE_FIRST_MS");
+    expect(advancedPageSource).toMatch(
+      /if \(p\.stage !== "beep_train_start"\) return;[\s\S]*timer\.current = window\.setInterval/,
+    );
+  });
+
+  it("keeps the probe action visually bracketed without polluting its label", () => {
+    expect(advancedPageSource).toContain(
+      '{probing ? t("probing") : t("probeRun")}',
+    );
+    expect(advancedPageSource).not.toContain('probing ? "•••" : "↻"');
+  });
+
+  it("keeps Session in the left flow instead of below Delay Probe", () => {
+    const lowerStart = advancedPageSource.indexOf(
+      '<div className="alower-left">',
+    );
+    const session = advancedPageSource.indexOf('t("secSession")', lowerStart);
+    const probe = advancedPageSource.indexOf("<ProbeSection", lowerStart);
+
+    expect(lowerStart).toBeGreaterThan(-1);
+    expect(session).toBeGreaterThan(lowerStart);
+    expect(probe).toBeGreaterThan(session);
+  });
+});
+
+describe("delay probe page lifecycle", () => {
+  it("keeps Advanced mounted and clears settled results only while hidden", () => {
+    expect(appSource).toContain(
+      '<div className="persistent-view" hidden={view !== "advanced"}>',
+    );
+    expect(appSource).toContain('visible={view === "advanced"}');
+    expect(appSource).not.toContain("probeActive");
+    expect(advancedPageSource).toContain(
+      "if (!visible && !probing && (probe != null || probeErr != null || lit > 0))",
+    );
+    expect(advancedPageSource).toContain("updateProbe(PROBE_INITIAL_STATE)");
   });
 });

@@ -35,6 +35,7 @@ interface Props {
   output: string;
   running: boolean;
   onSetRun: (on: boolean) => Promise<void>;
+  visible: boolean;
   // Windows 托盘偏好(SESSION 段,仅 windows 平台渲染)。
   trayPrefs: TrayPrefsState;
   onTrayPrefs: (patch: Partial<TrayPrefsState>) => void;
@@ -61,7 +62,6 @@ const NOISE_LEVEL_LABELS: Record<string, string> = {
 };
 
 const PROBE_BEEPS = 12;
-const PROBE_FIRST_MS = 4500;
 const PROBE_STEP_MS = 720;
 // afplay / cpal 输出流从 spawn 到出声的经验常量(进度灯对齐用,无需精确)。
 const PROBE_PLAYER_OPEN_MS = 150;
@@ -195,6 +195,7 @@ function ProbeSection({
   output,
   running,
   onSetRun,
+  visible,
 }: Pick<
   Props,
   | "platform"
@@ -207,6 +208,7 @@ function ProbeSection({
   | "output"
   | "running"
   | "onSetRun"
+  | "visible"
 >) {
   const { t, lang } = useI18n();
   const [state, updateProbe] = useReducer(probeReducer, PROBE_INITIAL_STATE);
@@ -225,6 +227,11 @@ function ProbeSection({
       if (timer.current != null) window.clearInterval(timer.current);
     };
   }, []);
+  useEffect(() => {
+    if (!visible && !probing && (probe != null || probeErr != null || lit > 0)) {
+      updateProbe(PROBE_INITIAL_STATE);
+    }
+  }, [visible, probing, probe, probeErr, lit]);
   const updateProbeIfMounted = (patch: ProbePatch) => {
     if (mounted.current) updateProbe(patch);
   };
@@ -241,31 +248,31 @@ function ProbeSection({
         if (!mounted.current) return;
       }
       updateProbeIfMounted({ phase: "probing" });
-      // 进度灯节奏:默认按墙钟估计(旧 CLI 无进度事件的回退);收到 CLI 的
-      // beep_train_start 事件后改以真实开播时刻为基准 —— 蜂鸣要等子进程起好
-      // 设备 + 4s 稳定期才响,纯墙钟估计会让灯超前声音(音画不同步)。
-      let t0 = Date.now();
-      let firstMs = PROBE_FIRST_MS;
-      let stepMs = PROBE_STEP_MS;
-      let beeps = PROBE_BEEPS;
-      if (timer.current != null) window.clearInterval(timer.current);
-      timer.current = window.setInterval(() => {
-        const el = Date.now() - t0;
-        const n = Math.max(
-          0,
-          Math.min(beeps, Math.floor((el - firstMs) / stepMs) + 1),
-        );
-        updateProbeIfMounted({ lit: n });
-      }, 100);
+      // 进度只以 CLI 的真实开播事件为时钟源。不能先按墙钟猜测再在事件到达时
+      // 重置,否则子进程启动稍慢时会出现「无声先亮两格 → 倒退 → 正常播放」。
       const unProgress = await onProbeProgress((p) => {
         if (!mounted.current) return;
         if (p.stage !== "beep_train_start") return;
-        // 首响 = 事件时刻 + WAV 前导静音 + 播放器打开的经验常量。
-        t0 = Date.now();
-        firstMs = (p.pre_roll_ms ?? 500) + PROBE_PLAYER_OPEN_MS;
-        stepMs = (p.beep_ms ?? 70) + (p.gap_ms ?? 650);
-        beeps = p.beeps ?? PROBE_BEEPS;
+        const t0 = Date.now();
+        const firstMs = (p.pre_roll_ms ?? 500) + PROBE_PLAYER_OPEN_MS;
+        const stepMs =
+          p.beep_ms != null && p.gap_ms != null
+            ? p.beep_ms + p.gap_ms
+            : PROBE_STEP_MS;
+        const beeps = p.beeps ?? PROBE_BEEPS;
         updateProbeIfMounted({ lit: 0 });
+        if (timer.current != null) window.clearInterval(timer.current);
+        timer.current = window.setInterval(() => {
+          const elapsed = Date.now() - t0;
+          const count = Math.max(
+            0,
+            Math.min(
+              beeps,
+              Math.floor((elapsed - firstMs) / stepMs) + 1,
+            ),
+          );
+          updateProbeIfMounted({ lit: count });
+        }, 100);
       });
       let r: NearDelayProbeResult;
       try {
@@ -344,8 +351,7 @@ function ProbeSection({
                 disabled={probing}
                 onClick={runProbe}
               >
-                {probing ? t("probing") : t("probeRun")}{" "}
-                <span className="mk">{probing ? "•••" : "↻"}</span>
+                {probing ? t("probing") : t("probeRun")}
               </button>
             </Hint>
             <span className="pnote">
@@ -437,6 +443,7 @@ export function AdvancedPage({
   output,
   running,
   onSetRun,
+  visible,
   trayPrefs,
   onTrayPrefs,
   autoStartEnabled,
@@ -588,6 +595,10 @@ export function AdvancedPage({
             />
           </span>
         </div>
+        {noiseMode === "webrtc" &&
+          noiseBackendParams.map(([key, spec]) =>
+            arow(key, `NS ${key}`, spec, noiseParams, onNoiseParam),
+          )}
       </div>
 
       <div className="asec">{backendLabel(kind, proc)}</div>
@@ -599,20 +610,66 @@ export function AdvancedPage({
       </div>
 
       <div className="alower">
-        <section className="anoise-section">
-          {noiseMode === "webrtc" && noiseBackendParams.length > 0 && (
-            <>
-              <div className="asec">
-                {backendLabel("webrtc_ns", noiseProcessor)}
+        <div className="alower-left">
+          <section className="asession-section">
+            <div className="asec">{t("secSession")}</div>
+            <div className="acols">
+              <div className="arow">
+                <span className="alabel">{t("language")}</span>
+                <span className="aval">
+                  <SegButtons<Lang>
+                    value={lang}
+                    options={[
+                      { value: "en", label: "EN" },
+                      { value: "zh", label: "中文" },
+                    ]}
+                    onChange={setLang}
+                  />
+                </span>
               </div>
-              <div className="acols">
-                {noiseBackendParams.map(([key, spec]) =>
-                  arow(key, `NS ${key}`, spec, noiseParams, onNoiseParam),
-                )}
-              </div>
-            </>
-          )}
-        </section>
+
+              {/* Windows 后台启动与托盘偏好。Auto Start 读取系统注册状态;
+                  Close to Tray 仍由前端偏好同步到 Rust。 */}
+              {platform === "windows" && (
+                <>
+                  <div className="arow">
+                    <Hint text={t("autoStartHint")}>
+                      <span className="alabel">{t("autoStart")}</span>
+                    </Hint>
+                    <span className="aval">
+                      <SegButtons
+                        value={autoStartEnabled ? "on" : "off"}
+                        options={[
+                          { value: "on", label: "ON" },
+                          { value: "off", label: "OFF" },
+                        ]}
+                        disabled={autoStartBusy}
+                        onChange={(v) => onAutoStart(v === "on")}
+                      />
+                    </span>
+                  </div>
+                  <div className="arow">
+                    <Hint text={t("trayCloseHint")}>
+                      <span className="alabel">{t("trayClose")}</span>
+                    </Hint>
+                    <span className="aval">
+                      <SegButtons
+                        value={trayPrefs.closeToTray ? "on" : "off"}
+                        options={[
+                          { value: "on", label: "ON" },
+                          { value: "off", label: "OFF" },
+                        ]}
+                        onChange={(v) =>
+                          onTrayPrefs({ closeToTray: v === "on" })
+                        }
+                      />
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
 
         <ProbeSection
           platform={platform}
@@ -625,61 +682,8 @@ export function AdvancedPage({
           output={output}
           running={running}
           onSetRun={onSetRun}
+          visible={visible}
         />
-      </div>
-
-      <div className="asec">{t("secSession")}</div>
-      <div className="acols">
-        <div className="arow">
-          <span className="alabel">{t("language")}</span>
-          <span className="aval">
-            <SegButtons<Lang>
-              value={lang}
-              options={[
-                { value: "en", label: "EN" },
-                { value: "zh", label: "中文" },
-              ]}
-              onChange={setLang}
-            />
-          </span>
-        </div>
-        {/* Windows 后台启动与托盘偏好。Auto Start 读取系统注册状态;
-            Close to Tray 仍由前端偏好同步到 Rust。 */}
-        {platform === "windows" && (
-          <>
-            <div className="arow">
-              <Hint text={t("autoStartHint")}>
-                <span className="alabel">{t("autoStart")}</span>
-              </Hint>
-              <span className="aval">
-                <SegButtons
-                  value={autoStartEnabled ? "on" : "off"}
-                  options={[
-                    { value: "on", label: "ON" },
-                    { value: "off", label: "OFF" },
-                  ]}
-                  disabled={autoStartBusy}
-                  onChange={(v) => onAutoStart(v === "on")}
-                />
-              </span>
-            </div>
-            <div className="arow">
-              <Hint text={t("trayCloseHint")}>
-                <span className="alabel">{t("trayClose")}</span>
-              </Hint>
-              <span className="aval">
-                <SegButtons
-                  value={trayPrefs.closeToTray ? "on" : "off"}
-                  options={[
-                    { value: "on", label: "ON" },
-                    { value: "off", label: "OFF" },
-                  ]}
-                  onChange={(v) => onTrayPrefs({ closeToTray: v === "on" })}
-                />
-              </span>
-            </div>
-          </>
-        )}
       </div>
     </div>
   );

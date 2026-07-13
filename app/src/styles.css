@@ -371,6 +371,12 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
 }
+.persistent-view {
+  display: contents;
+}
+.persistent-view[hidden] {
+  display: none;
+}
 .enbody {
   flex: 1 1 auto;
   min-height: 0;
@@ -512,14 +518,20 @@ body {
   width: 340px;
 }
 
-/* Advanced 下半区:NS 与延迟侦测并排,会话区在其后独占整行。 */
+/* Advanced 下半区是两条独立纵向流:左侧 SESSION,右侧只放延迟侦测。
+   不能把 SESSION 放在 grid 的下一行,否则 probe 结果会抬高整行并把它向下推。 */
 .alower {
   display: grid;
   grid-template-columns: 1fr 1fr;
   column-gap: 40px;
   align-items: start;
 }
-.anoise-section,
+.alower-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.asession-section,
 .aprobe-section {
   min-width: 0;
 }
@@ -539,8 +551,8 @@ body {
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  /* v9.1:去掉 92px 预留 —— probe 空闲时它是 LVQE 页的大片空白(用户圈出);
-     进度点/结果出现时自然撑高 */
+  /* 预留标准探测结果(进度点 + 两行读数)的高度,避免结果出现时把 SESSION 下推。 */
+  min-height: 82px;
 }
 .prow {
   display: flex;
@@ -552,6 +564,17 @@ body {
   flex: none;
   white-space: nowrap;
   padding: 0;
+  font-size: 11px;
+}
+.pbtn::before {
+  content: ">>";
+  margin-right: 3px;
+  color: var(--t-strong);
+}
+.pbtn::after {
+  content: "<<";
+  margin-left: 3px;
+  color: var(--t-strong);
 }
 .pnote {
   color: var(--t-faint);

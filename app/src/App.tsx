@@ -2519,7 +2519,7 @@ function AppShell() {
             }}
           />
         )}
-        {view === "advanced" && (
+        <div className="persistent-view" hidden={view !== "advanced"}>
           <AdvancedPage
             processors={processors}
             noiseSuppression={noiseSuppression}
@@ -2537,6 +2537,7 @@ function AppShell() {
             output={selOutput}
             running={powerOn}
             onSetRun={setRunForProbe}
+            visible={view === "advanced"}
             trayPrefs={trayPrefs}
             onTrayPrefs={(patch) =>
               updateTrayPrefs((cur) => ({ ...cur, ...patch }))
@@ -2549,7 +2550,7 @@ function AppShell() {
             }
             onAutoStart={changeAutostart}
           />
-        )}
+        </div>
         {view === "diagnostics" && (
           <RuntimeDiagnosticsPage
             rec={rec}
