@@ -5,7 +5,8 @@
 //!
 //! 调参(经 vendored fork 开放的 `aec3_config()` 注入 EchoCanceller3Config):
 //!   delay_hold / tail_ms / delay_num_filters / linear_stable_echo_path。
-//! 顺带可选 NS(降噪)/ AGC(自动增益)—— 与 AEC3 同属一个 aec3 APM pipeline。
+//! AGC remains part of this AEC3 APM pipeline. Noise suppression is a separate
+//! processor node so every echo canceller can share the same post-filter.
 //! 详见 research/aec3_internal_map.md §2/§9/§11。
 //!
 //! feature `aec3-engine`(默认开)= 真实 AEC3;关掉 = 直通。
@@ -17,7 +18,7 @@ const FRAME: usize = 480; // 10ms @ 48k
 const AEC3_BLOCK_MS: u32 = 4;
 pub const MIN_TAIL_MS: u32 = 14;
 
-/// 我们的高层调参。tail/num_filters/linear 映射到 EchoCanceller3Config;ns/agc 走 aec3 APM。
+/// 我们的高层调参。tail/num_filters/linear 映射到 EchoCanceller3Config;agc 走 aec3 APM。
 #[derive(Clone)]
 #[cfg_attr(not(feature = "aec3-engine"), allow(dead_code))]
 struct Aec3Tuning {
@@ -30,10 +31,6 @@ struct Aec3Tuning {
     /// ref 断续/静音时保持 AEC3 延迟估计;产品默认显式开启,配置层可置 false。
     /// None 仅表示不覆盖 vendored upstream 字段默认值。
     delay_hold: Option<bool>,
-    /// 开启降噪(NoiseSuppression)。
-    ns: bool,
-    /// 降噪强度:low / moderate / high / veryhigh。
-    ns_level: String,
     /// 开启 AGC2 自适应增益。
     agc: bool,
     /// far-end reference 声道数:1=mono downmix,2=stereo L/R。
@@ -47,8 +44,6 @@ impl Default for Aec3Tuning {
             delay_num_filters: None,
             linear_stable_echo_path: false,
             delay_hold: Some(true),
-            ns: false,
-            ns_level: "low".into(),
             agc: false,
             far_channels: 1,
         }
@@ -124,12 +119,6 @@ impl EchoProcessor for Aec3Engine {
         if let Some(v) = params.get("delay_hold").and_then(|v| v.as_bool()) {
             self.tuning.delay_hold = Some(v);
         }
-        if let Some(v) = params.get("ns").and_then(|v| v.as_bool()) {
-            self.tuning.ns = v;
-        }
-        if let Some(v) = params.get("ns_level").and_then(|v| v.as_str()) {
-            self.tuning.ns_level = v.to_string();
-        }
         if let Some(v) = params.get("agc").and_then(|v| v.as_bool()) {
             self.tuning.agc = v;
         }
@@ -153,22 +142,6 @@ impl EchoProcessor for Aec3Engine {
     }
     fn set_runtime_param(&mut self, key: &str, value: &toml::Value) -> anyhow::Result<bool> {
         match key {
-            "ns" => {
-                self.tuning.ns = value
-                    .as_bool()
-                    .ok_or_else(|| anyhow::anyhow!("ns must be a boolean"))?;
-                self.apply_runtime_apm_config();
-                Ok(true)
-            }
-            "ns_level" => {
-                let level = value
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("ns_level must be a string"))?;
-                validate_ns_level(level)?;
-                self.tuning.ns_level = level.to_string();
-                self.apply_runtime_apm_config();
-                Ok(true)
-            }
             "agc" => {
                 self.tuning.agc = value
                     .as_bool()
@@ -234,24 +207,6 @@ fn tail_ms_to_filter_blocks(tail_ms: u32) -> usize {
     ((u64::from(tail_ms) + u64::from(AEC3_BLOCK_MS / 2)) / u64::from(AEC3_BLOCK_MS)) as usize
 }
 
-#[cfg(feature = "aec3-engine")]
-fn ns_level(s: &str) -> aec3_apm::config::NoiseSuppressionLevel {
-    use aec3_apm::config::NoiseSuppressionLevel as L;
-    match s.to_ascii_lowercase().as_str() {
-        "low" => L::Low,
-        "high" => L::High,
-        "veryhigh" | "very_high" | "very-high" => L::VeryHigh,
-        _ => L::Moderate,
-    }
-}
-
-fn validate_ns_level(s: &str) -> anyhow::Result<()> {
-    match s.to_ascii_lowercase().as_str() {
-        "low" | "moderate" | "high" | "veryhigh" | "very_high" | "very-high" => Ok(()),
-        _ => anyhow::bail!("ns_level must be one of: low, moderate, high, veryhigh"),
-    }
-}
-
 fn parse_reference_channels(v: &toml::Value) -> anyhow::Result<u16> {
     if let Some(n) = v.as_integer() {
         return match n {
@@ -314,16 +269,11 @@ impl Inner {
 
 #[cfg(feature = "aec3-engine")]
 fn build_apm_config(tuning: &Aec3Tuning) -> aec3_apm::Config {
-    use aec3_apm::config::{
-        AdaptiveDigital, EchoCanceller, GainController2, NoiseSuppression, Pipeline,
-    };
+    use aec3_apm::config::{AdaptiveDigital, EchoCanceller, GainController2, Pipeline};
 
     aec3_apm::Config {
         echo_canceller: Some(EchoCanceller::default()),
-        noise_suppression: tuning.ns.then(|| NoiseSuppression {
-            level: ns_level(&tuning.ns_level),
-            ..Default::default()
-        }),
+        noise_suppression: None,
         gain_controller2: tuning.agc.then(|| GainController2 {
             adaptive_digital: Some(AdaptiveDigital::default()),
             ..Default::default()
@@ -467,31 +417,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn aec3_default_ns_level_matches_frontend_contract() {
-        let tuning = Aec3Tuning::default();
-        assert_eq!(tuning.ns_level, "low");
-    }
-
-    #[test]
-    fn aec3_runtime_params_update_top_level_apm_tuning() {
+    fn aec3_runtime_params_only_update_owned_apm_tuning() {
         let mut processor = Aec3Engine::new();
 
         assert!(processor
-            .set_runtime_param("ns", &toml::Value::Boolean(true))
-            .unwrap());
-        assert!(processor
-            .set_runtime_param("ns_level", &toml::Value::String("high".into()))
-            .unwrap());
-        assert!(processor
             .set_runtime_param("agc", &toml::Value::Boolean(true))
+            .unwrap());
+        assert!(!processor
+            .set_runtime_param("ns", &toml::Value::Boolean(true))
             .unwrap());
         assert!(!processor
             .set_runtime_param("tail_ms", &toml::Value::Integer(120))
             .unwrap());
 
-        assert!(processor.tuning.ns);
-        assert_eq!(processor.tuning.ns_level, "high");
         assert!(processor.tuning.agc);
+
+        #[cfg(feature = "aec3-engine")]
+        assert!(build_apm_config(&processor.tuning)
+            .noise_suppression
+            .is_none());
     }
 
     #[test]
@@ -558,16 +502,6 @@ mod tests {
     fn aec3_runtime_params_validate_types_and_values() {
         let mut processor = Aec3Engine::new();
 
-        assert!(processor
-            .set_runtime_param("ns", &toml::Value::String("true".into()))
-            .unwrap_err()
-            .to_string()
-            .contains("boolean"));
-        assert!(processor
-            .set_runtime_param("ns_level", &toml::Value::String("extreme".into()))
-            .unwrap_err()
-            .to_string()
-            .contains("ns_level must be one of"));
         assert!(processor
             .set_runtime_param("agc", &toml::Value::Integer(1))
             .unwrap_err()

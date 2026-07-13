@@ -139,6 +139,40 @@ fn aec3_mono_render_capture_is_allocation_free_after_warmup() {
 }
 
 #[test]
+fn noise_suppression_only_is_allocation_free_after_warmup() {
+    use aec3_apm::config::NoiseSuppression;
+    use aec3_apm::{AudioProcessing, Config, StreamConfig};
+
+    let mut apm = AudioProcessing::builder()
+        .config(Config {
+            noise_suppression: Some(NoiseSuppression::default()),
+            ..Default::default()
+        })
+        .capture_config(StreamConfig::new(48_000, 1))
+        .render_config(StreamConfig::new(48_000, 1))
+        .build();
+    let input = vec![0.01; 480];
+    let mut output = vec![0.0; 480];
+
+    for _ in 0..120 {
+        apm.process_capture_f32(&[&input], &mut [&mut output])
+            .unwrap();
+    }
+
+    let allocations = run_without_counting_allocations(|| {
+        for _ in 0..20 {
+            apm.process_capture_f32(&[&input], &mut [&mut output])
+                .unwrap();
+        }
+    });
+
+    assert_eq!(
+        allocations, 0,
+        "steady-state NS-only capture allocated {allocations} times"
+    );
+}
+
+#[test]
 fn aec3_stereo_render_mono_capture_is_allocation_free_after_warmup() {
     assert_aec_round_trip_is_allocation_free(2, 1);
 }

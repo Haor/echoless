@@ -336,6 +336,7 @@ fn validate_chain_node(
         "aec3" => validate_aec3_node(&base, &node.params, errors),
         "localvqe" => validate_localvqe_node(&base, &node.params, errors),
         "nvidia_afx_aec" => validate_nvafx_node(cfg, &base, &node.params, errors),
+        "webrtc_ns" => validate_webrtc_ns_node(&base, &node.params, errors),
         "passthrough" => {}
         _ => {}
     }
@@ -346,7 +347,6 @@ fn is_known_processor_kind(kind: &str) -> bool {
 }
 
 fn validate_aec3_node(base: &str, params: &toml::Table, errors: &mut Vec<ConfigValidationError>) {
-    expect_bool(params, base, "ns", errors);
     expect_bool(params, base, "agc", errors);
     expect_bool(params, base, "linear_stable_echo_path", errors);
     expect_i64_range(
@@ -359,20 +359,6 @@ fn validate_aec3_node(base: &str, params: &toml::Table, errors: &mut Vec<ConfigV
     );
     expect_i64_min(params, base, "tail_ms", i64::from(MIN_TAIL_MS), errors);
     expect_i64_min(params, base, "delay_num_filters", 1, errors);
-    expect_string_one_of(
-        params,
-        base,
-        "ns_level",
-        &[
-            "low",
-            "moderate",
-            "high",
-            "veryhigh",
-            "very_high",
-            "very-high",
-        ],
-        errors,
-    );
     if let Some(value) = params.get("reference_channels") {
         let ok = value.as_integer().is_some_and(|v| matches!(v, 1 | 2))
             || value
@@ -391,6 +377,27 @@ fn validate_aec3_node(base: &str, params: &toml::Table, errors: &mut Vec<ConfigV
             ));
         }
     }
+}
+
+fn validate_webrtc_ns_node(
+    base: &str,
+    params: &toml::Table,
+    errors: &mut Vec<ConfigValidationError>,
+) {
+    expect_string_one_of(
+        params,
+        base,
+        "level",
+        &[
+            "low",
+            "moderate",
+            "high",
+            "veryhigh",
+            "very_high",
+            "very-high",
+        ],
+        errors,
+    );
 }
 
 fn validate_localvqe_node(
@@ -786,7 +793,6 @@ mod tests {
             toml::Value::Integer(i64::from(MAX_INITIAL_DELAY_MS) + 1),
         );
         bad_params.insert("tail_ms".into(), toml::Value::Integer(1));
-        bad_params.insert("ns".into(), toml::Value::String("yes".into()));
         let cfg = PipelineConfig {
             sample_rate: 44_100,
             near_delay_ms: MAX_NEAR_DELAY_MS + 1,
@@ -817,7 +823,6 @@ mod tests {
 
         assert!(paths.contains(&"chain[0].tail_ms"));
         assert!(paths.contains(&"chain[0].initial_delay_ms"));
-        assert!(paths.contains(&"chain[0].ns"));
         assert!(paths.contains(&"chain[2].kind"));
         assert!(paths.contains(&"sample_rate"));
         assert!(paths.contains(&"near_delay_ms"));

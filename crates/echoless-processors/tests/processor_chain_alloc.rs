@@ -1,11 +1,14 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use echoless_processors::{EchoProcessor, IoSpec, ProcessorChain, ProcessorStats};
+use echoless_processors::{
+    webrtc_ns::WebRtcNs, EchoProcessor, IoSpec, ProcessorChain, ProcessorStats,
+};
 
 struct CountingAllocator;
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+static LAST_ALLOCATION_SIZE: AtomicUsize = AtomicUsize::new(0);
 
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
@@ -13,16 +16,19 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        LAST_ALLOCATION_SIZE.store(layout.size(), Ordering::SeqCst);
         System.alloc(layout)
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        LAST_ALLOCATION_SIZE.store(layout.size(), Ordering::SeqCst);
         System.alloc_zeroed(layout)
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        LAST_ALLOCATION_SIZE.store(new_size, Ordering::SeqCst);
         System.realloc(ptr, layout, new_size)
     }
 
@@ -80,6 +86,36 @@ fn processor_chain_process_is_allocation_free_after_warmup() {
     chain.process(&near, &far, &mut out, 480);
 
     assert_eq!(ALLOCATIONS.load(Ordering::SeqCst), 0);
+
+    let mut ns = WebRtcNs::new();
+    for _ in 0..4 {
+        ns.process(&near, &far, &mut out, 480);
+    }
+
+    ALLOCATIONS.store(0, Ordering::SeqCst);
+    ns.process(&near, &far, &mut out, 480);
+
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::SeqCst),
+        0,
+        "standalone WebRTC NS allocated after warmup (last size: {})",
+        LAST_ALLOCATION_SIZE.load(Ordering::SeqCst)
+    );
+
+    let mut ns_chain = ProcessorChain::new(48_000, 1);
+    ns_chain.push(Box::new(ns));
+    for _ in 0..4 {
+        ns_chain.process(&near, &far, &mut out, 480);
+    }
+
+    ALLOCATIONS.store(0, Ordering::SeqCst);
+    ns_chain.process(&near, &far, &mut out, 480);
+
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::SeqCst),
+        0,
+        "WebRTC NS chain allocated after warmup"
+    );
 }
 
 fn sine_block(frames: usize, hz: f32, sample_rate: u32) -> Vec<f32> {

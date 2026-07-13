@@ -2,7 +2,7 @@
 
 use crate::{
     aec3::Aec3Engine, localvqe::LocalVqe, nvafx::NvidiaAfxAec, passthrough::Passthrough,
-    EchoProcessor,
+    webrtc_ns::WebRtcNs, EchoProcessor,
 };
 
 pub fn build(kind: &str) -> anyhow::Result<Box<dyn EchoProcessor>> {
@@ -11,8 +11,9 @@ pub fn build(kind: &str) -> anyhow::Result<Box<dyn EchoProcessor>> {
         "aec3" => Box::new(Aec3Engine::new()),
         "localvqe" => Box::new(LocalVqe::new()),
         "nvidia_afx_aec" => Box::new(NvidiaAfxAec::new()),
+        "webrtc_ns" => Box::new(WebRtcNs::new()),
         other => anyhow::bail!(
-            "unknown processor kind: {other} (available: passthrough / aec3 / localvqe / nvidia_afx_aec)"
+            "unknown processor kind: {other} (available: passthrough / aec3 / localvqe / nvidia_afx_aec / webrtc_ns)"
         ),
     })
 }
@@ -27,5 +28,11 @@ pub fn canonical_kind(kind: &str) -> &str {
 
 /// 已注册的处理器种类(供 CLI/前端列出)。
 pub fn kinds() -> &'static [&'static str] {
-    &["passthrough", "aec3", "localvqe", "nvidia_afx_aec"]
+    &[
+        "passthrough",
+        "aec3",
+        "localvqe",
+        "nvidia_afx_aec",
+        "webrtc_ns",
+    ]
 }

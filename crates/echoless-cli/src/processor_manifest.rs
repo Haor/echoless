@@ -81,16 +81,6 @@ fn processor_manifest() -> serde_json::Value {
                         "values": ["mono", "stereo"],
                         "default": "mono"
                     },
-                    "ns": {
-                        "type": "bool",
-                        "default": false
-                    },
-                    "ns_level": {
-                        "type": "select",
-                        "values": ["low", "moderate", "high", "veryhigh"],
-                        "default": "low",
-                        "requires": { "ns": true }
-                    },
                     "agc": {
                         "type": "bool",
                         "default": false,
@@ -118,6 +108,28 @@ fn processor_manifest() -> serde_json::Value {
                     "linear_stable_echo_path": {
                         "type": "bool",
                         "default": false,
+                        "advanced": true
+                    }
+                }
+            },
+            {
+                "kind": "webrtc_ns",
+                "label": "WebRTC NS",
+                "platforms": ["windows", "macos", "linux"],
+                "default": false,
+                "experimental": false,
+                "role": "noise_suppression",
+                "constraints": {
+                    "sample_rate": 48000,
+                    "frame_ms": 10,
+                    "channels": "mono",
+                    "algorithmic_latency_ms": echoless_processors::webrtc_ns::ALGORITHMIC_LATENCY_MS
+                },
+                "params": {
+                    "level": {
+                        "type": "select",
+                        "values": ["low", "moderate", "high", "veryhigh"],
+                        "default": echoless_processors::webrtc_ns::DEFAULT_LEVEL,
                         "advanced": true
                     }
                 }
@@ -191,7 +203,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(aec3["default"], true);
-        assert_eq!(aec3["params"]["ns"]["default"], false);
+        assert!(aec3["params"].get("ns").is_none());
+        assert!(aec3["params"].get("ns_level").is_none());
         assert_eq!(
             aec3["params"]["reference_channels"]["values"],
             json!(["mono", "stereo"])
@@ -232,5 +245,19 @@ mod tests {
             .find(|processor| processor["kind"] == "nvidia_afx_aec")
             .unwrap();
         assert!(nvafx["params"].get("runtime_dir").is_none());
+
+        let webrtc_ns = processors
+            .iter()
+            .find(|processor| processor["kind"] == "webrtc_ns")
+            .unwrap();
+        assert_eq!(webrtc_ns["role"], "noise_suppression");
+        assert_eq!(
+            webrtc_ns["constraints"]["algorithmic_latency_ms"],
+            json!(echoless_processors::webrtc_ns::ALGORITHMIC_LATENCY_MS)
+        );
+        assert_eq!(
+            webrtc_ns["params"]["level"]["default"],
+            echoless_processors::webrtc_ns::DEFAULT_LEVEL
+        );
     }
 }

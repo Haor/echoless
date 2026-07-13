@@ -41,6 +41,7 @@ pub(crate) struct AudioBuffer {
     splitting_filter: Option<SplittingFilter>,
     input_resamplers: Vec<PushSincResampler>,
     output_resamplers: Vec<PushSincResampler>,
+    output_resample_scratch: Vec<Vec<f32>>,
     downmix_by_averaging: bool,
     channel_for_downmixing: usize,
 }
@@ -90,6 +91,11 @@ impl AudioBuffer {
         } else {
             Vec::new()
         };
+        let output_resample_scratch = if output_num_frames != buffer_num_frames {
+            vec![vec![0.0; output_num_frames]; buffer_num_channels]
+        } else {
+            Vec::new()
+        };
 
         let (split_data, splitting_filter) = if num_bands > 1 {
             (
@@ -118,6 +124,7 @@ impl AudioBuffer {
             splitting_filter,
             input_resamplers,
             output_resamplers,
+            output_resample_scratch,
             downmix_by_averaging: true,
             channel_for_downmixing: 0,
         }
@@ -319,9 +326,9 @@ impl AudioBuffer {
         if resampling_needed {
             for i in 0..self.num_channels {
                 let src = self.data.bands(i);
-                let mut temp = vec![0.0f32; buf_frames];
-                self.output_resamplers[i].resample(src, &mut temp);
-                buffer.channel_mut(i)[..buf_frames].copy_from_slice(&temp);
+                let scratch = &mut self.output_resample_scratch[i];
+                self.output_resamplers[i].resample(src, scratch);
+                buffer.channel_mut(i)[..buf_frames].copy_from_slice(scratch);
             }
         } else {
             for i in 0..self.num_channels {

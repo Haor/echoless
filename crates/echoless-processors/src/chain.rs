@@ -791,6 +791,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn configured_chain_keeps_aec_and_webrtc_ns_as_distinct_nodes() {
+        let nodes = vec![
+            NodeConfig {
+                kind: "aec3".into(),
+                params: toml::Table::new(),
+            },
+            NodeConfig {
+                kind: "webrtc_ns".into(),
+                params: toml::Table::new(),
+            },
+        ];
+
+        let chain = chain_from_nodes(&nodes, 48_000, 1).unwrap();
+
+        assert_eq!(chain.names(), vec!["aec3", "webrtc_ns"]);
+        assert_eq!(chain.total_latency_ms(), 6.5);
+        assert_eq!(chain.stats()[1].erle_db, 0.0);
+    }
+
     fn capacity_signature(chain: &ProcessorChain) -> Vec<usize> {
         let mut caps = vec![chain.cur_near_base.capacity()];
         for adapter in &chain.adapters {
