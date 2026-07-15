@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [1.2.0-rc.2] — 2026-07-15
+
+### Fixed
+- Windows now recreates the audio pipeline when a WASAPI endpoint is
+  invalidated after sleep, display power transitions, or device
+  reconfiguration. Recovery uses bounded retries and preserves the current
+  runtime settings.
+- Trailing CLI errors are written to the persistent app log even when the run
+  finalizes first, so device-loss failures remain available for diagnosis.
+
 ## [1.2.0-rc.1] — 2026-07-13
 
 Preview of the 1.2.0 feature release: Windows login startup, shared WebRTC and

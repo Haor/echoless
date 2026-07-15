@@ -159,6 +159,7 @@ fn finalize_run_on_main_thread(
     run_id: RunId,
     config_path: &Path,
     intentional: bool,
+    recoverable: bool,
 ) {
     let outcome = commit_run_finalization(&app.state::<RunState>(), run_id);
     let child = match outcome {
@@ -186,7 +187,11 @@ fn finalize_run_on_main_thread(
     update_tray_tooltip(app, false);
     let _ = app.emit(
         "echoless://exit",
-        serde_json::json!({ "run_id": run_id, "intentional": intentional }),
+        serde_json::json!({
+            "run_id": run_id,
+            "intentional": intentional,
+            "recoverable": recoverable,
+        }),
     );
 }
 
@@ -197,11 +202,18 @@ fn schedule_run_finalization(
     run_id: RunId,
     config_path: PathBuf,
     intentional: bool,
+    recoverable: bool,
 ) {
     let finalizer_app = app.clone();
     let fallback_config_path = config_path.clone();
     if let Err(err) = app.run_on_main_thread(move || {
-        finalize_run_on_main_thread(&finalizer_app, run_id, &config_path, intentional);
+        finalize_run_on_main_thread(
+            &finalizer_app,
+            run_id,
+            &config_path,
+            intentional,
+            recoverable,
+        );
     }) {
         crate::logging::log(
             "error",
@@ -345,33 +357,37 @@ pub(crate) fn start_run(
     let app_out = app.clone();
     let stop_reader = stopping.clone();
     std::thread::spawn(move || {
+        let mut recoverable_stream_failure = false;
         // CLI stdout 契约:只输出完整 JSONL status/control 行;坏行降级为日志保留证据。
         for line in BufReader::new(stdout).lines() {
             match line {
                 Ok(line) => match parse_jsonl_line_event(&line) {
                     JsonlLineEvent::Empty => {}
-                    JsonlLineEvent::Json(value) => match attach_run_id(value, run_id) {
-                        Ok(value) => {
-                            let run_state = app_out.state::<RunState>();
-                            if is_active_run(&run_state, run_id) {
-                                let _ = app_out.emit("echoless://status", value);
+                    JsonlLineEvent::Json(value) => {
+                        recoverable_stream_failure |= is_recoverable_stream_failure(&value);
+                        match attach_run_id(value, run_id) {
+                            Ok(value) => {
+                                let run_state = app_out.state::<RunState>();
+                                if is_active_run(&run_state, run_id) {
+                                    let _ = app_out.emit("echoless://status", value);
+                                }
+                            }
+                            Err(value) => {
+                                let run_state = app_out.state::<RunState>();
+                                if is_active_run(&run_state, run_id) {
+                                    crate::logging::log(
+                                        "warn",
+                                        "sidecar",
+                                        &format!("non-object status JSON ignored: {value}"),
+                                    );
+                                    let _ = app_out.emit(
+                                        "echoless://log",
+                                        format!("non-object status JSON ignored: {value}"),
+                                    );
+                                }
                             }
                         }
-                        Err(value) => {
-                            let run_state = app_out.state::<RunState>();
-                            if is_active_run(&run_state, run_id) {
-                                crate::logging::log(
-                                    "warn",
-                                    "sidecar",
-                                    &format!("non-object status JSON ignored: {value}"),
-                                );
-                                let _ = app_out.emit(
-                                    "echoless://log",
-                                    format!("non-object status JSON ignored: {value}"),
-                                );
-                            }
-                        }
-                    },
+                    }
                     JsonlLineEvent::Unparsed(line) => {
                         let run_state = app_out.state::<RunState>();
                         if is_active_run(&run_state, run_id) {
@@ -409,7 +425,13 @@ pub(crate) fn start_run(
             "sidecar",
             &format!("echoless run {run_id} exited (intentional={intentional})"),
         );
-        schedule_run_finalization(&app_out, run_id, reader_config_path, intentional);
+        schedule_run_finalization(
+            &app_out,
+            run_id,
+            reader_config_path,
+            intentional,
+            recoverable_stream_failure,
+        );
     });
 
     // stderr = 人类日志(转发事件 + 落盘取证)
@@ -419,14 +441,27 @@ pub(crate) fn start_run(
             match line {
                 Ok(line) => {
                     if !line.trim().is_empty() {
+                        // Persist first, then gate only the UI event by generation. The stdout
+                        // finalizer can clear the active run before this reader receives the
+                        // trailing error line; dropping it here would erase the crash evidence.
+                        let level = if line.contains(" stream error:") {
+                            "error"
+                        } else {
+                            "info"
+                        };
+                        crate::logging::log(level, "cli", &format!("run {run_id}: {line}"));
                         let run_state = app_err.state::<RunState>();
                         if is_active_run(&run_state, run_id) {
-                            crate::logging::log("info", "cli", &line);
                             let _ = app_err.emit("echoless://log", line);
                         }
                     }
                 }
                 Err(err) => {
+                    crate::logging::log(
+                        "error",
+                        "sidecar",
+                        &format!("failed to read echoless run {run_id} stderr: {err}"),
+                    );
                     let run_state = app_err.state::<RunState>();
                     if is_active_run(&run_state, run_id) {
                         let _ = app_err.emit(
@@ -453,6 +488,14 @@ pub(crate) fn attach_run_id(mut value: Value, run_id: RunId) -> Result<Value, Va
     };
     object.insert("run_id".to_string(), json!(run_id));
     Ok(value)
+}
+
+pub(crate) fn is_recoverable_stream_failure(value: &Value) -> bool {
+    value.as_object().is_some_and(|event| {
+        event.get("type").and_then(Value::as_str) == Some("stream_error")
+            && event.get("fatal").and_then(Value::as_bool) == Some(true)
+            && event.get("recoverable").and_then(Value::as_bool) == Some(true)
+    })
 }
 
 /// 向运行中的 echoless run 子进程 stdin 写一行 JSON 控制命令。

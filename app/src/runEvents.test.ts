@@ -67,6 +67,7 @@ describe("run event contract", () => {
         stream: "reference",
         message: "device unavailable",
         fatal: true,
+        recoverable: true,
         run_id: 1,
       },
       {
@@ -130,6 +131,18 @@ describe("run event contract", () => {
     );
     expect(appSource).toMatch(
       /if \(ev\.type === "stream_error"\) \{[\s\S]*?powerOnRef\.current = false;[\s\S]*?updateApp\(\{[\s\S]*?powerOn: false,[\s\S]*?err: message,[\s\S]*?\}\);/,
+    );
+  });
+
+  it("restarts recoverable stream invalidations before falling back to OFF", () => {
+    expect(appSource).toMatch(
+      /if \(ev\.recoverable && runIntentRef\.current\.wantsRun\(\)\) \{[\s\S]*?requestStreamRecovery\([\s\S]*?if \(next\.pendingDelayMs != null\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?resetStreamRecovery\(\);[\s\S]*?runIntentRef\.current\.request\(false\);/,
+    );
+    expect(appSource).toMatch(
+      /consumeStreamRecovery\(streamRecoveryRef\.current\)[\s\S]*?recovery\.delayMs != null[\s\S]*?window\.setTimeout\([\s\S]*?restartRunRef\.current\(\)/,
+    );
+    expect(appSource).toMatch(
+      /ev\.recoverable &&[\s\S]*?streamRecoveryRef\.current\.pendingDelayMs == null[\s\S]*?requestStreamRecovery\(/,
     );
   });
 });

@@ -124,6 +124,12 @@ import { REQUIRED_RUN_CONTROLS } from "./runtimeControls";
 import { createAsyncListenerScope } from "./asyncListener";
 import { settleBootGate } from "./bootGate";
 import {
+  consumeStreamRecovery,
+  INITIAL_STREAM_RECOVERY,
+  requestStreamRecovery,
+  type StreamRecoveryState,
+} from "./streamRecovery";
+import {
   createStartupCleanup,
   expectStartupRun,
   INITIAL_STARTUP_RUN_HANDSHAKE,
@@ -981,6 +987,11 @@ function useRunLifecycle({
   const probeBorrowedRunRef = useRef(false);
   const engineSetupStopPendingRef = useRef(false);
   const runIntentRef = useRef(createRunIntentGuard(powerOn));
+  const streamRecoveryRef = useRef<StreamRecoveryState>(
+    INITIAL_STREAM_RECOVERY,
+  );
+  const streamRecoveryTimerRef = useRef<number | null>(null);
+  const restartRunRef = useRef<() => Promise<number | null>>(async () => null);
   const bypassTargetRef = useRef(bypassPending ?? bypassed);
   bypassTargetRef.current = bypassPending ?? bypassed;
   if (!powerOn) engineSetupStopPendingRef.current = false;
@@ -988,6 +999,17 @@ function useRunLifecycle({
   recRef.current = rec;
   const diagSecondsRef = useRef(diagSeconds);
   diagSecondsRef.current = diagSeconds;
+
+  const clearStreamRecoveryTimer = useCallback(() => {
+    if (streamRecoveryTimerRef.current == null) return;
+    window.clearTimeout(streamRecoveryTimerRef.current);
+    streamRecoveryTimerRef.current = null;
+  }, []);
+
+  const resetStreamRecovery = useCallback(() => {
+    clearStreamRecoveryTimer();
+    streamRecoveryRef.current = INITIAL_STREAM_RECOVERY;
+  }, [clearStreamRecoveryTimer]);
 
   // 录制就地起停命令(运行中改录制态用 stdin,不重启 run)。
   const startDiag = useCallback(() => {
@@ -1061,6 +1083,20 @@ function useRunLifecycle({
               noteError(message);
               return;
             }
+            if (ev.recoverable && runIntentRef.current.wantsRun()) {
+              const next = requestStreamRecovery(
+                streamRecoveryRef.current,
+                Date.now(),
+              );
+              streamRecoveryRef.current = next;
+              if (next.pendingDelayMs != null) {
+                telRef.current.on = false;
+                resetRuntimeLive();
+                updateApp({ busy: true, io: null, err: null });
+                return;
+              }
+            }
+            resetStreamRecovery();
             runIntentRef.current.request(false);
             powerOnRef.current = false;
             telRef.current.on = false;
@@ -1170,6 +1206,31 @@ function useRunLifecycle({
           runControlsRef.current = null;
           // 后端按子进程标记:intentional=主动停/重启 → 正常,不报错。
           if (ev.intentional) return;
+          if (
+            ev.recoverable &&
+            runIntentRef.current.wantsRun() &&
+            streamRecoveryRef.current.pendingDelayMs == null
+          ) {
+            streamRecoveryRef.current = requestStreamRecovery(
+              streamRecoveryRef.current,
+              Date.now(),
+            );
+          }
+          const recovery = consumeStreamRecovery(streamRecoveryRef.current);
+          streamRecoveryRef.current = recovery.state;
+          if (
+            recovery.delayMs != null &&
+            runIntentRef.current.wantsRun()
+          ) {
+            updateApp({ busy: true, io: null, err: null });
+            clearStreamRecoveryTimer();
+            streamRecoveryTimerRef.current = window.setTimeout(() => {
+              streamRecoveryTimerRef.current = null;
+              if (!runIntentRef.current.wantsRun()) return;
+              void restartRunRef.current();
+            }, recovery.delayMs);
+            return;
+          }
           // 非预期退出(子进程自己挂了,如设备不支持采样率)→ 如实反映失败 + 报错。
           // 稍等让 stderr 末行(真正的错误原因)到达,再显示。
           if (runIntentRef.current.wantsRun()) {
@@ -1189,9 +1250,17 @@ function useRunLifecycle({
     });
     return () => {
       active = false;
+      clearStreamRecoveryTimer();
       listeners.dispose();
     };
-  }, [hasRunControl, noteError, startDiag, updateApp]);
+  }, [
+    clearStreamRecoveryTimer,
+    hasRunControl,
+    noteError,
+    resetStreamRecovery,
+    startDiag,
+    updateApp,
+  ]);
 
   function currentToml(over?: Override, bypass = false) {
     const selectedNoiseMode = over?.noiseMode ?? noiseModeRef.current;
@@ -1210,15 +1279,17 @@ function useRunLifecycle({
     });
   }
 
-  async function start(): Promise<number | null> {
+  async function start(recovering = false): Promise<number | null> {
+    if (!recovering) resetStreamRecovery();
     const startIntent = runIntentRef.current.request(true);
+    const restartBypassed = recovering ? bypassTargetRef.current : false;
     powerOnRef.current = true;
     updateApp({ busy: true, err: null });
     resetRuntimeHealth();
     resetRuntimeLive();
     lastLogRef.current = ""; // 清掉上次的 stderr,避免旧错误误报
     try {
-      const toml = currentToml();
+      const toml = currentToml(undefined, restartBypassed);
       const v = await validateConfig(toml);
       if (!v.ok) {
         if (runIntentRef.current.allowsStart(startIntent)) {
@@ -1246,9 +1317,13 @@ function useRunLifecycle({
         runId,
       );
       probeBorrowedRunRef.current = false;
-      bypassTargetRef.current = false;
+      bypassTargetRef.current = restartBypassed;
       // 用户主动启动始终进入 AEC on;仅结构性重启会保留 bypass。
-      updateApp({ powerOn: true, bypassed: false, bypassPending: null });
+      updateApp({
+        powerOn: true,
+        bypassed: restartBypassed,
+        bypassPending: null,
+      });
       return runId;
     } catch (e) {
       if (runIntentRef.current.allowsStart(startIntent)) {
@@ -1264,7 +1339,10 @@ function useRunLifecycle({
     }
   }
 
+  restartRunRef.current = () => start(true);
+
   async function stop() {
+    resetStreamRecovery();
     runIntentRef.current.request(false);
     powerOnRef.current = false;
     bypassTargetRef.current = false;
@@ -1354,6 +1432,7 @@ function useRunLifecycle({
   );
 
   function applyChange(next: Override) {
+    resetStreamRecovery();
     // 每次新配置都抢占旧重启事务。旧事务即使已经 stop 完成，也不能用陈旧
     // TOML 再启动；串行队列会把后续 delta 合并后交给最新 generation。
     if (runIntentRef.current.wantsRun()) runIntentRef.current.request(true);

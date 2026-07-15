@@ -201,6 +201,7 @@ export interface StreamErrorEvent {
   stream: string;
   message: string;
   fatal: boolean;
+  recoverable?: boolean;
 }
 export type ClockSkewDirection =
   | "output_faster_than_capture"
@@ -300,6 +301,7 @@ export type RunEvent = RunEventPayload & { run_id: number };
 export interface RunExitEvent {
   run_id: number;
   intentional?: boolean;
+  recoverable?: boolean;
 }
 
 // ---- doctor audio --json(虚拟声卡检测) ----

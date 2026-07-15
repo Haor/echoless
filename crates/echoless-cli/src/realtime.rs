@@ -883,7 +883,20 @@ fn stream_error_payload(label: &str, err: &cpal::StreamError) -> serde_json::Val
         "stream": label,
         "message": err.to_string(),
         "fatal": true,
+        "recoverable": stream_error_recoverable(err),
     })
+}
+
+fn stream_error_recoverable(err: &cpal::StreamError) -> bool {
+    stream_error_recoverable_on_windows(cfg!(target_os = "windows"), err)
+}
+
+fn stream_error_recoverable_on_windows(is_windows: bool, err: &cpal::StreamError) -> bool {
+    is_windows
+        && matches!(
+            err,
+            cpal::StreamError::DeviceNotAvailable | cpal::StreamError::StreamInvalidated
+        )
 }
 
 fn build_input_stream<P, E>(
@@ -1755,7 +1768,7 @@ mod tests {
     }
 
     #[test]
-    fn every_cpal_stream_error_is_fatal_and_stops_the_run() {
+    fn every_cpal_stream_error_is_fatal_and_stops_the_current_run() {
         let errors = [
             StreamError::DeviceNotAvailable,
             StreamError::StreamInvalidated,
@@ -1773,12 +1786,33 @@ mod tests {
             assert_eq!(payload["stream"], "output");
             assert_eq!(payload["message"], error.to_string());
             assert_eq!(payload["fatal"], true);
+            assert_eq!(payload["recoverable"], stream_error_recoverable(&error));
 
             let running = Arc::new(AtomicBool::new(true));
             let mut handler = stream_error_handler("output", running.clone(), false);
             handler(error);
             assert!(!running.load(Ordering::SeqCst));
         }
+    }
+
+    #[test]
+    fn windows_reconnects_only_invalidated_or_unavailable_streams() {
+        assert!(stream_error_recoverable_on_windows(
+            true,
+            &StreamError::DeviceNotAvailable
+        ));
+        assert!(stream_error_recoverable_on_windows(
+            true,
+            &StreamError::StreamInvalidated
+        ));
+        assert!(!stream_error_recoverable_on_windows(
+            true,
+            &StreamError::BufferUnderrun
+        ));
+        assert!(!stream_error_recoverable_on_windows(
+            false,
+            &StreamError::DeviceNotAvailable
+        ));
     }
 
     #[test]

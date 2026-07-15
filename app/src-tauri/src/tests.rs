@@ -24,10 +24,29 @@ use crate::proc::{
     ChildShutdownTarget, JsonlLineEvent, RunChild, RunControlWriter, RunFinalization, RunState,
 };
 use crate::sidecar::write_run_control_line;
-use crate::sidecar::{attach_run_id, bypass_control_line};
+use crate::sidecar::{attach_run_id, bypass_control_line, is_recoverable_stream_failure};
 use crate::tray::{set_tray_prefs_inner, TrayPrefs};
 
 static DATA_ROOT_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn only_fatal_recoverable_stream_events_restart_the_run() {
+    assert!(is_recoverable_stream_failure(&json!({
+        "type": "stream_error",
+        "fatal": true,
+        "recoverable": true,
+    })));
+    assert!(!is_recoverable_stream_failure(&json!({
+        "type": "stream_error",
+        "fatal": true,
+        "recoverable": false,
+    })));
+    assert!(!is_recoverable_stream_failure(&json!({
+        "type": "status",
+        "fatal": true,
+        "recoverable": true,
+    })));
+}
 
 fn unique_temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()

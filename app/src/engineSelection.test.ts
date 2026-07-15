@@ -63,7 +63,7 @@ describe("current engine UI lock wiring", () => {
       "if (!runIntentRef.current.allowsStart(applyIntent)) return;",
     );
     expect(appSource).toMatch(
-      /async function stop\(\) \{\s*runIntentRef\.current\.request\(false\);\s*powerOnRef\.current = false;/,
+      /async function stop\(\) \{\s*resetStreamRecovery\(\);\s*runIntentRef\.current\.request\(false\);\s*powerOnRef\.current = false;/,
     );
     expect(appSource).toContain(
       "if (!runIntentRef.current.wantsRun()) return Promise.resolve();",
